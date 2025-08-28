@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>POIS Admin</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import { h, render } from "https://esm.sh/preact@10.24.3";
+    import htm from "https://esm.sh/htm@3.1.1";
+    import * as hooks from "https://esm.sh/preact@10.24.3/hooks";
+    const html = htm.bind(h);
+    const API = {
+      async get(p){return req("GET",p)},
+      async post(p,b){return req("POST",p,b)},
+      async put(p,b){return req("PUT",p,b)},
+      async del(p){return req("DELETE",p)}
+    };
+    async function req(method, path, body) {
+      const token = localStorage.getItem("pois_token")||"";
+      const res = await fetch(`/api${path}`, {
+        method, headers: {"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+        body: body?JSON.stringify(body):undefined
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.status===204?null:res.json();
+    }
+    function Toolbar({onToken}) {
+      const [t,setT]=hooks.useState(localStorage.getItem("pois_token")||"");
+      return html`
+        <div class="flex items-center justify-between p-4 bg-gray-50 border-b">
+          <div class="text-xl font-semibold">POIS Admin</div>
+          <div class="flex gap-2 items-center">
+            <input class="border rounded px-2 py-1 w-64" placeholder="Bearer token" value=${t} onInput=${e=>setT(e.target.value)} />
+            <button class="px-3 py-1 rounded bg-blue-600 text-white" onClick=${()=>{localStorage.setItem("pois_token",t);onToken(t)}}>Save</button>
+          </div>
+        </div>`;
+    }
+    function Channels({onSelect, selected}) {
+      const [data,setData]=hooks.useState(null); const [err,setErr]=hooks.useState(null);
+      hooks.useEffect(()=>{(async()=>{try{setData(await API.get("/channels"))}catch(e){setErr(String(e))}})()},[]);
+      if(err) return html`<div class="p-4 text-red-600">${err}</div>`;
+      if(!data) return html`<div class="p-4">Loading…</div>`;
+      const add=async()=>{const name=prompt("Channel name?")||"";if(!name)return; await API.post("/channels",{name}); location.reload();};
+      const toggle=async(ch)=>{await API.put(`/channels/${ch.id}`,{name:ch.name,enabled:!ch.enabled,timezone:ch.timezone}); location.reload();};
+      return html`
+        <div class="p-4">
+          <div class="flex items-center justify-between mb-2">
+            <div class="font-semibold">Channels</div>
+            <button class="px-2 py-1 text-sm rounded bg-green-600 text-white" onClick=${add}>+ Add</button>
+          </div>
+          <div class="space-y-1">
+            ${data.map(ch=>html`
+              <div class="flex items-center justify-between p-2 border rounded ${selected?.id===ch.id?'bg-blue-50':''}">
+                <div class="flex items-center gap-2">
+                  <input type="radio" name="sel" checked=${selected?.id===ch.id} onChange=${()=>onSelect(ch)} />
+                  <div class="font-medium">${ch.name}</div>
+                  <span class="text-xs px-2 py-0.5 rounded ${ch.enabled?'bg-emerald-100 text-emerald-700':'bg-gray-200 text-gray-600'}">
+                    ${ch.enabled?'enabled':'disabled'}
+                  </span>
+                </div>
+                <button class="text-sm underline" onClick=${()=>toggle(ch)}>${ch.enabled?'Disable':'Enable'}</button>
+              </div>
+            `)}
+          </div>
+        </div>`;
+    }
+    function Rules({channel}) {
+      const [rules,setRules]=hooks.useState(null); const [err,setErr]=hooks.useState(null);
+      const [formOpen,setFormOpen]=hooks.useState(false); const [editing,setEditing]=hooks.useState(null);
+      hooks.useEffect(()=>{(async()=>{try{setRules(await API.get(`/channels/${channel.id}/rules`))}catch(e){setErr(String(e))}})()},[channel.id]);
+      const save=async(rule)=>{ try{
+        if(editing){ await API.put(`/rules/${editing.id}`,rule); } else { await API.post(`/channels/${channel.id}/rules`,rule); }
+        location.reload();
+      }catch(e){ alert(e) }};
+      const del=async(id)=>{ if(!confirm("Delete rule?")) return; await API.del(`/rules/${id}`); location.reload(); };
+      const move=async(id,dir)=>{ const i=rules.findIndex(r=>r.id===id); const j=dir==='up'?i-1:i+1; if(j<0||j>=rules.length)return;
+        const ord=rules.slice(); [ord[i],ord[j]]=[ord[j],ord[i]]; await API.post("/rules/reorder",{ordered_ids:ord.map(r=>r.id)}); location.reload(); };
+      if(err) return html`<div class="p-4 text-red-600">${err}</div>`;
+      if(!rules) return html`<div class="p-4">Loading…</div>`;
+      return html`
+        <div class="p-4">
+          <div class="flex items-center justify-between mb-2">
+            <div class="font-semibold">Rules for ${channel.name}</div>
+            <button class="px-2 py-1 text-sm rounded bg-green-600 text-white" onClick=${()=>{setEditing(null);setFormOpen(true)}}>+ New Rule</button>
+          </div>
+          <div class="border rounded overflow-hidden">
+            <table class="min-w-full text-sm">
+              <thead class="bg-gray-50">
+                <tr><th class="text-left p-2 w-16">Order</th><th class="text-left p-2">Name</th><th class="text-left p-2">Enabled</th><th class="text-left p-2">Action</th><th class="text-left p-2">Matchers</th><th class="text-right p-2 w-64">Actions</th></tr>
+              </thead>
+              <tbody>
+                ${rules.map((r)=>html`
+                  <tr class="border-t">
+                    <td class="p-2"><div class="flex gap-1"><button class="px-2 py-0.5 border rounded" onClick=${()=>move(r.id,'up')}>▲</button><button class="px-2 py-0.5 border rounded" onClick=${()=>move(r.id,'down')}>▼</button></div></td>
+                    <td class="p-2 font-medium">${r.name}</td>
+                    <td class="p-2">${r.enabled?'yes':'no'}</td>
+                    <td class="p-2">${r.action}</td>
+                    <td class="p-2"><code class="text-xs">${r.match_json}</code></td>
+                    <td class="p-2 text-right">
+                      <button class="px-2 py-0.5 border rounded mr-2" onClick=${()=>{setEditing(r);setFormOpen(true)}}>Edit</button>
+                      <button class="px-2 py-0.5 border rounded text-red-600" onClick=${()=>del(r.id)}>Delete</button>
+                    </td>
+                  </tr>`)}
+              </tbody>
+            </table>
+          </div>
+          <${DryRun} channel=${channel}/>
+          ${formOpen && html`<${RuleModal} channel=${channel} rule=${editing} onClose=${()=>setFormOpen(false)} onSave=${save}/>`}
+        </div>`;
+    }
+    function RuleModal({channel, rule, onClose, onSave}) {
+      const [name,setName]=hooks.useState(rule?.name||"");
+      const [action,setAction]=hooks.useState(rule?.action||"noop");
+      const [enabled,setEnabled]=hooks.useState(rule?!!rule.enabled:true);
+      const [priority,setPriority]=hooks.useState(rule?.priority??-1);
+      const [match_json,setMatch]=hooks.useState(rule?.match_json||`{"anyOf":[{"scte35.command":"splice_insert"}]}`);
+      const [params_json,setParams]=hooks.useState(rule?.params_json||`{}`);
+      const submit=()=>{ try{
+        const m=JSON.parse(match_json); const p=JSON.parse(params_json);
+        onSave({name,action,enabled,priority,match_json:m,params_json:p});
+      }catch(e){ alert("JSON error: "+e) } };
+      return html`
+        <div class="fixed inset-0 bg-black/30 flex items-center justify-center">
+          <div class="bg-white rounded-xl shadow-xl w-[720px] p-4">
+            <div class="text-lg font-semibold mb-2">${rule?'Edit':'New'} Rule — ${channel.name}</div>
+            <div class="grid grid-cols-2 gap-3">
+              <label class="text-sm">Name <input class="w-full border rounded px-2 py-1" value=${name} onInput=${e=>setName(e.target.value)} /></label>
+              <label class="text-sm">Action
+                <select class="w-full border rounded px-2 py-1" value=${action} onChange=${e=>setAction(e.target.value)}>
+                  <option>noop</option><option>delete</option><option>replace</option>
+                </select>
+              </label>
+              <label class="text-sm">Enabled
+                <select class="w-full border rounded px-2 py-1" value=${enabled?'yes':'no'} onChange=${e=>setEnabled(e.target.value==='yes')}>
+                  <option value="yes">yes</option><option value="no">no</option>
+                </select>
+              </label>
+              <label class="text-sm">Priority (leave -1 to append)
+                <input type="number" class="w-full border rounded px-2 py-1" value=${priority} onInput=${e=>setPriority(parseInt(e.target.value))} />
+              </label>
+              <label class="col-span-2 text-sm">Matchers (JSON)
+                <textarea rows="6" class="w-full border rounded px-2 py-1 font-mono text-xs" value=${match_json} onInput=${e=>setMatch(e.target.value)}></textarea>
+              </label>
+              <label class="col-span-2 text-sm">Action Params (JSON)
+                <textarea rows="4" class="w-full border rounded px-2 py-1 font-mono text-xs" value=${params_json} onInput=${e=>setParams(e.target.value)}></textarea>
+              </label>
+            </div>
+            <div class="mt-3 flex justify-end gap-2">
+              <button class="px-3 py-1 rounded border" onClick=${onClose}>Cancel</button>
+              <button class="px-3 py-1 rounded bg-blue-600 text-white" onClick=${submit}>Save</button>
+            </div>
+          </div>
+        </div>`;
+    }
+    function DryRun({channel}) {
+      const [xml,setXml]=hooks.useState(`<SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1" xmlns:sig="urn:cablelabs:md:xsd:signaling:3.0"><AcquiredSignal acquisitionSignalID="abc-123"><sig:UTCPoint utcPoint="2012-09-18T10:14:34Z"/></AcquiredSignal></SignalProcessingEvent>`);
+      const [result,setResult]=hooks.useState(null);
+      const run=async()=>{ try{ setResult(await API.post("/dryrun",{channel:channel.name, esam_xml:xml})); } catch(e){ alert(e) } };
+      return html`
+        <div class="mt-6">
+          <div class="font-semibold mb-2">Dry-run ESAM against rules</div>
+          <textarea class="w-full border rounded p-2 font-mono text-xs" rows="8" value=${xml} onInput=${e=>setXml(e.target.value)}></textarea>
+          <div class="mt-2 flex items-center gap-2">
+            <button class="px-3 py-1 rounded bg-indigo-600 text-white" onClick=${run}>Run</button>
+            ${result && html`<div class="text-sm">→ Action: <b>${result.action}</b> ${result.matched_rule_id?`(rule ${result.matched_rule_id})`:''} — ${result.note}</div>`}
+          </div>
+        </div>`;
+    }
+    function App(){
+      const [sel,setSel]=hooks.useState(null);
+      return html`
+        <div class="min-h-screen bg-white text-gray-900">
+          <${Toolbar} onToken=${()=>{}}/>
+          <div class="grid grid-cols-12">
+            <div class="col-span-3 border-r min-h-[calc(100vh-56px)]">
+              <${Channels} onSelect=${setSel} selected=${sel}/>
+            </div>
+            <div class="col-span-9">
+              ${sel?html`<${Rules} channel=${sel}/>`:html`<div class="p-8 text-gray-500">Select or add a channel to manage rules.</div>`}
+            </div>
+          </div>
+        </div>`;
+    }
+    render(html`<${App}/>`, document.body);
+  </script>
+  <script src="/static/app.js"></script>
+</head>
+\1
+
+<header class="topbar">
+  <div class="brand">
+    <a href="/"><span class="logo">POIS</span></a>
+    <a href="/static/admin.html" class="brand-sub">Admin</a>
+  </div>
+<nav class="nav">
+  <a href="/static/admin.html">Channels & Rules</a>
+  <a href="/static/tools.html">SCTE‑35 Builder</a>
+  <a href="/static/events.html">Event Monitor</a>
+</nav>
+  <div class="spacer"></div>
+  <div class="right row">
+    <button class="btn" id="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+      Theme: <span id="theme-mode"></span>
+    </button>
+    <span id="token-state" class="token-state">token: unset</span>
+    <button class="btn" onclick="localStorage.removeItem('pois_token'); location.reload()">Logout</button>
+  </div>
+</header>
+
+
+  </body>
+</html>

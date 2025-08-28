@@ -1,0 +1,14 @@
+:root{--bg:#f7f9fc;--surface:#fff;--surface-2:#f1f5f9;--text:#0f172a;--muted:#64748b;--border:#e2e8f0;--accent:#2563eb;--accent-contrast:#fff;--radius:12px;--shadow:0 1px 2px rgba(0,0,0,.05);--topbar-h:56px}
+html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial}
+.topbar{position:fixed;inset:0 0 auto 0;display:flex;align-items:center;gap:16px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);z-index:1000}
+body{padding-top:var(--topbar-h)}.topbar .brand .logo{background:var(--accent);color:var(--accent-contrast);padding:2px 8px;border-radius:8px;font-weight:700;margin-right:6px}
+.nav a{margin-right:14px;padding:6px 10px;border-radius:8px;color:var(--text);text-decoration:none}.nav a:hover{background:var(--surface-2)}.spacer{flex:1}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#tokenDisplay{color:var(--muted)}main,.content{background:var(--bg);color:var(--text)}
+.card,.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px}
+button,.btn{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px 12px;cursor:pointer}button:hover,.btn:hover{border-color:var(--accent)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:var(--accent-contrast)}
+input,textarea,select{background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px 10px;outline:none}
+input::placeholder,textarea::placeholder{color:var(--muted)}input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in oklab,var(--accent),transparent 80%)}
+table{width:100%;border-collapse:separate;border-spacing:0;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+thead th{background:var(--surface-2);font-weight:600}th,td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left}
+pre,.code,textarea{background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:10px}
