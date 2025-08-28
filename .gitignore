@@ -27,3 +27,4 @@
 dev_token
 *.db.backup
 pois.db
+Cargo.lock
