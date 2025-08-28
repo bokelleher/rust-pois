@@ -1,4 +1,4 @@
-# POIS - Program Operations Integration Server
+# POIS - Placement Opportunity Information Service
 
 A high-performance ESAM (Event Signaling and Management) server for processing SCTE-35 signals with advanced rule-based filtering, real-time monitoring, and comprehensive logging capabilities.
 
