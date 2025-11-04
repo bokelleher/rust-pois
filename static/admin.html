@@ -146,20 +146,27 @@
     function Rules({ channel }) {
       const [rules, setRules] = hooks.useState(null);
       const [err, setErr] = hooks.useState(null);
-      
-      hooks.useEffect(() => {
-        (async () => {
-          try {
-            setRules(await API.get(`/channels/${channel.id}/rules`));
-          } catch (e) {
-            setErr(String(e));
-          }
-        })();
+      const [editingId, setEditingId] = hooks.useState(null);
+      const [draft, setDraft] = hooks.useState(null);
+      const [saving, setSaving] = hooks.useState(false);
+
+      const fetchRules = hooks.useCallback(async () => {
+        try {
+          setErr(null);
+          setRules(await API.get(`/channels/${channel.id}/rules`));
+        } catch (e) {
+          setErr(String(e));
+        }
       }, [channel.id]);
-      
+
+      hooks.useEffect(() => {
+        setRules(null);
+        fetchRules();
+      }, [fetchRules]);
+
       if (err) return html`<div class="p-4 text-error">${err}</div>`;
       if (!rules) return html`<div class="p-4 text-muted">Loading rules…</div>`;
-      
+
       const addRule = async () => {
         const name = prompt("Rule name?") || "";
         if (!name) return;
@@ -169,20 +176,59 @@
           match_expr: "true",
           action: "noop"
         });
-        location.reload();
+        await fetchRules();
       };
-      
+
       const deleteRule = async (ruleId) => {
         if (!confirm("Delete this rule?")) return;
         await API.del(`/channels/${channel.id}/rules/${ruleId}`);
-        location.reload();
+        await fetchRules();
       };
-      
+
       const updateRule = async (rule, updates) => {
         await API.put(`/channels/${channel.id}/rules/${rule.id}`, { ...rule, ...updates });
-        location.reload();
+        await fetchRules();
       };
-      
+
+      const startEdit = (rule) => {
+        setEditingId(rule.id);
+        setSaving(false);
+        setDraft({ ...rule, priority: String(rule.priority ?? "") });
+      };
+
+      const cancelEdit = () => {
+        setEditingId(null);
+        setDraft(null);
+        setSaving(false);
+      };
+
+      const saveEdit = async (rule) => {
+        if (!draft) return;
+        const trimmedName = (draft.name || "").trim();
+        if (!trimmedName) {
+          alert("Rule name is required.");
+          return;
+        }
+        const priority = Number.parseInt(draft.priority, 10);
+        if (!Number.isFinite(priority)) {
+          alert("Priority must be a number.");
+          return;
+        }
+        setSaving(true);
+        try {
+          await updateRule(rule, {
+            name: trimmedName,
+            priority,
+            match_expr: draft.match_expr ?? rule.match_expr,
+            action: draft.action ?? rule.action
+          });
+          cancelEdit();
+        } catch (e) {
+          alert(e?.message || e);
+          setSaving(false);
+        }
+      };
+
       return html`
         <div class="p-4">
           <div class="flex items-center justify-between mb-4">
@@ -197,29 +243,59 @@
             </div>
           ` : html`
             <div style="display: flex; flex-direction: column; gap: 12px;">
-              ${rules.map(rule => html`
-                <div class="rule-card">
-                  <div class="flex items-center justify-between mb-3">
-                    <div class="font-medium">${rule.name}</div>
-                    <div class="flex gap-2">
-                      <button class="btn btn-small" onClick=${() => updateRule(rule, { enabled: !rule.enabled })}>
-                        ${rule.enabled ? 'Disable' : 'Enable'}
-                      </button>
-                      <button class="btn btn-small text-error" onClick=${() => deleteRule(rule.id)}>Delete</button>
+              ${rules.map(rule => {
+                const isEditing = editingId === rule.id;
+                return html`
+                  <div class="rule-card">
+                    <div class="flex items-center justify-between mb-3">
+                      <div class="font-medium">${isEditing ? html`<input class="w-64" value=${draft?.name || ""} onInput=${e => setDraft(prev => ({ ...prev, name: e.target.value }))} />` : rule.name}</div>
+                      <div class="flex gap-2">
+                        ${isEditing ? html`
+                          <>
+                            <button class="btn btn-small btn-primary" disabled=${saving} onClick=${() => saveEdit(rule)}>${saving ? 'Saving…' : 'Save'}</button>
+                            <button class="btn btn-small" disabled=${saving} onClick=${cancelEdit}>Cancel</button>
+                          </>
+                        ` : html`
+                          <>
+                            <button class="btn btn-small" onClick=${() => updateRule(rule, { enabled: !rule.enabled })}>
+                              ${rule.enabled ? 'Disable' : 'Enable'}
+                            </button>
+                            <button class="btn btn-small" onClick=${() => startEdit(rule)}>Edit</button>
+                            <button class="btn btn-small text-error" onClick=${() => deleteRule(rule.id)}>Delete</button>
+                          </>
+                        `}
+                      </div>
                     </div>
+                    ${isEditing ? html`
+                      <div style="display: flex; flex-direction: column; gap: 10px; font-size: 13px;">
+                        <label class="flex flex-col gap-1">
+                          <span class="text-xs text-muted" style="letter-spacing: 0.3px; text-transform: uppercase;">Priority</span>
+                          <input type="number" min="0" class="w-32" value=${draft?.priority || ""} onInput=${e => setDraft(prev => ({ ...prev, priority: e.target.value }))} />
+                        </label>
+                        <label class="flex flex-col gap-1">
+                          <span class="text-xs text-muted" style="letter-spacing: 0.3px; text-transform: uppercase;">Match Expression</span>
+                          <textarea rows="4" class="font-mono" value=${draft?.match_expr || ""} onInput=${e => setDraft(prev => ({ ...prev, match_expr: e.target.value }))}></textarea>
+                        </label>
+                        <label class="flex flex-col gap-1">
+                          <span class="text-xs text-muted" style="letter-spacing: 0.3px; text-transform: uppercase;">Action</span>
+                          <input class="w-48" value=${draft?.action || ""} onInput=${e => setDraft(prev => ({ ...prev, action: e.target.value }))} />
+                        </label>
+                      </div>
+                    ` : html`
+                      <div style="display: flex; flex-direction: column; gap: 8px; font-size: 13px;">
+                        <div><strong>Priority:</strong> ${rule.priority}</div>
+                        <div><strong>Match:</strong> <code>${rule.match_expr}</code></div>
+                        <div><strong>Action:</strong> <span class="action-${rule.action}">${rule.action}</span></div>
+                        ${rule.scte35_out_b64 ? html`<div><strong>SCTE-35 Out:</strong> <code class="text-xs">${rule.scte35_out_b64.substring(0, 40)}...</code></div>` : ''}
+                        <div class="text-muted">${rule.enabled ? 'Active' : 'Inactive'}</div>
+                      </div>
+                    `}
                   </div>
-                  <div style="display: flex; flex-direction: column; gap: 8px; font-size: 13px;">
-                    <div><strong>Priority:</strong> ${rule.priority}</div>
-                    <div><strong>Match:</strong> <code>${rule.match_expr}</code></div>
-                    <div><strong>Action:</strong> <span class="action-${rule.action}">${rule.action}</span></div>
-                    ${rule.scte35_out_b64 ? html`<div><strong>SCTE-35 Out:</strong> <code class="text-xs">${rule.scte35_out_b64.substring(0, 40)}...</code></div>` : ''}
-                    <div class="text-muted">${rule.enabled ? 'Active' : 'Inactive'}</div>
-                  </div>
-                </div>
-              `)}
+                `;
+              })}
             </div>
           `}
-          
+
           <${DryRun} channel=${channel} />
         </div>
       `;
