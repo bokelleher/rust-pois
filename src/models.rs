@@ -36,8 +36,12 @@ pub struct UpsertRule {
     pub name: String,
     pub priority: i64, // pass -1 to append at end
     pub enabled: Option<bool>,
+
+    #[serde(default)]
     pub match_json: serde_json::Value,
     pub action: String,
+
+    #[serde(default)]
     pub params_json: serde_json::Value,
 }
 
