@@ -1,117 +1,114 @@
-# POIS Installation & Troubleshooting Guide
+# POIS Installation Guide (Ubuntu 24.04)
 
-> Target platform: **Ubuntu 24.04 LTS**
-
----
-
-## ⚙️ 1. Requirements
-
-- Internet access
-- `sudo` privileges
-- Outbound access for package & cargo downloads
+This guide covers installing, verifying, and maintaining the POIS ESAM Server.
 
 ---
 
-## 🚀 2. Quick Install (interactive)
+## ⚙️ System Requirements
+
+- Ubuntu 24.04 LTS (x86_64 or ARM64)
+- `curl`, `git`, `sqlite3`
+- Rust toolchain (installed automatically)
+
+---
+
+## 🪄 One-Shot Installation
+
+From the repo root:
 
 ```bash
-git clone https://github.com/bokelleher/rust-pois.git
-cd rust-pois
 chmod +x install.sh
 sudo ./install.sh
 ```
 
-During setup you’ll be prompted for:
-- **Service user** → runs the POIS process (default `pois`)
-- **Listening port** → HTTP port to expose (default `8080`)
+You will be prompted for:
 
-The installer automatically:
-1. Installs dependencies (`build-essential`, `sqlite3`, `openssl`, `curl`, `git`)
-2. Installs the Rust toolchain
-3. Clones or updates POIS to `/opt/pois`
-4. Builds the release binary
-5. Applies SQL migrations to create `pois.db`
-6. Creates a system user & systemd service
-7. Starts POIS and opens the selected port in `ufw`
+- **System user** (default: `pois`)
+- **HTTP port** (default: `8080`)
 
----
+The installer will:
 
-## 🧱 3. Directory Layout
-
-| Path | Purpose |
-|------|----------|
-| `/opt/pois` | Application root |
-| `/opt/pois/migrations/` | SQL schema migrations |
-| `/opt/pois/pois.db` | SQLite database |
-| `/usr/local/bin/pois` | Installed binary |
-| `/etc/systemd/system/pois.service` | systemd unit file |
+1. Install dependencies (`build-essential`, `libssl-dev`, `sqlite3`, etc.)
+2. Build the release binary
+3. Copy it to `/usr/local/bin/pois`
+4. Create `/opt/pois/pois.db`
+5. Set up `/etc/systemd/system/pois.service`
+6. Start and enable the service
+7. Open the firewall port (if UFW is enabled)
 
 ---
 
-## 🧩 4. Managing the Service
+## ✅ Post-Install Verification
 
-| Task | Command |
-|------|----------|
-| Check status | `sudo systemctl status pois` |
-| Restart | `sudo systemctl restart pois` |
-| Stop | `sudo systemctl stop pois` |
-| Enable at boot | `sudo systemctl enable pois` |
-| View logs | `sudo journalctl -u pois -f` |
+Check that the service is running:
 
----
+```bash
+sudo systemctl status pois
+```
 
-## 🌐 5. Default Endpoints
+Confirm the default data:
 
-| Path | Description |
-|------|--------------|
-| `/` | Web UI |
-| `/events.html` | Event viewer |
-| `/api/...` | REST endpoints (if enabled) |
+```bash
+cd /opt/pois
+sqlite3 pois.db "SELECT id, name FROM channels;"
+sqlite3 pois.db "SELECT channel_id, name, action FROM rules;"
+```
+
+Expected output:
+
+| Table | Example Data |
+|--------|---------------|
+| channels | `(1, 'default')` |
+| rules | `(1, 'Default noop', 'noop')` |
 
 Visit in a browser:
 
 ```
-http://<server-ip>:<port>/
+http://<server-ip>:8080/
 ```
 
 ---
 
-## 🧾 6. Troubleshooting
+## 🧑‍💻 Developer Setup
 
-| Symptom | Cause | Resolution |
-|----------|--------|------------|
-| `bash: ./pois: No such file` | Binary not built | Run `cargo build --release` |
-| `cannot execute binary file` | Architecture mismatch | Rebuild on target host |
-| `sqlite3: No such file or directory` | Missing migrations | Re-run install or apply SQL manually |
-| Port not reachable | Firewall closed | `sudo ufw allow <port>/tcp` |
-| Service fails to start | Incorrect `ExecStart` path | Edit `/etc/systemd/system/pois.service` and reload |
-| Empty UI | Database uninitialized | Rerun migrations and restart service |
+Clone locally and use the provided `Makefile`:
 
----
-
-## 🧰 7. Maintenance
-
-Update to latest build:
 ```bash
-cd /opt/pois
-sudo git pull
-sudo cargo build --release
-sudo systemctl restart pois
+make run-dev
 ```
 
----
-
-## 🏁 8. Verification Checklist
-
-| Test | Expected Result |
-|------|-----------------|
-| `systemctl status pois` | active (running) |
-| `curl http://localhost:<port>/` | returns HTML |
-| `sqlite3 pois.db ".tables"` | shows channels, rules, esam_events |
-| Browser `/events.html` | loads event log page |
+This runs the app on `localhost:18080` with a temporary `pois.dev.db`.
 
 ---
 
-## 🪪 License
+## 🔁 Factory Reset (Wipe + Reseed)
 
-See [LICENSE](LICENSE).
+To reset to a fresh state **without reinstalling**:
+
+```bash
+sudo ./factory_reset.sh
+```
+
+It will:
+
+1. Stop the service
+2. Delete `/opt/pois/pois.db`
+3. Restart and automatically recreate the schema + default data
+
+⚠️ **This permanently deletes all channels, rules, and logged events.**
+
+---
+
+## 🧹 Uninstallation
+
+```bash
+sudo ./uninstall.sh
+```
+
+You will be prompted whether to remove the service user, app directory, and binary.
+
+---
+
+## 📄 License
+
+MIT License © 2025 Bo Kelleher
