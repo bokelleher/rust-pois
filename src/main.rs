@@ -21,7 +21,9 @@ use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 // Import event logging types
-use crate::event_logging::{EventLogger, ClientInfo, ProcessingMetrics, EsamEvent, EsamEventView, EventFilters};
+use crate::event_logging::{
+    ClientInfo, EsamEvent, EventFilters, EventLogger, ProcessingMetrics, EsamEventView,
+};
 
 // bring model types into scope
 use crate::esam::{build_notification, extract_facts};
@@ -48,21 +50,28 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Config from env ---
     let db_url = std::env::var("POIS_DB").unwrap_or_else(|_| "sqlite://pois.db".to_string());
-    let admin_token = std::env::var("POIS_ADMIN_TOKEN").unwrap_or_else(|_| "dev-token".to_string());
+    let admin_token =
+        std::env::var("POIS_ADMIN_TOKEN").unwrap_or_else(|_| "dev-token".to_string());
     let port: u16 = std::env::var("POIS_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(8080);
 
     // --- DB & migrations ---
-    let db = SqlitePoolOptions::new().max_connections(10).connect(&db_url).await?;
+    let db = SqlitePoolOptions::new()
+        .max_connections(10)
+        .connect(&db_url)
+        .await?;
     sqlx::migrate!().run(&db).await?;
+
+    // Seed default channel + rule if DB is empty
+    seed_default_channel_and_rule(&db).await?;
 
     // Initialize event logger
     let event_logger = EventLogger::new(db.clone());
 
-    let state = Arc::new(AppState { 
-        db, 
+    let state = Arc::new(AppState {
+        db,
         admin_token,
         event_logger,
     });
@@ -73,18 +82,24 @@ async fn main() -> anyhow::Result<()> {
         .route("/healthz", get(|| async { "ok" }))
         .route("/esam", post(handle_esam))
         .nest_service("/static", ServeDir::new("static"))
-        .route("/", get(|| async { axum::response::Redirect::temporary("/static/admin.html") }))
-        .route("/tools.html", get(|| async { axum::response::Redirect::temporary("/static/tools.html") }))
-        .route("/events.html", get(|| async { axum::response::Redirect::temporary("/static/events.html") })) // NEW
+        .route(
+            "/",
+            get(|| async { axum::response::Redirect::temporary("/static/admin.html") }),
+        )
+        .route(
+            "/tools.html",
+            get(|| async { axum::response::Redirect::temporary("/static/tools.html") }),
+        )
+        .route(
+            "/events.html",
+            get(|| async { axum::response::Redirect::temporary("/static/events.html") }),
+        ) // NEW
         .nest(
             "/api",
             {
-                let api = api_router()
-                    .with_state(state.clone())
-                    .route_layer(axum::middleware::from_fn_with_state(
-                        state.clone(),
-                        require_bearer,
-                    ));
+                let api = api_router().with_state(state.clone()).route_layer(
+                    axum::middleware::from_fn_with_state(state.clone(), require_bearer),
+                );
                 api
             },
         )
@@ -172,46 +187,55 @@ async fn handle_esam(
 ) -> impl IntoResponse {
     let start_time = Instant::now();
     let request_size = body.len() as i32;
-    
+
     // Extract client information for logging
     let client_info = ClientInfo::from_headers_and_addr(&headers, Some(addr));
-    
+
     // Extract facts from ESAM request
     let facts = match extract_facts(&body) {
         Ok(v) => v,
         Err(e) => {
             error!("ESAM parse error: {e}");
-            
+
             // Log failed parsing attempt
-            let channel_name = q.channel
-                .or_else(|| headers.get("X-POIS-Channel").and_then(|v| v.to_str().ok().map(String::from)))
+            let channel_name = q
+                .channel
+                .or_else(|| {
+                    headers
+                        .get("X-POIS-Channel")
+                        .and_then(|v| v.to_str().ok().map(String::from))
+                })
                 .unwrap_or_else(|| "unknown".to_string());
-            
+
             let metrics = ProcessingMetrics {
                 request_size: Some(request_size),
                 processing_time_ms: Some(start_time.elapsed().as_millis() as i32),
                 response_status: 400,
                 error_message: Some(format!("ESAM parsing failed: {}", e)),
             };
-            
+
             // Create minimal facts for logging
             let error_facts = serde_json::json!({
                 "acquisitionSignalID": "parse-error",
                 "utcPoint": "1970-01-01T00:00:00Z",
             });
-            
-            if let Err(log_err) = st.event_logger.log_esam_event(
-                &channel_name,
-                &error_facts,
-                None,
-                client_info,
-                metrics,
-                Some(&body),
-                None,
-            ).await {
+
+            if let Err(log_err) = st
+                .event_logger
+                .log_esam_event(
+                    &channel_name,
+                    &error_facts,
+                    None,
+                    client_info,
+                    metrics,
+                    Some(&body),
+                    None,
+                )
+                .await
+            {
                 error!("Failed to log ESAM event: {}", log_err);
             }
-            
+
             return (StatusCode::BAD_REQUEST, "invalid ESAM payload").into_response();
         }
     };
@@ -226,7 +250,10 @@ async fn handle_esam(
         .unwrap_or("1970-01-01T00:00:00Z");
 
     // CRITICAL FIX: Preserve original SCTE-35 payload for noop actions
-    let original_scte35_b64 = facts.get("scte35_b64").and_then(|v| v.as_str()).map(String::from);
+    let original_scte35_b64 = facts
+        .get("scte35_b64")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     // Resolve channel via query/header, fallback to "default"
     let channel_name = q
@@ -240,71 +267,82 @@ async fn handle_esam(
         .unwrap_or_else(|| "default".to_string());
 
     // Load channel and rules
-    let ch: Option<(i64,)> = match sqlx::query_as("SELECT id FROM channels WHERE name=? AND enabled=1")
-        .bind(&channel_name)
-        .fetch_optional(&st.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            error!("DB error loading channel: {e}");
-            
-            let metrics = ProcessingMetrics {
-                request_size: Some(request_size),
-                processing_time_ms: Some(start_time.elapsed().as_millis() as i32),
-                response_status: 500,
-                error_message: Some("Database error".to_string()),
-            };
-            
-            if let Err(log_err) = st.event_logger.log_esam_event(
-                &channel_name,
-                &facts,
-                None,
-                client_info,
-                metrics,
-                Some(&body),
-                None,
-            ).await {
-                error!("Failed to log ESAM event: {}", log_err);
-            }
-            
-            return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response();
-        }
-    };
-
-    let (action, mut params, matched_rule) = if let Some((channel_id,)) = ch {
-        let rules = match sqlx::query_as::<_, Rule>(
-            "SELECT * FROM rules WHERE channel_id=? AND enabled=1 ORDER BY priority",
-        )
-        .bind(channel_id)
-        .fetch_all(&st.db)
-        .await {
-            Ok(rules) => rules,
+    let ch: Option<(i64,)> =
+        match sqlx::query_as("SELECT id FROM channels WHERE name=? AND enabled=1")
+            .bind(&channel_name)
+            .fetch_optional(&st.db)
+            .await
+        {
+            Ok(v) => v,
             Err(e) => {
-                error!("DB error loading rules: {e}");
-                
+                error!("DB error loading channel: {e}");
+
                 let metrics = ProcessingMetrics {
                     request_size: Some(request_size),
                     processing_time_ms: Some(start_time.elapsed().as_millis() as i32),
                     response_status: 500,
-                    error_message: Some("Database error loading rules".to_string()),
+                    error_message: Some("Database error".to_string()),
                 };
-                
-                if let Err(log_err) = st.event_logger.log_esam_event(
-                    &channel_name,
-                    &facts,
-                    None,
-                    client_info,
-                    metrics,
-                    Some(&body),
-                    None,
-                ).await {
+
+                if let Err(log_err) = st
+                    .event_logger
+                    .log_esam_event(
+                        &channel_name,
+                        &facts,
+                        None,
+                        client_info,
+                        metrics,
+                        Some(&body),
+                        None,
+                    )
+                    .await
+                {
                     error!("Failed to log ESAM event: {}", log_err);
                 }
-                
+
                 return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response();
             }
         };
+
+    let (action, mut params, matched_rule) = if let Some((channel_id,)) = ch {
+        let rules =
+            match sqlx::query_as::<_, Rule>(
+                "SELECT * FROM rules WHERE channel_id=? AND enabled=1 ORDER BY priority",
+            )
+            .bind(channel_id)
+            .fetch_all(&st.db)
+            .await
+            {
+                Ok(rules) => rules,
+                Err(e) => {
+                    error!("DB error loading rules: {e}");
+
+                    let metrics = ProcessingMetrics {
+                        request_size: Some(request_size),
+                        processing_time_ms: Some(start_time.elapsed().as_millis() as i32),
+                        response_status: 500,
+                        error_message: Some("Database error loading rules".to_string()),
+                    };
+
+                    if let Err(log_err) = st
+                        .event_logger
+                        .log_esam_event(
+                            &channel_name,
+                            &facts,
+                            None,
+                            client_info,
+                            metrics,
+                            Some(&body),
+                            None,
+                        )
+                        .await
+                    {
+                        error!("Failed to log ESAM event: {}", log_err);
+                    }
+
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response();
+                }
+            };
 
         let map = facts.as_object().cloned().unwrap_or_default();
         let mut chosen: Option<(String, serde_json::Value, Rule)> = None;
@@ -319,7 +357,7 @@ async fn handle_esam(
                 break;
             }
         }
-        
+
         match chosen {
             Some((action, params, rule)) => (action, params, Some(rule)),
             None => ("noop".into(), serde_json::json!({}), None),
@@ -340,11 +378,11 @@ async fn handle_esam(
 
     // Build ESAM response XML
     let xml_response = build_notification(acq_id, utc, &action, &params);
-    
+
     // Calculate final metrics
     let processing_time_ms = start_time.elapsed().as_millis() as i32;
     let response_status = 200;
-    
+
     let metrics = ProcessingMetrics {
         request_size: Some(request_size),
         processing_time_ms: Some(processing_time_ms),
@@ -354,15 +392,19 @@ async fn handle_esam(
 
     // Log the successful event
     let matched_rule_info = matched_rule.as_ref().map(|rule| (rule, action.as_str()));
-    if let Err(e) = st.event_logger.log_esam_event(
-        &channel_name,
-        &facts,
-        matched_rule_info,
-        client_info,
-        metrics,
-        Some(&body),
-        Some(&xml_response),
-    ).await {
+    if let Err(e) = st
+        .event_logger
+        .log_esam_event(
+            &channel_name,
+            &facts,
+            matched_rule_info,
+            client_info,
+            metrics,
+            Some(&body),
+            Some(&xml_response),
+        )
+        .await
+    {
         error!("Failed to log ESAM event: {}", e);
         // Continue processing - logging failure shouldn't break the main flow
     }
@@ -385,15 +427,10 @@ async fn handle_esam_with_path(
     body: String,
 ) -> impl IntoResponse {
     // Reuse the exact logic in handle_esam by constructing the same inputs
-    let q = EsamQuery { channel: Some(p.channel) };
-    // Wrap back into axum extractors and delegate
-    handle_esam(
-        State(st),
-        Query(q),
-        headers,
-        ConnectInfo(addr),
-        body
-    ).await
+    let q = EsamQuery {
+        channel: Some(p.channel),
+    };
+    handle_esam(State(st), Query(q), headers, ConnectInfo(addr), body).await
 }
 
 // Event logging API handlers
@@ -401,22 +438,28 @@ async fn list_events(
     State(st): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let limit = params.get("limit")
+    let limit = params
+        .get("limit")
         .and_then(|s| s.parse().ok())
         .unwrap_or(100)
         .min(1000); // Cap at 1000
-        
-    let offset = params.get("offset")
+
+    let offset = params
+        .get("offset")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    
+
     let filters = EventFilters {
         channel_name: params.get("channel").cloned(),
         action: params.get("action").cloned(),
         since: params.get("since").cloned(),
     };
-    
-    match st.event_logger.get_recent_events(limit, offset, Some(filters)).await {
+
+    match st
+        .event_logger
+        .get_recent_events(limit, offset, Some(filters))
+        .await
+    {
         Ok(events) => Json(events).into_response(),
         Err(e) => {
             error!("Failed to fetch events: {}", e);
@@ -429,8 +472,12 @@ async fn get_event_stats(State(st): State<Arc<AppState>>) -> impl IntoResponse {
     match st.event_logger.get_event_stats().await {
         Ok(stats) => Json(stats).into_response(),
         Err(e) => {
-            error!("Failed to fetch event stats: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch stats").into_response()
+            error!("Failed to fetch stats: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to fetch stats",
+            )
+                .into_response()
         }
     }
 }
@@ -442,12 +489,17 @@ async fn get_event_detail(
     match sqlx::query_as::<_, EsamEvent>("SELECT * FROM esam_events WHERE id = ?")
         .bind(id)
         .fetch_optional(&st.db)
-        .await {
+        .await
+    {
         Ok(Some(event)) => Json(event).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "Event not found").into_response(),
         Err(e) => {
             error!("Failed to fetch event {}: {}", id, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Database error",
+            )
+                .into_response()
         }
     }
 }
@@ -613,10 +665,19 @@ async fn reorder_rules(
     (StatusCode::NO_CONTENT, ()).into_response()
 }
 
-async fn dryrun(State(st): State<Arc<AppState>>, Json(p): Json<DryRunRequest>) -> impl IntoResponse {
+async fn dryrun(
+    State(st): State<Arc<AppState>>,
+    Json(p): Json<DryRunRequest>,
+) -> impl IntoResponse {
     let facts = match extract_facts(&p.esam_xml) {
         Ok(v) => v,
-        Err(e) => return (StatusCode::BAD_REQUEST, format!("parse error: {e}")).into_response(),
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("parse error: {e}"),
+            )
+                .into_response()
+        }
     };
     let ch: Option<(i64,)> =
         match sqlx::query_as("SELECT id FROM channels WHERE name=? AND enabled=1")
@@ -628,26 +689,30 @@ async fn dryrun(State(st): State<Arc<AppState>>, Json(p): Json<DryRunRequest>) -
             Err(e) => return err(e),
         };
     let Some((channel_id,)) = ch else {
-        return (StatusCode::NOT_FOUND, "channel not found or disabled").into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            "channel not found or disabled",
+        )
+            .into_response();
     };
 
-    let rules = match sqlx::query_as::<_, Rule>(
-        "SELECT * FROM rules WHERE channel_id=? AND enabled=1 ORDER BY priority",
-    )
-    .bind(channel_id)
-    .fetch_all(&st.db)
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => return err(e),
-    };
+    let rules =
+        match sqlx::query_as::<_, Rule>(
+            "SELECT * FROM rules WHERE channel_id=? AND enabled=1 ORDER BY priority",
+        )
+        .bind(channel_id)
+        .fetch_all(&st.db)
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        };
 
     let map = facts.as_object().cloned().unwrap_or_default();
     for r in rules {
         let m: serde_json::Value =
             serde_json::from_str(&r.match_json).unwrap_or(serde_json::json!({}));
         if rule_matches(&m, &map) {
-            // we could also reflect any builder outputs here if desired
             return Json(DryRunResult {
                 matched_rule_id: Some(r.id),
                 action: r.action.clone(),
@@ -681,7 +746,13 @@ async fn build_scte35(Json(req): Json<BuildReq>) -> impl IntoResponse {
     let b64 = match req.command.as_str() {
         "time_signal_immediate" => scte35::build_time_signal_immediate_b64(),
         "splice_insert_out" => scte35::build_splice_insert_out_b64(req.duration_s.unwrap_or(0)),
-        _ => return (StatusCode::BAD_REQUEST, "unknown command").into_response(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "unknown command",
+            )
+                .into_response()
+        }
     };
     Json(BuildResp { scte35_b64: b64 }).into_response()
 }
@@ -692,7 +763,10 @@ fn maybe_build_scte35(mut params: serde_json::Value) -> serde_json::Value {
             let out = match cmd {
                 "time_signal_immediate" => scte35::build_time_signal_immediate_b64(),
                 "splice_insert_out" => {
-                    let dur = build.get("duration_s").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                    let dur = build
+                        .get("duration_s")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
                     scte35::build_splice_insert_out_b64(dur)
                 }
                 _ => String::new(),
@@ -703,6 +777,44 @@ fn maybe_build_scte35(mut params: serde_json::Value) -> serde_json::Value {
         }
     }
     params
+}
+
+// ------------------------ DB seeding helper ------------------------
+
+async fn seed_default_channel_and_rule(db: &Pool<Sqlite>) -> anyhow::Result<()> {
+    // Check if any channels exist
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM channels")
+        .fetch_one(db)
+        .await?;
+
+    if count == 0 {
+        // Insert a default channel
+        let default_channel: Channel = sqlx::query_as(
+            "INSERT INTO channels(name,enabled,timezone) VALUES(?,?,?) RETURNING *",
+        )
+        .bind("default")
+        .bind(1_i64)
+        .bind("UTC")
+        .fetch_one(db)
+        .await?;
+
+        // Insert a default noop rule for that channel
+        sqlx::query(
+            "INSERT INTO rules(channel_id,name,priority,enabled,match_json,action,params_json) \
+             VALUES(?,?,?,?,?,?,?)",
+        )
+        .bind(default_channel.id)
+        .bind("Default noop")
+        .bind(0_i64)
+        .bind(1_i64)
+        .bind("{}") // empty match_json
+        .bind("noop")
+        .bind("{}") // empty params_json
+        .execute(db)
+        .await?;
+    }
+
+    Ok(())
 }
 
 // ----------------------------- helpers -----------------------------
