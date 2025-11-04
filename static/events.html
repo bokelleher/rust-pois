@@ -5,177 +5,120 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>POIS Event Monitor</title>
   <link rel="stylesheet" href="/static/app.css">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    .action-noop { background-color: #f3f4f6; color: #374151; }
-    .action-delete { background-color: #fee2e2; color: #dc2626; }
-    .action-replace { background-color: #dcfce7; color: #16a34a; }
-    .status-200 { color: #16a34a; }
-    .status-400 { color: #dc2626; }
-    .status-500 { color: #dc2626; }
-    
-    .sortable-header {
-      cursor: pointer;
-      user-select: none;
-    }
-    .sortable-header:hover {
-      background-color: var(--surface-2);
-    }
-    .sort-indicator {
-      display: inline-block;
-      margin-left: 4px;
-      opacity: 0.5;
-    }
-    
-    .filter-bar {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 16px;
-      margin-bottom: 16px;
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    
-    .stat-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 12px;
-      text-align: center;
-      min-width: 120px;
-    }
-    
-    .stat-number {
-      font-size: 1.5rem;
-      font-weight: 600;
-      color: var(--accent);
-    }
-    
-    .auto-refresh {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-  </style>
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <a href="/"><span class="logo">POIS</span></a>
+      <a href="/">
+        <!-- Option 1: Use your own logo image -->
+        <!-- <img src="/static/logo.png" alt="POIS" class="logo"> -->
+        
+        <!-- Option 2: Use text logo (default) -->
+        <span class="logo-text">POIS</span>
+      </a>
       <a href="/static/events.html" class="brand-sub">Events</a>
     </div>
     <nav class="nav">
       <a href="/static/admin.html">Channels & Rules</a>
       <a href="/static/tools.html">SCTE-35 Builder</a>
-      <a href="/static/events.html" style="font-weight: bold;">Event Monitor</a>
+      <a href="/static/events.html" class="active">Event Monitor</a>
     </nav>
     <div class="spacer"></div>
-    <div class="right row">
+    <div class="right">
       <span id="tokenDisplay">token: unset</span>
       <button class="btn" id="logoutBtn">Logout</button>
     </div>
   </header>
 
-  <main class="content" style="max-width: 1400px; margin: 24px auto; padding: 0 16px;">
+  <main class="content events-max-width">
     <div class="flex justify-between items-center mb-6">
-      <h1 class="text-2xl font-bold">ESAM Event Monitor</h1>
+      <h1>ESAM Event Monitor</h1>
       <div class="auto-refresh">
         <label class="flex items-center gap-2">
           <input type="checkbox" id="autoRefresh" checked>
-          Auto-refresh (30s)
+          <span>Auto-refresh (30s)</span>
         </label>
         <button class="btn btn-primary" id="refreshBtn">Refresh Now</button>
       </div>
     </div>
 
     <!-- Statistics Cards -->
-    <div class="flex gap-4 mb-6 overflow-x-auto">
+    <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-number" id="totalEvents">--</div>
-        <div class="text-sm text-muted">Total Events</div>
+        <div class="stat-label">Total Events</div>
       </div>
       <div class="stat-card">
         <div class="stat-number" id="last24hEvents">--</div>
-        <div class="text-sm text-muted">Last 24h</div>
+        <div class="stat-label">Last 24h</div>
       </div>
       <div class="stat-card">
         <div class="stat-number" id="avgProcessingTime">--</div>
-        <div class="text-sm text-muted">Avg Time (ms)</div>
+        <div class="stat-label">Avg Time (ms)</div>
       </div>
-      <div class="stat-card" id="actionStats">
-        <div class="text-sm text-muted">Actions (24h)</div>
-        <div id="actionBreakdown">--</div>
+      <div class="stat-card">
+        <div class="stat-label">Actions (24h)</div>
+        <div id="actionBreakdown" class="text-sm mt-2">--</div>
       </div>
     </div>
 
     <!-- Filters -->
     <div class="filter-bar">
-      <label>
-        Channel:
-        <select id="channelFilter" class="ml-2">
+      <div class="form-group">
+        <label>Channel</label>
+        <select id="channelFilter">
           <option value="">All Channels</option>
         </select>
-      </label>
-      <label>
-        Action:
-        <select id="actionFilter" class="ml-2">
+      </div>
+      <div class="form-group">
+        <label>Action</label>
+        <select id="actionFilter">
           <option value="">All Actions</option>
           <option value="noop">noop</option>
           <option value="delete">delete</option>
           <option value="replace">replace</option>
         </select>
-      </label>
-      <label>
-        Since:
-        <select id="sinceFilter" class="ml-2">
+      </div>
+      <div class="form-group">
+        <label>Since</label>
+        <select id="sinceFilter">
           <option value="">All Time</option>
           <option value="1h">Last Hour</option>
           <option value="24h">Last 24 Hours</option>
           <option value="7d">Last 7 Days</option>
+          <option value="30d">Last 30 Days</option>
         </select>
-      </label>
-      <button class="btn" id="clearFilters">Clear Filters</button>
-      <div class="spacer"></div>
-      <div class="text-sm text-muted" id="eventCount">Loading events...</div>
+      </div>
+      <div class="form-group">
+        <label>Search</label>
+        <input type="text" id="searchInput" placeholder="Signal ID, IP, or Rule...">
+      </div>
     </div>
 
     <!-- Events Table -->
-    <div class="card" style="overflow-x: auto;">
-      <table class="min-w-full">
+    <div class="panel" style="padding: 0;">
+      <table>
         <thead>
-          <tr class="border-b">
-            <th class="sortable-header text-left p-3" data-sort="timestamp">
-              Timestamp <span class="sort-indicator">↕</span>
+          <tr>
+            <th class="sortable-header" data-sort="timestamp">
+              Timestamp<span class="sort-indicator">↕</span>
             </th>
-            <th class="sortable-header text-left p-3" data-sort="channel_name">
-              Channel <span class="sort-indicator">↕</span>
+            <th class="sortable-header" data-sort="channel_name">
+              Channel<span class="sort-indicator">↕</span>
             </th>
-            <th class="sortable-header text-left p-3" data-sort="acquisition_signal_id">
-              Signal ID <span class="sort-indicator">↕</span>
+            <th>Signal ID</th>
+            <th>Source IP</th>
+            <th>SCTE-35 Cmd</th>
+            <th>PTS Time</th>
+            <th>Matched Rule</th>
+            <th class="sortable-header" data-sort="action">
+              Action<span class="sort-indicator">↕</span>
             </th>
-            <th class="sortable-header text-left p-3" data-sort="source_ip">
-              Source IP <span class="sort-indicator">↕</span>
+            <th class="text-right sortable-header" data-sort="processing_time_ms">
+              Time (ms)<span class="sort-indicator">↕</span>
             </th>
-            <th class="sortable-header text-left p-3" data-sort="scte35_command">
-              SCTE-35 Command <span class="sort-indicator">↕</span>
-            </th>
-            <th class="text-left p-3">PTS Time</th>
-            <th class="sortable-header text-left p-3" data-sort="matched_rule_name">
-              Matched Rule <span class="sort-indicator">↕</span>
-            </th>
-            <th class="sortable-header text-left p-3" data-sort="action">
-              Action <span class="sort-indicator">↕</span>
-            </th>
-            <th class="sortable-header text-right p-3" data-sort="processing_time_ms">
-              Time (ms) <span class="sort-indicator">↕</span>
-            </th>
-            <th class="sortable-header text-right p-3" data-sort="response_status">
-              Status <span class="sort-indicator">↕</span>
-            </th>
-            <th class="text-left p-3">Details</th>
+            <th class="text-right">Status</th>
+            <th>Details</th>
           </tr>
         </thead>
         <tbody id="eventsTableBody">
@@ -184,34 +127,34 @@
           </tr>
         </tbody>
       </table>
-      
-      <!-- Pagination -->
-      <div class="flex justify-between items-center p-4 border-t">
-        <div class="text-sm text-muted">
-          Showing <span id="showingStart">0</span> to <span id="showingEnd">0</span> of <span id="totalCount">0</span> events
-        </div>
-        <div class="flex gap-2">
-          <button class="btn" id="prevPage" disabled>Previous</button>
-          <span class="flex items-center px-3">Page <span id="currentPage">1</span></span>
-          <button class="btn" id="nextPage">Next</button>
-        </div>
-      </div>
     </div>
 
-    <!-- Event Detail Modal -->
-    <div id="eventDetailModal" class="fixed inset-0 bg-black/30 flex items-center justify-center hidden">
-      <div class="bg-white rounded-xl shadow-xl w-[800px] max-h-[90vh] overflow-y-auto">
-        <div class="flex justify-between items-center p-4 border-b">
-          <h3 class="text-lg font-semibold">Event Details</h3>
-          <button class="btn" id="closeModal">×</button>
-        </div>
-        <div class="p-4" id="eventDetailContent">
-          <!-- Event details will be populated here -->
-        </div>
+    <!-- Pagination -->
+    <div class="pagination">
+      <div class="pagination-info">
+        Showing <span id="showingStart">0</span>-<span id="showingEnd">0</span> | 
+        <span id="eventCount">0 events</span>
+      </div>
+      <div class="pagination-controls">
+        <button id="prevPage" class="btn">← Previous</button>
+        <span class="text-muted">Page <span id="currentPage">1</span></span>
+        <button id="nextPage" class="btn">Next →</button>
       </div>
     </div>
   </main>
 
+  <!-- Event Detail Modal -->
+  <div id="eventDetailModal" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title">Event Details</h2>
+        <button class="btn" onclick="eventMonitor.closeEventDetail()">Close</button>
+      </div>
+      <div class="modal-content" id="eventDetailContent"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
   <script>
     class EventMonitor {
       constructor() {
@@ -219,25 +162,30 @@
         this.pageSize = 50;
         this.sortBy = 'timestamp';
         this.sortOrder = 'desc';
-        this.filters = {};
+        this.filters = {
+          channel: '',
+          action: '',
+          since: '',
+          search: ''
+        };
         this.autoRefreshInterval = null;
-        this.token = localStorage.getItem('pois_token') || '';
-        
-        this.initEventListeners();
-        this.loadInitialData();
+        this.init();
+      }
+
+      init() {
+        this.setupEventListeners();
+        this.loadEvents();
+        this.loadChannels();
+        this.loadStatistics();
         this.startAutoRefresh();
       }
 
-      initEventListeners() {
-        // Token management
-        document.getElementById('tokenDisplay').textContent = this.token ? `token: ${this.token}` : 'token: unset';
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-          localStorage.removeItem('pois_token');
-          location.reload();
+      setupEventListeners() {
+        document.getElementById('refreshBtn').addEventListener('click', () => {
+          this.loadEvents();
+          this.loadStatistics();
         });
 
-        // Refresh controls
-        document.getElementById('refreshBtn').addEventListener('click', () => this.loadEvents());
         document.getElementById('autoRefresh').addEventListener('change', (e) => {
           if (e.target.checked) {
             this.startAutoRefresh();
@@ -246,35 +194,33 @@
           }
         });
 
-        // Filters
         document.getElementById('channelFilter').addEventListener('change', (e) => {
-          this.filters.channel = e.target.value || undefined;
+          this.filters.channel = e.target.value;
           this.currentPage = 1;
           this.loadEvents();
         });
 
         document.getElementById('actionFilter').addEventListener('change', (e) => {
-          this.filters.action = e.target.value || undefined;
+          this.filters.action = e.target.value;
           this.currentPage = 1;
           this.loadEvents();
         });
 
         document.getElementById('sinceFilter').addEventListener('change', (e) => {
-          this.filters.since = this.getSinceTimestamp(e.target.value);
+          this.filters.since = e.target.value;
           this.currentPage = 1;
           this.loadEvents();
         });
 
-        document.getElementById('clearFilters').addEventListener('click', () => {
-          this.filters = {};
-          document.getElementById('channelFilter').value = '';
-          document.getElementById('actionFilter').value = '';
-          document.getElementById('sinceFilter').value = '';
-          this.currentPage = 1;
-          this.loadEvents();
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+          this.filters.search = e.target.value;
+          clearTimeout(this.searchTimeout);
+          this.searchTimeout = setTimeout(() => {
+            this.currentPage = 1;
+            this.loadEvents();
+          }, 300);
         });
 
-        // Pagination
         document.getElementById('prevPage').addEventListener('click', () => {
           if (this.currentPage > 1) {
             this.currentPage--;
@@ -287,95 +233,75 @@
           this.loadEvents();
         });
 
-        // Sorting
         document.querySelectorAll('.sortable-header').forEach(header => {
           header.addEventListener('click', () => {
-            const newSort = header.dataset.sort;
-            if (this.sortBy === newSort) {
+            const sortField = header.dataset.sort;
+            if (this.sortBy === sortField) {
               this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
             } else {
-              this.sortBy = newSort;
+              this.sortBy = sortField;
               this.sortOrder = 'desc';
             }
             this.updateSortIndicators();
             this.loadEvents();
           });
         });
-
-        // Modal
-        document.getElementById('closeModal').addEventListener('click', () => {
-          document.getElementById('eventDetailModal').classList.add('hidden');
-        });
       }
 
-      async loadInitialData() {
-        await Promise.all([
-          this.loadStats(),
-          this.loadChannels(),
-          this.loadEvents()
-        ]);
+      startAutoRefresh() {
+        this.stopAutoRefresh();
+        this.autoRefreshInterval = setInterval(() => {
+          this.loadEvents();
+          this.loadStatistics();
+        }, 30000);
       }
 
-      async apiCall(endpoint, options = {}) {
-        const response = await fetch(`/api${endpoint}`, {
-          headers: {
-            'Authorization': `Bearer ${this.token}`,
-            'Content-Type': 'application/json',
-            ...options.headers
-          },
-          ...options
-        });
-
-        if (!response.ok) {
-          throw new Error(`API call failed: ${response.status}`);
-        }
-
-        return response.json();
-      }
-
-      async loadStats() {
-        try {
-          const stats = await this.apiCall('/events/stats');
-          
-          document.getElementById('totalEvents').textContent = stats.total_events.toLocaleString();
-          document.getElementById('last24hEvents').textContent = stats.last_24h_events.toLocaleString();
-          document.getElementById('avgProcessingTime').textContent = 
-            stats.avg_processing_time_ms ? Math.round(stats.avg_processing_time_ms) : '--';
-
-          // Action breakdown
-          const actionHtml = Object.entries(stats.action_counts)
-            .map(([action, count]) => `<div class="text-xs"><span class="action-${action} px-1 rounded">${action}</span>: ${count}</div>`)
-            .join('');
-          document.getElementById('actionBreakdown').innerHTML = actionHtml || '--';
-
-        } catch (error) {
-          console.error('Failed to load stats:', error);
+      stopAutoRefresh() {
+        if (this.autoRefreshInterval) {
+          clearInterval(this.autoRefreshInterval);
+          this.autoRefreshInterval = null;
         }
       }
 
       async loadChannels() {
         try {
-          const channels = await this.apiCall('/channels');
+          const response = await fetch('/api/channels', {
+            headers: { 'Authorization': `Bearer ${POIS_TOKEN.get()}` }
+          });
+          const channels = await response.json();
+          
           const select = document.getElementById('channelFilter');
-          
-          // Keep current selection
-          const currentValue = select.value;
-          
-          // Clear existing options except "All Channels"
-          select.innerHTML = '<option value="">All Channels</option>';
-          
-          channels.forEach(channel => {
+          channels.forEach(ch => {
             const option = document.createElement('option');
-            option.value = channel.name;
-            option.textContent = channel.name;
+            option.value = ch.name;
+            option.textContent = ch.name;
             select.appendChild(option);
           });
-          
-          // Restore selection
-          select.value = currentValue;
-          
         } catch (error) {
           console.error('Failed to load channels:', error);
+        }
+      }
+
+      async loadStatistics() {
+        try {
+          const response = await fetch('/api/events/stats', {
+            headers: { 'Authorization': `Bearer ${POIS_TOKEN.get()}` }
+          });
+          const stats = await response.json();
+          
+          document.getElementById('totalEvents').textContent = stats.total_events || '--';
+          document.getElementById('last24hEvents').textContent = stats.last_24h_events || '--';
+          document.getElementById('avgProcessingTime').textContent = 
+            stats.avg_processing_time_ms ? stats.avg_processing_time_ms.toFixed(1) : '--';
+          
+          if (stats.action_counts) {
+            const breakdown = Object.entries(stats.action_counts)
+              .map(([action, count]) => `${action}: ${count}`)
+              .join('<br>');
+            document.getElementById('actionBreakdown').innerHTML = breakdown;
+          }
+        } catch (error) {
+          console.error('Failed to load statistics:', error);
         }
       }
 
@@ -389,15 +315,20 @@
           if (this.filters.channel) params.append('channel', this.filters.channel);
           if (this.filters.action) params.append('action', this.filters.action);
           if (this.filters.since) params.append('since', this.filters.since);
+          if (this.filters.search) params.append('search', this.filters.search);
 
-          const events = await this.apiCall(`/events?${params}`);
+          const response = await fetch(`/api/events?${params}`, {
+            headers: { 'Authorization': `Bearer ${POIS_TOKEN.get()}` }
+          });
+          const events = await response.json();
+          
           this.renderEventsTable(events);
           this.updatePagination(events.length);
           
         } catch (error) {
           console.error('Failed to load events:', error);
           document.getElementById('eventsTableBody').innerHTML = 
-            '<tr><td colspan="11" class="text-center p-8 text-red-600">Failed to load events</td></tr>';
+            '<tr><td colspan="11" class="text-center p-8 text-error">Failed to load events</td></tr>';
         }
       }
 
@@ -410,7 +341,7 @@
         }
 
         tbody.innerHTML = events.map(event => `
-          <tr class="border-b hover:bg-gray-50 cursor-pointer" onclick="eventMonitor.showEventDetail(${event.id})">
+          <tr class="cursor-pointer" onclick="eventMonitor.showEventDetail(${event.id})">
             <td class="p-3 text-sm">${this.formatTimestamp(event.timestamp)}</td>
             <td class="p-3 text-sm font-medium">${this.escapeHtml(event.channel_name)}</td>
             <td class="p-3 text-sm font-mono">${this.escapeHtml(event.acquisition_signal_id)}</td>
@@ -419,14 +350,14 @@
             <td class="p-3 text-sm font-mono">${this.formatPtsTime(event['scte35.pts_time'])}</td>
             <td class="p-3 text-sm">${event.matched_rule_name || '<span class="text-muted">no match</span>'}</td>
             <td class="p-3">
-              <span class="action-${event.action} px-2 py-1 rounded text-xs font-medium">${event.action}</span>
+              <span class="action-${event.action}">${event.action}</span>
             </td>
             <td class="p-3 text-sm text-right">${event.processing_time_ms || '--'}</td>
             <td class="p-3 text-right">
-              <span class="status-${event.response_status} text-sm font-medium">${event.response_status}</span>
+              <span class="status-${event.response_status}">${event.response_status}</span>
             </td>
-            <td class="p-3">
-              <button class="text-blue-600 hover:underline text-sm">View</button>
+            <td class="p-3 text-center">
+              <button class="btn btn-small" onclick="event.stopPropagation(); eventMonitor.showEventDetail(${event.id})">View</button>
             </td>
           </tr>
         `).join('');
@@ -434,203 +365,51 @@
 
       async showEventDetail(eventId) {
         try {
-          const event = await this.apiCall(`/events/${eventId}`);
+          const response = await fetch(`/api/events/${eventId}`, {
+            headers: { 'Authorization': `Bearer ${POIS_TOKEN.get()}` }
+          });
+          const event = await response.json();
+          
           const modal = document.getElementById('eventDetailModal');
           const content = document.getElementById('eventDetailContent');
           
-          // Build SCTE-35 details with both raw and decoded values
-          const scte35Details = this.buildScte35Details(event);
-          
           content.innerHTML = `
-            <div class="grid grid-cols-2 gap-4">
-              <div>
-                <h4 class="font-semibold mb-2">Basic Information</h4>
-                <div class="space-y-1 text-sm">
-                  <div><strong>Event ID:</strong> ${event.id}</div>
-                  <div><strong>Timestamp:</strong> ${this.formatTimestamp(event.timestamp)}</div>
-                  <div><strong>Channel:</strong> ${event.channel_name}</div>
-                  <div><strong>Signal ID:</strong> ${event.acquisition_signal_id}</div>
-                  <div><strong>UTC Point:</strong> ${event.utc_point}</div>
-                  <div><strong>Source IP:</strong> ${event.source_ip || 'Unknown'}</div>
-                  <div><strong>User Agent:</strong> ${event.user_agent || 'Unknown'}</div>
-                </div>
-              </div>
-              
-              <div>
-                <h4 class="font-semibold mb-2">Processing Details</h4>
-                <div class="space-y-1 text-sm">
-                  <div><strong>Action:</strong> <span class="action-${event.action} px-2 py-1 rounded">${event.action}</span></div>
-                  <div><strong>Matched Rule:</strong> ${event.matched_rule_name || 'None'} ${event.matched_rule_id ? `(ID: ${event.matched_rule_id})` : ''}</div>
-                  <div><strong>Processing Time:</strong> ${event.processing_time_ms}ms</div>
-                  <div><strong>Response Status:</strong> <span class="status-${event.response_status}">${event.response_status}</span></div>
-                  <div><strong>Request Size:</strong> ${event.request_size} bytes</div>
-                  ${event.error_message ? `<div><strong>Error:</strong> <span class="text-red-600">${event.error_message}</span></div>` : ''}
-                </div>
-              </div>
-              
-              ${scte35Details}
-              
-              ${event.raw_esam_request ? `
-                <div class="col-span-2">
-                  <h4 class="font-semibold mb-2">Raw ESAM Request</h4>
-                  <pre class="bg-gray-100 p-3 rounded text-xs overflow-x-auto">${this.escapeHtml(event.raw_esam_request)}</pre>
+            <div style="display: flex; flex-direction: column; gap: 16px;">
+              <div><strong>Event ID:</strong> ${event.id}</div>
+              <div><strong>Timestamp:</strong> ${this.formatTimestamp(event.timestamp)}</div>
+              <div><strong>Channel:</strong> ${event.channel_name}</div>
+              <div><strong>Acquisition Signal ID:</strong> ${event.acquisition_signal_id}</div>
+              <div><strong>Source IP:</strong> ${event.source_ip || 'N/A'}</div>
+              <div><strong>Action:</strong> <span class="action-${event.action}">${event.action}</span></div>
+              <div><strong>Processing Time:</strong> ${event.processing_time_ms} ms</div>
+              <div><strong>Response Status:</strong> <span class="status-${event.response_status}">${event.response_status}</span></div>
+              ${event.matched_rule_name ? `<div><strong>Matched Rule:</strong> ${event.matched_rule_name}</div>` : ''}
+              ${event.scte35_command ? `<div><strong>SCTE-35 Command:</strong> ${event.scte35_command}</div>` : ''}
+              ${event['scte35.pts_time'] ? `<div><strong>PTS Time:</strong> ${this.formatPtsTime(event['scte35.pts_time'])}</div>` : ''}
+              ${event.esam_request_xml ? `
+                <div>
+                  <strong>ESAM Request XML:</strong>
+                  <pre class="mt-2">${this.escapeHtml(event.esam_request_xml)}</pre>
                 </div>
               ` : ''}
-              
-              ${event.raw_esam_response ? `
-                <div class="col-span-2">
-                  <h4 class="font-semibold mb-2">Raw ESAM Response</h4>
-                  <pre class="bg-gray-100 p-3 rounded text-xs overflow-x-auto">${this.escapeHtml(event.raw_esam_response)}</pre>
+              ${event.esam_response_xml ? `
+                <div>
+                  <strong>ESAM Response XML:</strong>
+                  <pre class="mt-2">${this.escapeHtml(event.esam_response_xml)}</pre>
                 </div>
               ` : ''}
             </div>
           `;
           
           modal.classList.remove('hidden');
-          
         } catch (error) {
-          console.error('Failed to load event detail:', error);
+          console.error('Failed to load event details:', error);
           alert('Failed to load event details');
         }
       }
 
-      buildScte35Details(event) {
-        // Build comprehensive SCTE-35 details showing both raw and decoded values
-        const details = [];
-        
-        if (event.scte35_command) {
-          details.push(`<div><strong>Command:</strong> ${event.scte35_command}</div>`);
-        }
-        
-        // Segmentation Type - show human-readable, hex, and decimal values
-        const rawTypeId = event.scte35_type_id || event['scte35.segmentation_type_id'];
-        const decodedName = event['scte35.segmentation_type_name'];
-        
-        if (rawTypeId || decodedName) {
-          let typeDisplay = '';
-          
-          // Try to extract hex value and convert to decimal
-          if (rawTypeId) {
-            let hexValue = rawTypeId;
-            let decimalValue = '';
-            
-            // Extract hex number (remove 0x prefix if present)
-            const hexMatch = rawTypeId.match(/0x([0-9A-Fa-f]+)/);
-            if (hexMatch) {
-              const hexNumber = hexMatch[1];
-              decimalValue = parseInt(hexNumber, 16);
-              hexValue = rawTypeId;
-            }
-            
-            if (decodedName) {
-              // Show: Human-readable (hex) - decimal
-              typeDisplay = `${decodedName}`;
-              if (decimalValue) {
-                typeDisplay += ` - ${decimalValue}`;
-              }
-            } else {
-              // Fallback: decode it ourselves from the hex value
-              if (hexMatch) {
-                const typeId = parseInt(hexMatch[1], 16);
-                const decoded = this.decodeSegmentationType(typeId);
-                typeDisplay = `${decoded} - ${decimalValue}`;
-              } else {
-                typeDisplay = rawTypeId;
-              }
-            }
-          } else if (decodedName) {
-            typeDisplay = decodedName;
-          }
-          
-          details.push(`<div><strong>Segmentation Type:</strong> ${typeDisplay}</div>`);
-        }
-        
-        // UPID - show decoded type and data
-        const upidTypeName = event['scte35.upid_type_name'];
-        const upidData = event['scte35.segmentation_upid'] || event.scte35_upid;
-        
-        if (upidTypeName) {
-          details.push(`<div><strong>UPID Type:</strong> ${upidTypeName}</div>`);
-        }
-        
-        if (upidData) {
-          details.push(`<div><strong>UPID Data:</strong> ${upidData}</div>`);
-        }
-        
-        // PTS Time if available - show both ticks and converted time
-        if (event['scte35.pts_time']) {
-          const ptsFormatted = this.formatPtsTimeDetailed(event['scte35.pts_time']);
-          details.push(`<div><strong>PTS Time:</strong> ${ptsFormatted}</div>`);
-        }
-        
-        // Raw SCTE-35 data if available
-        if (event.scte35_b64) {
-          details.push(`<div><strong>Raw SCTE-35:</strong> <code class="text-xs bg-gray-100 px-1 rounded">${event.scte35_b64}</code></div>`);
-        }
-        
-        if (details.length === 0) {
-          details.push('<div class="text-gray-500">No SCTE-35 data available</div>');
-        }
-        
-        return `
-          <div class="col-span-2">
-            <h4 class="font-semibold mb-2">SCTE-35 Details</h4>
-            <div class="space-y-1 text-sm">
-              ${details.join('')}
-            </div>
-          </div>
-        `;
-      }
-
-      // Fallback decoder for segmentation types (mirrors esam.rs logic)
-      decodeSegmentationType(typeId) {
-        const typeMap = {
-          0x00: "Not Indicated",
-          0x01: "Content Identification",
-          0x10: "Program Start",
-          0x11: "Program End",
-          0x12: "Program Early Termination", 
-          0x13: "Program Breakaway",
-          0x14: "Program Resumption",
-          0x15: "Program Runover Planned",
-          0x16: "Program Runover Unplanned",
-          0x17: "Program Overlap Start",
-          0x18: "Program Blackout Override",
-          0x19: "Program Start - In Progress",
-          0x20: "Chapter Start",
-          0x21: "Chapter End",
-          0x22: "Break Start",
-          0x23: "Break End",
-          0x24: "Opening Credit Start",
-          0x25: "Opening Credit End",
-          0x26: "Closing Credit Start",
-          0x27: "Closing Credit End",
-          0x30: "Provider Advertisement Start",
-          0x31: "Provider Advertisement End",
-          0x32: "Distributor Advertisement Start",
-          0x33: "Distributor Advertisement End",
-          0x34: "Provider Placement Opportunity Start",
-          0x35: "Provider Placement Opportunity End",
-          0x36: "Distributor Placement Opportunity Start",
-          0x37: "Distributor Placement Opportunity End",
-          0x38: "Provider Overlay Placement Opportunity Start",
-          0x39: "Provider Overlay Placement Opportunity End",
-          0x3A: "Distributor Overlay Placement Opportunity Start",
-          0x3B: "Distributor Overlay Placement Opportunity End",
-          0x40: "Unscheduled Event Start",
-          0x41: "Unscheduled Event End",
-          0x50: "Network Start",
-          0x51: "Network End",
-          0x81: "Custom/Vendor Specific (0x81)"
-        };
-        
-        if (typeMap[typeId]) {
-          return typeMap[typeId];
-        } else if (typeId >= 0x80) {
-          return `Custom/Vendor Specific (0x${typeId.toString(16).toUpperCase().padStart(2, '0')})`;
-        } else {
-          return `Reserved (0x${typeId.toString(16).toUpperCase().padStart(2, '0')})`;
-        }
+      closeEventDetail() {
+        document.getElementById('eventDetailModal').classList.add('hidden');
       }
 
       updatePagination(eventCount) {
@@ -658,87 +437,25 @@
         }
       }
 
-      getSinceTimestamp(period) {
-        if (!period) return undefined;
-        
-        const now = new Date();
-        switch (period) {
-          case '1h':
-            return new Date(now.getTime() - 60 * 60 * 1000).toISOString();
-          case '24h':
-            return new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-          case '7d':
-            return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-          default:
-            return undefined;
-        }
+      formatTimestamp(ts) {
+        if (!ts) return '--';
+        return new Date(ts).toLocaleString();
       }
 
-      formatTimestamp(timestamp) {
-        return new Date(timestamp).toLocaleString();
-      }
-
-      formatPtsTime(ptsTime) {
-        if (!ptsTime) return '--';
-        
-        // Convert 90kHz ticks to seconds and display compactly
-        const seconds = ptsTime / 90000;
-        if (seconds < 3600) {
-          // Less than 1 hour: show as MM:SS
-          const mins = Math.floor(seconds / 60);
-          const secs = Math.floor(seconds % 60);
-          return `${mins}:${secs.toString().padStart(2, '0')}`;
-        } else {
-          // 1 hour or more: show as H:MM:SS
-          const hours = Math.floor(seconds / 3600);
-          const mins = Math.floor((seconds % 3600) / 60);
-          const secs = Math.floor(seconds % 60);
-          return `${hours}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-        }
-      }
-
-      formatPtsTimeDetailed(ptsTime) {
-        if (!ptsTime) return 'N/A';
-        
-        const seconds = ptsTime / 90000;
-        const hours = Math.floor(seconds / 3600);
-        const mins = Math.floor((seconds % 3600) / 60);
-        const secs = Math.floor(seconds % 60);
-        const ms = Math.floor((seconds % 1) * 1000);
-        
-        // Show: timecode (raw ticks) - seconds
-        const timecode = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
-        return `${timecode} <span class="text-gray-500">(${ptsTime} ticks, ${seconds.toFixed(3)}s)</span>`;
+      formatPtsTime(pts) {
+        if (!pts) return '--';
+        return pts.toString();
       }
 
       escapeHtml(text) {
+        if (!text) return '';
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
       }
-
-      startAutoRefresh() {
-        this.stopAutoRefresh();
-        this.autoRefreshInterval = setInterval(() => {
-          this.loadStats();
-          this.loadEvents();
-        }, 30000);
-      }
-
-      stopAutoRefresh() {
-        if (this.autoRefreshInterval) {
-          clearInterval(this.autoRefreshInterval);
-          this.autoRefreshInterval = null;
-        }
-      }
     }
 
-    // Initialize the event monitor when page loads
-    let eventMonitor;
-    document.addEventListener('DOMContentLoaded', () => {
-      eventMonitor = new EventMonitor();
-    });
+    const eventMonitor = new EventMonitor();
   </script>
-  <script src="/static/app.js"></script>
 </body>
 </html>

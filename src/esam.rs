@@ -98,7 +98,8 @@ pub fn extract_facts(esam_xml: &str) -> Result<serde_json::Value, String> {
 /// Build a minimal ESAM SignalProcessingNotification response.
 pub fn build_notification(acq_id: &str, _utc: &str, action: &str, params: &serde_json::Value) -> String {
     let mut extra = String::new();
-    if action.eq_ignore_ascii_case("replace") {
+    // CRITICAL FIX: Handle both "replace" AND "noop" actions to pass through SCTE-35 payload
+    if action.eq_ignore_ascii_case("replace") || action.eq_ignore_ascii_case("noop") {
         if let Some(b64) = params.get("scte35_b64").and_then(|v| v.as_str()) {
             extra = format!(r#"<sig:BinaryData signalType="SCTE35">{}</sig:BinaryData>"#, xml_escape(b64));
         }

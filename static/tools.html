@@ -1,59 +1,171 @@
 <!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8"/><title>POIS Tools — SCTE‑35 Builder</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="stylesheet" href="/static/app.css"><script src="/static/app.js" defer></script>
-</head><body>
-<header class="topbar">
-  <div class="brand"><a href="/"><span class="logo">POIS</span></a><a href="/static/admin.html" class="brand-sub">Admin</a></div>
-  <nav class="nav">
-  <a href="/static/admin.html">Channels & Rules</a>
-  <a href="/static/tools.html">SCTE‑35 Builder</a>
-  <a href="/static/events.html">Event Monitor</a>
-</nav>
-  <div class="spacer"></div><div class="right row"><span id="tokenDisplay">token: unset</span><button class="btn" id="logoutBtn">Logout</button></div>
-</header>
-<main class="content" style="max-width:980px;margin:24px auto;">
-  <h1>SCTE‑35 Builder</h1>
-  <div class="card">
-    <div class="row" style="gap:12px;flex-wrap:wrap">
-      <label for="tokenInput">Bearer token:</label>
-      <input id="tokenInput" type="text" placeholder="dev-token" style="min-width:220px">
-      <button id="saveTokenBtn" class="btn">Save</button>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>POIS Tools — SCTE-35 Builder</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a href="/">
+        <!-- Option 1: Use your own logo image -->
+        <!-- <img src="/static/logo.png" alt="POIS" class="logo"> -->
+        
+        <!-- Option 2: Use text logo (default) -->
+        <span class="logo-text">POIS</span>
+      </a>
+      <a href="/static/admin.html" class="brand-sub">Admin</a>
     </div>
-    <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
-    <div class="row" style="gap:12px;flex-wrap:wrap">
-      <label for="cmd">Command</label>
-      <select id="cmd"><option value="time_signal_immediate">Time Signal (immediate)</option><option value="splice_insert_out">Splice Insert OUT (auto‑return)</option></select>
-      <label for="dur">Duration (s)</label><input id="dur" type="number" min="0" step="1" value="60" style="width:100px">
-      <button id="buildBtn" class="btn-primary">Build</button><span id="status" class="small"></span>
+    <nav class="nav">
+      <a href="/static/admin.html">Channels & Rules</a>
+      <a href="/static/tools.html" class="active">SCTE-35 Builder</a>
+      <a href="/static/events.html">Event Monitor</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="right">
+      <span id="tokenDisplay">token: unset</span>
+      <button class="btn" id="logoutBtn">Logout</button>
     </div>
-    <div class="row" style="gap:12px;margin-top:10px;flex-wrap:wrap"><input id="b64" type="text" style="flex:1" readonly><button class="btn" id="copyB64">Copy</button></div>
-  </div>
-  <p class="small">API: POST <code>/api/tools/scte35/build</code> (requires Authorization: Bearer).</p>
-</main>
-<script>
-(function(){
-  const tokInput=document.getElementById('tokenInput');
-  const saveBtn=document.getElementById('saveTokenBtn');
-  const cmd=document.getElementById('cmd');
-  const dur=document.getElementById('dur');
-  const btn=document.getElementById('buildBtn');
-  const out=document.getElementById('b64');
-  const status=document.getElementById('status');
-  const copyB64=document.getElementById('copyB64');
-  document.addEventListener('DOMContentLoaded', ()=>{ tokInput.value = POIS_TOKEN.get(); });
-  saveBtn.addEventListener('click', ()=>{ POIS_TOKEN.set(tokInput.value.trim()); status.textContent='token saved.'; });
-  btn.addEventListener('click', async ()=>{
-    const token=POIS_TOKEN.get(); if(!token){ status.textContent='Missing token'; return; }
-    status.textContent='Building…'; const body={ command: cmd.value }; if(cmd.value==='splice_insert_out') body.duration_s=Number(dur.value)||0;
-    try{
-      const r=await fetch('/api/tools/scte35/build',{ method:'POST', headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+token }, body: JSON.stringify(body) });
-      if(!r.ok){ throw new Error(await r.text() || ('HTTP '+r.status)); }
-      const data=await r.json(); out.value=data.scte35_b64||''; status.textContent='OK';
-    }catch(e){ status.textContent='Error: '+e.message; }
-  });
-  copyB64.addEventListener('click', async ()=>{ try{ await navigator.clipboard.writeText(out.value||''); status.textContent='Copied.'; }catch(e){ status.textContent='Copy failed.'; } });
-})();
-</script>
-</body></html>
+  </header>
+
+  <main class="content content-max-width">
+    <h1 class="grad-text">SCTE-35 Builder</h1>
+    
+    <div class="panel">
+      <div class="card-header">
+        <div class="card-title">Authentication</div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="tokenInput">Bearer token</label>
+          <input id="tokenInput" type="text" placeholder="dev-token">
+        </div>
+        <button id="saveTokenBtn" class="btn">Save Token</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="card-header">
+        <div class="card-title">Build Configuration</div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="cmd">Command</label>
+          <select id="cmd">
+            <option value="time_signal_immediate">Time Signal (immediate)</option>
+            <option value="splice_insert_out">Splice Insert OUT (auto-return)</option>
+          </select>
+        </div>
+        <div class="form-group" style="max-width: 200px;">
+          <label for="dur">Duration (s)</label>
+          <input id="dur" type="number" min="0" step="1" value="60">
+        </div>
+        <button id="buildBtn" class="btn-primary">Build SCTE-35</button>
+      </div>
+      
+      <div class="form-group mt-4">
+        <label for="b64">Generated Base64</label>
+        <div class="flex gap-2">
+          <input id="b64" type="text" readonly style="flex: 1; font-family: monospace;">
+          <button class="btn" id="copyB64">Copy</button>
+        </div>
+      </div>
+      
+      <div id="status" class="text-sm mt-2 text-muted"></div>
+    </div>
+
+    <p class="small text-muted mt-4">
+      API: <code>POST /api/tools/scte35/build</code> (requires Authorization: Bearer)
+    </p>
+  </main>
+
+  <script>
+    (function(){
+      const tokInput = document.getElementById('tokenInput');
+      const saveBtn = document.getElementById('saveTokenBtn');
+      const cmd = document.getElementById('cmd');
+      const dur = document.getElementById('dur');
+      const btn = document.getElementById('buildBtn');
+      const out = document.getElementById('b64');
+      const status = document.getElementById('status');
+      const copyB64 = document.getElementById('copyB64');
+      
+      document.addEventListener('DOMContentLoaded', () => { 
+        tokInput.value = POIS_TOKEN.get(); 
+      });
+      
+      saveBtn.addEventListener('click', () => { 
+        POIS_TOKEN.set(tokInput.value.trim()); 
+        status.textContent = 'Token saved successfully';
+        status.className = 'text-sm mt-2 text-success';
+        setTimeout(() => {
+          status.textContent = '';
+          status.className = 'text-sm mt-2 text-muted';
+        }, 2000); 
+      });
+      
+      btn.addEventListener('click', async () => {
+        const token = POIS_TOKEN.get();
+        if (!token) {
+          alert('Please set a bearer token first.');
+          return;
+        }
+        
+        btn.disabled = true;
+        status.textContent = 'Building SCTE-35...';
+        status.className = 'text-sm mt-2 text-muted';
+        
+        try {
+          const res = await fetch('/api/tools/scte35/build', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              command: cmd.value,
+              duration_seconds: parseInt(dur.value, 10)
+            })
+          });
+          
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+          }
+          
+          const data = await res.json();
+          out.value = data.base64 || '';
+          status.textContent = 'SCTE-35 built successfully!';
+          status.className = 'text-sm mt-2 text-success';
+        } catch (e) {
+          status.textContent = `Error: ${e.message}`;
+          status.className = 'text-sm mt-2 text-error';
+          out.value = '';
+        } finally {
+          btn.disabled = false;
+          setTimeout(() => {
+            if (status.className.includes('success')) {
+              status.textContent = '';
+              status.className = 'text-sm mt-2 text-muted';
+            }
+          }, 3000);
+        }
+      });
+      
+      copyB64.addEventListener('click', () => {
+        out.select();
+        document.execCommand('copy');
+        const orig = copyB64.textContent;
+        copyB64.textContent = 'Copied!';
+        copyB64.className = 'btn btn-success';
+        setTimeout(() => {
+          copyB64.textContent = orig;
+          copyB64.className = 'btn';
+        }, 1500);
+      });
+    })();
+  </script>
+</body>
+</html>

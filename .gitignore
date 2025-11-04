@@ -1,29 +1,32 @@
-# Rust / Cargo
-/target
-**/*.rs.bk
+# Rust build artifacts
+/target/
+/**/*.rs.bk
 
-# Local data / runtime artifacts
-/data
+# Cargo
+Cargo.lock
+*.crate
+
+# Databases and generated files
 *.db
-*.sqlite
-*.sqlite3
-
-# Secrets & env
-.env
-*.pem
-*.key
-/etc/pois.env
-
-# OS/editor
-.DS_Store
-*.swp
-*.swo
-.vscode/
-.idea/
-
-# Logs
-*.log
-/logs/
-dev_token
 *.db.backup
-pois.db
+*.sqlite
+*.log
+*.tmp
+
+# OS and editor junk
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Archives and backups
+*.zip
+*.tar.gz
+*.bak
+static.backup/
+files.zip
+
+# Local tokens or secrets
+dev_token
+.env

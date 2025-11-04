@@ -162,7 +162,7 @@ struct EsamPath {
     channel: String,
 }
 
-// Updated handle_esam with event logging
+// Updated handle_esam with event logging AND noop fix
 async fn handle_esam(
     State(st): State<Arc<AppState>>,
     Query(q): Query<EsamQuery>,
@@ -224,6 +224,9 @@ async fn handle_esam(
         .get("utcPoint")
         .and_then(|v| v.as_str())
         .unwrap_or("1970-01-01T00:00:00Z");
+
+    // CRITICAL FIX: Preserve original SCTE-35 payload for noop actions
+    let original_scte35_b64 = facts.get("scte35_b64").and_then(|v| v.as_str()).map(String::from);
 
     // Resolve channel via query/header, fallback to "default"
     let channel_name = q
@@ -324,6 +327,13 @@ async fn handle_esam(
     } else {
         ("noop".into(), serde_json::json!({}), None)
     };
+
+    // CRITICAL FIX: For noop action, inject original SCTE-35 payload into params
+    if action.eq_ignore_ascii_case("noop") {
+        if let Some(ref original_b64) = original_scte35_b64 {
+            params["scte35_b64"] = serde_json::Value::String(original_b64.clone());
+        }
+    }
 
     // Auto-build SCTE-35 if params carry a "build" object
     params = maybe_build_scte35(params);

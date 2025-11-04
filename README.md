@@ -1,337 +1,337 @@
-# POIS - Program Operations Integration Server
+# 🎯 POIS - Placement Opportunity Information Service
 
-A high-performance ESAM (Event Signaling and Management) server for processing SCTE-35 signals with advanced rule-based filtering, real-time monitoring, and comprehensive logging capabilities.
+A high-performance Rust-based service for processing SCTE-35 signaling in ESAM (Event Signaling and Management) workflows. Features a modern dark-themed web UI for real-time event monitoring and rule management.
 
-## Features
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 
-- **ESAM Signal Processing**: Full SCTE-35 command parsing with support for segmentation descriptors, UPID decoding, and PTS time extraction
-- **Rule-Based Filtering**: Flexible JSON-based rules for signal filtering, modification, and routing
-- **Real-Time Monitoring**: Web-based dashboard for monitoring events, performance metrics, and system health
-- **Advanced SCTE-35 Decoding**: Human-readable segmentation type names, UPID type decoding, and comprehensive signal analysis
-- **TLS/HTTPS Support**: Production-ready with Let's Encrypt certificate integration
-- **SQLite Database**: Lightweight, embedded database for event logging and configuration
-- **REST API**: Complete API for configuration management and event querying
-- **Systemd Integration**: Production deployment with automatic startup and restart capabilities
+## ✨ Features
 
-## Quick Start
+### Core Functionality
+- ✅ **ESAM XML Processing** - Parse and process SignalProcessingEvent messages
+- ✅ **SCTE-35 Support** - Full support for splice_insert, time_signal, and segmentation descriptors
+- ✅ **Rule-Based Filtering** - Flexible JSON-based rules with pattern matching
+- ✅ **Multi-Channel** - Manage multiple channels with independent rule sets
+- ✅ **Event Logging** - Comprehensive logging of all ESAM requests and processing
 
-### Development Setup
+### Web Interface
+- 🎨 **Modern Dark Theme** - Gradient background with frosted glass panels
+- 📊 **Real-Time Event Monitor** - Track ESAM requests, processing times, and rule matches
+- 🔧 **SCTE-35 Builder** - Generate SCTE-35 messages for testing
+- ⚙️ **Admin Panel** - Manage channels, rules, and configurations
+- 📱 **Responsive Design** - Works on desktop, tablet, and mobile
 
-1. **Clone and build**:
-   ```bash
-   git clone <repository-url>
-   cd pois
-   cargo build
-   ```
+### SCTE-35 Capabilities
+- Parse splice commands: `splice_insert`, `time_signal`, `splice_null`
+- Extract PTS times and splice event details
+- Decode segmentation descriptors (types 0x00-0x51, 0x80+)
+- Support for UPID types: Ad-ID, ISAN, TI, ADI, EIDR, etc.
 
-2. **Configure environment**:
-   ```bash
-   export POIS_DB=sqlite://pois.db
-   export POIS_ADMIN_TOKEN='dev-token'
-   export POIS_PORT=8080
-   ```
+## 🚀 Quick Start
 
-3. **Start the server**:
-   ```bash
-   cargo run
-   ```
+### Prerequisites
 
-4. **Access the web interface**:
-   - Open http://localhost:8080/
-   - Enter your admin token (`dev-token`) in the toolbar
-   - Navigate between Events, Channels & Rules, and SCTE-35 Builder
+- Rust 1.70 or higher
+- SQLite 3.x
 
-### Initial Configuration
-
-5. **Create a default channel**:
-   ```bash
-   curl -X POST http://localhost:8080/api/channels \
-     -H "Authorization: Bearer dev-token" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"default"}'
-   ```
-
-6. **Add a sample rule** (delete splice_insert commands):
-   ```bash
-   curl -X POST http://localhost:8080/api/channels/1/rules \
-     -H "Authorization: Bearer dev-token" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "name": "Delete splice_insert",
-       "priority": -1,
-       "enabled": true,
-       "match_json": {"anyOf": [{"scte35.command": "splice_insert"}]},
-       "action": "delete",
-       "params_json": {}
-     }'
-   ```
-
-### Testing ESAM Endpoint
-
-7. **Send a test ESAM signal**:
-   ```bash
-   curl -X POST http://localhost:8080/esam?channel=default \
-     -H 'Content-Type: application/xml' \
-     -d '<SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1" xmlns:sig="urn:cablelabs:md:xsd:signaling:3.0">
-           <AcquiredSignal acquisitionSignalID="abc-123">
-             <sig:UTCPoint utcPoint="2012-09-18T10:14:34Z"/>
-             <sig:BinaryData signalType="SCTE35">BASE64_SCTE35_DATA_HERE</sig:BinaryData>
-           </AcquiredSignal>
-         </SignalProcessingEvent>'
-   ```
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `POIS_DB` | SQLite database path | `sqlite://pois.db` |
-| `POIS_ADMIN_TOKEN` | Admin API token | Required |
-| `POIS_PORT` | Server port | `8080` |
-| `POIS_TLS_CERT` | TLS certificate path | Optional |
-| `POIS_TLS_KEY` | TLS private key path | Optional |
-| `RUST_LOG` | Logging level | `info` |
-
-### Production TLS Configuration
-
-For HTTPS with Let's Encrypt certificates:
+### Installation
 
 ```bash
-export POIS_TLS_CERT=/etc/letsencrypt/live/your-domain.com/fullchain.pem
-export POIS_TLS_KEY=/etc/letsencrypt/live/your-domain.com/privkey.pem
-export POIS_PORT=8090
+# Clone the repository
+git clone https://github.com/bokelleher/rust-pois.git
+cd rust-pois
+
+# Build
+cargo build --release
+
+# Run
+./target/release/rust-pois
 ```
 
-## Production Deployment
+### Configuration
 
-### Systemd Service Setup
+Set environment variables:
 
-1. **Build release binary**:
-   ```bash
-   cd /opt/pois
-   cargo build --release
-   ```
+```bash
+# Database location (default: sqlite://pois.db)
+export POIS_DB="sqlite://pois.db"
 
-2. **Create systemd service**:
-   ```bash
-   sudo tee /etc/systemd/system/pois.service > /dev/null << 'EOF'
-   [Unit]
-   Description=POIS ESAM Server
-   After=network.target network-online.target
-   Wants=network-online.target
+# Admin API token (default: dev-token)
+export POIS_ADMIN_TOKEN="your-secret-token"
 
-   [Service]
-   Type=simple
-   User=root
-   Group=root
-   WorkingDirectory=/opt/pois
-   ExecStart=/opt/pois/target/release/pois-esam-server
-   Restart=always
-   RestartSec=5
-   StandardOutput=journal
-   StandardError=journal
+# HTTP port (default: 8090)
+export POIS_PORT=8090
 
-   Environment=POIS_TLS_CERT=/etc/letsencrypt/live/your-domain.com/fullchain.pem
-   Environment=POIS_TLS_KEY=/etc/letsencrypt/live/your-domain.com/privkey.pem
-   Environment=POIS_PORT=8090
-   Environment=POIS_ADMIN_TOKEN=your-secure-token-here
-   Environment=RUST_LOG=info
+# Optional: Enable HTTPS
+export POIS_TLS_CERT="/path/to/cert.pem"
+export POIS_TLS_KEY="/path/to/key.pem"
+```
 
-   NoNewPrivileges=true
-   ProtectSystem=strict
-   ReadWritePaths=/opt/pois
-   ProtectHome=true
-   LimitNOFILE=65536
+### Accessing the UI
 
-   [Install]
-   WantedBy=multi-user.target
-   EOF
-   ```
+Once running, access the web interface:
 
-3. **Enable and start service**:
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable pois.service
-   sudo systemctl start pois.service
-   ```
+- **Admin Panel**: http://localhost:8090/static/admin.html
+- **Event Monitor**: http://localhost:8090/static/events.html
+- **SCTE-35 Builder**: http://localhost:8090/static/tools.html
 
-4. **Monitor service**:
-   ```bash
-   sudo systemctl status pois.service
-   sudo journalctl -u pois.service -f
-   ```
+**Note**: Set your bearer token in the top-right corner of each page.
 
-## API Reference
+## 📖 Usage
 
-### Channels
+### 1. Create a Channel
 
-- `GET /api/channels` - List all channels
-- `POST /api/channels` - Create a new channel
-- `DELETE /api/channels/{id}` - Delete a channel
+```bash
+curl -X POST "http://localhost:8090/api/channels" \
+  -H "Authorization: Bearer dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-channel"}'
+```
 
-### Rules
+Or use the Admin Panel UI.
 
-- `GET /api/channels/{id}/rules` - List rules for a channel
-- `POST /api/channels/{id}/rules` - Create a new rule
-- `PUT /api/rules/{id}` - Update a rule
-- `DELETE /api/rules/{id}` - Delete a rule
+### 2. Add Rules
 
-### Events
-
-- `GET /api/events` - List events with filtering and pagination
-- `GET /api/events/{id}` - Get detailed event information
-- `GET /api/events/stats` - Get event statistics
-
-### ESAM Endpoint
-
-- `POST /esam?channel={channel_name}` - Process ESAM SignalProcessingEvent
-
-## Rule Configuration
-
-Rules use JSON-based matching with flexible conditions:
-
-### Match Conditions
+Rules use JSON-based matching:
 
 ```json
 {
-  "anyOf": [
-    {"scte35.command": "splice_insert"},
-    {"scte35.segmentation_type_name": "Provider Advertisement Start"}
-  ]
+  "name": "Filter Provider Ads",
+  "priority": 100,
+  "enabled": true,
+  "match_expr": {
+    "anyOf": [
+      {"scte35.segmentation_type_id": "0x30"},
+      {"scte35.segmentation_type_name": "Provider Advertisement Start"}
+    ]
+  },
+  "action": "delete"
 }
 ```
 
-### Available Fields
-
-- `scte35.command` - SCTE-35 command type
-- `scte35.segmentation_type_id` - Raw segmentation type (e.g., "0x30")
-- `scte35.segmentation_type_name` - Human-readable type name
-- `scte35.upid_type_name` - UPID type name
-- `scte35.segmentation_upid` - Decoded UPID data
-- `scte35.pts_time` - PTS time value
-- `acquisitionSignalID` - Signal ID from ESAM
-- `utcPoint` - UTC timestamp
-
-### Actions
-
+Actions:
 - `noop` - Pass through unchanged
-- `delete` - Filter out the signal
-- `replace` - Modify signal content (provide new SCTE-35 in params)
+- `delete` - Filter out the signal  
+- `replace` - Modify signal (provide replacement SCTE-35)
 
-## SCTE-35 Features
+### 3. Send ESAM Requests
 
-### Supported Commands
-- `splice_null` (0x00)
-- `splice_schedule` (0x04)
-- `splice_insert` (0x05) - with PTS time extraction
-- `time_signal` (0x06) - with PTS time extraction
-- `bandwidth_reservation` (0x07)
-- `private_command` (0xFF)
-
-### Segmentation Descriptors
-- Complete segmentation type decoding (0x00-0x51, 0x80+)
-- UPID type decoding (Ad-ID, ISAN, TI, ADI, EIDR, MID, URI, UUID, etc.)
-- PTS time extraction and conversion to human-readable format
-
-### UPID Support
-- **Ad-ID**: 12-character advertising identifiers
-- **ISAN**: International Standard Audiovisual Number
-- **TI**: Turner Identifier (8-byte integer)
-- **ADI**: Advertising Digital Identifier (ASCII)
-- **EIDR**: Entertainment Identifier Registry
-- **MID**: Managed Private UPID with sub-segments
-- **URI**: Web-based identifiers
-- **UUID**: Universally Unique Identifiers
-
-## Web Interface
-
-### Event Monitor
-- Real-time event streaming with auto-refresh
-- Advanced filtering by channel, action, and time range
-- Sortable columns with pagination
-- Detailed event views with full SCTE-35 analysis
-- Performance metrics and statistics
-
-### Channel & Rules Management
-- Visual rule configuration with JSON editor
-- Rule priority management and testing
-- Channel creation and modification
-- Real-time rule validation
-
-### SCTE-35 Builder
-- Interactive SCTE-35 signal construction
-- Testing tool for rule development
-- Base64 encoding/decoding utilities
-
-## Development
-
-### Dependencies
-- Rust 1.70+
-- SQLite 3
-- OpenSSL (for TLS support)
-
-### Key Crates
-- `axum` 0.7.5 - Web framework
-- `sqlx` 0.7.4 - Database toolkit
-- `tokio` - Async runtime
-- `quick-xml` - XML parsing
-- `serde_json` - JSON handling
-- `base64` - SCTE-35 decoding
-
-### Building
 ```bash
-# Development build
-cargo build
+curl -X POST "http://localhost:8090/esam?channel=my-channel" \
+  -H "Content-Type: application/xml" \
+  -d '<SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1">
+        <AcquiredSignal acquisitionSignalID="test-123">
+          <sig:UTCPoint utcPoint="2024-11-04T10:00:00Z"/>
+          <sig:SCTE35PointDescriptor>
+            <sig:SCTE35Data>/DA0AAAAAAAA///wBQb+cr0AUAAeAhxDVUVJSAAAjn/PAAGlmbAICAAAAAAsoKGC</sig:SCTE35Data>
+          </sig:SCTE35PointDescriptor>
+        </AcquiredSignal>
+      </SignalProcessingEvent>'
+```
 
-# Release build
-cargo build --release
+### 4. Monitor Events
 
-# Run tests
+View processed events in real-time:
+- **Event Monitor UI**: http://localhost:8090/static/events.html
+- **API**: `GET /api/events?limit=100`
+
+## 🎨 Customization
+
+The UI is fully customizable! See [CUSTOMIZATION.md](CUSTOMIZATION.md) for:
+
+- Adding your own logo
+- Changing color schemes
+- Adjusting fonts and spacing
+- Creating custom themes
+
+**Quick Logo Change:**
+
+```html
+<!-- In events.html, tools.html, admin.html -->
+<img src="/static/logo.png" alt="Your Company" class="logo">
+```
+
+## 🔌 API Reference
+
+### Channels
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/channels` | List all channels |
+| POST | `/api/channels` | Create a channel |
+| PUT | `/api/channels/:id` | Update a channel |
+| DELETE | `/api/channels/:id` | Delete a channel |
+
+### Rules
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/channels/:id/rules` | List rules for channel |
+| POST | `/api/channels/:id/rules` | Create a rule |
+| PUT | `/api/rules/:id` | Update a rule |
+| DELETE | `/api/rules/:id` | Delete a rule |
+
+### Events
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/events` | List events (paginated) |
+| GET | `/api/events/:id` | Get event details |
+| GET | `/api/events/stats` | Get event statistics |
+
+### ESAM
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/esam?channel=name` | Process ESAM SignalProcessingEvent |
+
+**Query Parameters:**
+- `channel` - Channel name (required)
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│              Web Interface                  │
+│  (Admin Panel, Event Monitor, Tools)        │
+└──────────────────┬──────────────────────────┘
+                   │ HTTP/HTTPS
+┌──────────────────▼──────────────────────────┐
+│           Axum Web Server                   │
+│  - REST API                                 │
+│  - Bearer Token Auth                        │
+│  - Static File Serving                      │
+└──────────────────┬──────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────┐
+│          POIS Core Engine                   │
+│  - ESAM XML Parsing                         │
+│  - SCTE-35 Decoding                         │
+│  - Rule Matching                            │
+│  - Event Logging                            │
+└──────────────────┬──────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────┐
+│            SQLite Database                  │
+│  - Channels & Rules                         │
+│  - Event History                            │
+└─────────────────────────────────────────────┘
+```
+
+## 📦 Dependencies
+
+### Rust Crates
+
+- `axum` - Web framework
+- `tokio` - Async runtime
+- `sqlx` - Database access
+- `serde` - Serialization
+- `quick-xml` - XML parsing
+- `base64` - Base64 encoding/decoding
+- `tower-http` - HTTP middleware
+
+### Frontend
+
+- Vanilla JavaScript (ES6+)
+- Preact 10.24+ (admin panel only)
+- No build step required!
+
+## 🧪 Testing
+
+```bash
+# Run all tests
 cargo test
 
-# Run with logging
-RUST_LOG=debug cargo run
+# Run with output
+cargo test -- --nocapture
+
+# Run specific test
+cargo test test_parse_splice_insert
 ```
 
-## Troubleshooting
+## 📝 Development
 
-### Common Issues
+### Project Structure
 
-**Server won't start**:
-- Check that the port isn't already in use: `netstat -tlnp | grep 8080`
-- Verify database permissions: `ls -la pois.db`
-- Check environment variables: `printenv | grep POIS`
+```
+rust-pois/
+├── src/
+│   ├── main.rs           # Entry point, web server
+│   ├── scte35.rs         # SCTE-35 parsing
+│   ├── esam.rs           # ESAM XML handling  
+│   └── rules.rs          # Rule matching logic
+├── static/
+│   ├── app.css           # Stylesheet (dark theme)
+│   ├── app.js            # Shared JavaScript
+│   ├── admin.html        # Admin panel
+│   ├── events.html       # Event monitor
+│   └── tools.html        # SCTE-35 builder
+├── migrations/           # Database migrations
+└── Cargo.toml           # Rust dependencies
+```
 
-**TLS certificate errors**:
-- Verify certificate paths exist and are readable
-- Check certificate expiration: `openssl x509 -in cert.pem -text -noout`
-- Ensure proper file permissions (600 for private keys)
+### Adding Features
 
-**Database issues**:
-- Reset database: `rm pois.db` (will lose all data)
-- Check SQLite version: `sqlite3 --version`
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
+- Code style
+- Testing requirements
+- Pull request process
 
-**Performance issues**:
-- Monitor with: `sudo journalctl -u pois.service -f`
-- Check system resources: `htop`
-- Adjust `RUST_LOG` level to reduce logging overhead
+## 🐛 Troubleshooting
 
-### Logs
-
-View application logs:
+**Port already in use:**
 ```bash
-# Systemd service logs
-sudo journalctl -u pois.service -f
-
-# Development logs
-RUST_LOG=debug cargo run
+export POIS_PORT=8091
+./target/release/rust-pois
 ```
 
-## License
+**Database locked:**
+```bash
+# Stop the service
+pkill rust-pois
 
-[Your License Here]
+# Check for stale connections
+lsof pois.db
 
-## Contributing
+# Restart
+./target/release/rust-pois
+```
 
-[Contributing Guidelines Here]
+**UI not loading:**
+- Clear browser cache (Ctrl+Shift+R)
+- Check static files exist in `static/` directory
+- Verify `static/` is in the same directory as binary
+
+**API returns 401:**
+- Check bearer token is set in UI (top-right)
+- Verify `POIS_ADMIN_TOKEN` environment variable
+- Default token is `dev-token`
+
+## 📚 Resources
+
+- **SCTE-35 Spec**: [SCTE 35 2023](https://www.scte.org/standards/library/)
+- **ESAM Spec**: [SCTE 130-5](https://www.scte.org/standards/library/)
+- **Rust Book**: [doc.rust-lang.org/book](https://doc.rust-lang.org/book/)
+
+## 🤝 Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+## 📄 License
+
+This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- UI design inspired by modern dark-themed web applications
+- SCTE-35 parsing based on SCTE standards
+- Community contributions and feedback
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/bokelleher/rust-pois/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/bokelleher/rust-pois/discussions)
+
+---
+
+Made with ❤️ by the POIS community
