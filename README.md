@@ -95,6 +95,31 @@ The script will:
 
 ---
 
+## 📤 Backup & Restore
+
+Use the authenticated `/api/backup` endpoint to export all channels and rules (including priorities, match JSON, and parameters) and import them on another server.
+
+### Export
+
+```bash
+curl -H "Authorization: Bearer $POIS_ADMIN_TOKEN" \
+     http://localhost:8080/api/backup > pois-backup.json
+```
+
+### Import
+
+```bash
+curl -X POST \
+     -H "Authorization: Bearer $POIS_ADMIN_TOKEN" \
+     -H "Content-Type: application/json" \
+     --data @pois-backup.json \
+     http://localhost:8080/api/backup
+```
+
+Importing will create or update channels that share the same name and fully replace their rules with the contents of the backup file.
+
+---
+
 ## 🔍 Health & Logs
 
 | Purpose | Command |

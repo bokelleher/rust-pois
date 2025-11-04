@@ -14,6 +14,7 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
+use chrono::Utc;
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Instant};
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
@@ -28,7 +29,8 @@ use crate::event_logging::{
 // bring model types into scope
 use crate::esam::{build_notification, extract_facts};
 use crate::models::{
-    Channel, DryRunRequest, DryRunResult, ReorderRules, Rule, UpsertChannel, UpsertRule,
+    Channel, DryRunRequest, DryRunResult, ExportedChannel, ExportedRule, ReorderRules, Rule,
+    RulesBackup, UpsertChannel, UpsertRule,
 };
 use crate::rules::rule_matches;
 
@@ -135,6 +137,7 @@ fn api_router() -> Router<Arc<AppState>> {
         .route("/channels/:id/rules", get(list_rules).post(create_rule))
         .route("/rules/:id", put(update_rule).delete(delete_rule))
         .route("/rules/reorder", post(reorder_rules))
+        .route("/backup", get(export_backup).post(import_backup))
         .route("/dryrun", post(dryrun))
         // SCTE-35 builder
         .route("/tools/scte35/build", post(build_scte35))
@@ -663,6 +666,182 @@ async fn reorder_rules(
         return err(e);
     }
     (StatusCode::NO_CONTENT, ()).into_response()
+}
+
+async fn export_backup(State(st): State<Arc<AppState>>) -> impl IntoResponse {
+    let channels = match sqlx::query_as::<_, Channel>("SELECT * FROM channels ORDER BY name")
+        .fetch_all(&st.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+
+    let mut out: Vec<ExportedChannel> = Vec::with_capacity(channels.len());
+    for ch in channels {
+        let rules = match sqlx::query_as::<_, Rule>(
+            "SELECT * FROM rules WHERE channel_id=? ORDER BY priority",
+        )
+        .bind(ch.id)
+        .fetch_all(&st.db)
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        };
+
+        let exported_rules = rules
+            .into_iter()
+            .map(|r| ExportedRule {
+                name: r.name,
+                priority: r.priority,
+                enabled: r.enabled != 0,
+                match_json: serde_json::from_str(&r.match_json)
+                    .unwrap_or(serde_json::json!({})),
+                action: r.action,
+                params_json: serde_json::from_str(&r.params_json)
+                    .unwrap_or(serde_json::json!({})),
+            })
+            .collect();
+
+        out.push(ExportedChannel {
+            name: ch.name,
+            enabled: ch.enabled != 0,
+            timezone: ch.timezone,
+            rules: exported_rules,
+        });
+    }
+
+    let bundle = RulesBackup {
+        version: 1,
+        exported_at: Some(Utc::now().to_rfc3339()),
+        channels: out,
+    };
+
+    Json(bundle).into_response()
+}
+
+async fn import_backup(
+    State(st): State<Arc<AppState>>,
+    Json(bundle): Json<RulesBackup>,
+) -> impl IntoResponse {
+    if bundle.version != 1 {
+        return (StatusCode::BAD_REQUEST, "unsupported backup format").into_response();
+    }
+
+    let mut tx = match st.db.begin().await {
+        Ok(t) => t,
+        Err(e) => return err(e),
+    };
+
+    let mut channel_count = 0usize;
+    let mut rule_count = 0usize;
+
+    for channel in bundle.channels {
+        let enabled = if channel.enabled { 1 } else { 0 };
+
+        let existing = sqlx::query_as::<_, (i64,)>("SELECT id FROM channels WHERE name=?")
+            .bind(&channel.name)
+            .fetch_optional(&mut *tx)
+            .await;
+
+        let channel_id = match existing {
+            Ok(Some((id,))) => {
+                if let Err(e) = sqlx::query(
+                    "UPDATE channels SET enabled=?, timezone=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+                )
+                .bind(enabled)
+                .bind(&channel.timezone)
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                {
+                    let _ = tx.rollback().await;
+                    return err(e);
+                }
+                id
+            }
+            Ok(None) => {
+                match sqlx::query_as::<_, (i64,)>(
+                    "INSERT INTO channels(name,enabled,timezone) VALUES(?,?,?) RETURNING id",
+                )
+                .bind(&channel.name)
+                .bind(enabled)
+                .bind(&channel.timezone)
+                .fetch_one(&mut *tx)
+                .await
+                {
+                    Ok((id,)) => id,
+                    Err(e) => {
+                        let _ = tx.rollback().await;
+                        return err(e);
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return err(e);
+            }
+        };
+
+        if let Err(e) = sqlx::query("DELETE FROM rules WHERE channel_id=?")
+            .bind(channel_id)
+            .execute(&mut *tx)
+            .await
+        {
+            let _ = tx.rollback().await;
+            return err(e);
+        }
+
+        for rule in channel.rules {
+            let match_json = match serde_json::to_string(&rule.match_json) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = tx.rollback().await;
+                    return err(e);
+                }
+            };
+            let params_json = match serde_json::to_string(&rule.params_json) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = tx.rollback().await;
+                    return err(e);
+                }
+            };
+
+            let rule_enabled = if rule.enabled { 1 } else { 0 };
+            if let Err(e) = sqlx::query(
+                "INSERT INTO rules(channel_id,name,priority,enabled,match_json,action,params_json) VALUES(?,?,?,?,?,?,?)",
+            )
+            .bind(channel_id)
+            .bind(&rule.name)
+            .bind(rule.priority)
+            .bind(rule_enabled)
+            .bind(match_json)
+            .bind(&rule.action)
+            .bind(params_json)
+            .execute(&mut *tx)
+            .await
+            {
+                let _ = tx.rollback().await;
+                return err(e);
+            }
+
+            rule_count += 1;
+        }
+
+        channel_count += 1;
+    }
+
+    if let Err(e) = tx.commit().await {
+        return err(e);
+    }
+
+    Json(serde_json::json!({
+        "channels": channel_count,
+        "rules": rule_count,
+    }))
+    .into_response()
 }
 
 async fn dryrun(
