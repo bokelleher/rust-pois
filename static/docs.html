@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>POIS API Documentation</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    .docs-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+    
+    .docs-header {
+      text-align: center;
+      margin-bottom: 60px;
+    }
+    
+    .docs-header h1 {
+      font-size: 48px;
+      margin-bottom: 16px;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    
+    .docs-nav {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 40px;
+    }
+    
+    .docs-nav a {
+      padding: 8px 16px;
+      background: rgba(139, 92, 246, 0.1);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 8px;
+      text-decoration: none;
+      color: var(--text-primary);
+      transition: all 0.2s;
+    }
+    
+    .docs-nav a:hover {
+      background: rgba(139, 92, 246, 0.2);
+      border-color: var(--primary);
+    }
+    
+    .section {
+      margin-bottom: 60px;
+    }
+    
+    .section h2 {
+      font-size: 32px;
+      margin-bottom: 24px;
+      color: var(--primary);
+    }
+    
+    .section h3 {
+      font-size: 24px;
+      margin-top: 32px;
+      margin-bottom: 16px;
+      color: var(--secondary);
+    }
+    
+    .endpoint {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    
+    .endpoint-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    
+    .method {
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    
+    .method-get { background: #10b981; color: white; }
+    .method-post { background: #3b82f6; color: white; }
+    .method-put { background: #f59e0b; color: white; }
+    .method-delete { background: #ef4444; color: white; }
+    
+    .endpoint-path {
+      font-family: 'Courier New', monospace;
+      font-size: 18px;
+      color: var(--text-primary);
+    }
+    
+    .endpoint-description {
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+    }
+    
+    .code-block {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      margin: 16px 0;
+    }
+    
+    .code-block code {
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      color: #e0e0e0;
+      white-space: pre;
+    }
+    
+    .copy-btn {
+      float: right;
+      padding: 4px 12px;
+      background: rgba(139, 92, 246, 0.2);
+      border: 1px solid var(--primary);
+      border-radius: 6px;
+      color: var(--text-primary);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    
+    .copy-btn:hover {
+      background: rgba(139, 92, 246, 0.3);
+    }
+    
+    .param-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+    }
+    
+    .param-table th {
+      background: rgba(139, 92, 246, 0.1);
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    
+    .param-table td {
+      padding: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    .param-name {
+      font-family: 'Courier New', monospace;
+      color: var(--primary);
+    }
+    
+    .swagger-container {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-top: 32px;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a href="/">
+        <img src="https://esni.techexlab.com:3000/static/media/techex-logo.74b1230112edda6b3915.png" alt="TechExLab" class="logo">
+      </a>
+    </div>
+    <nav class="nav">
+      <a href="/static/admin.html">Channels & Rules</a>
+      <a href="/static/tools.html">SCTE-35 Builder</a>
+      <a href="/static/events.html">Event Monitor</a>
+      <a href="/static/docs.html" class="active">API Docs</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="right">
+      <span id="tokenDisplay">token: unset</span>
+    </div>
+  </header>
+
+  <main class="docs-container">
+    <div class="docs-header">
+      <h1>POIS API Documentation</h1>
+      <p class="text-secondary">Placement Opportunity Insertion Service v2.1.0</p>
+    </div>
+
+    <div class="docs-nav">
+      <a href="#overview">Overview</a>
+      <a href="#authentication">Authentication</a>
+      <a href="#esam">ESAM Endpoint</a>
+      <a href="#channels">Channels API</a>
+      <a href="#rules">Rules API</a>
+      <a href="#events">Events API</a>
+      <a href="#examples">Code Examples</a>
+      <a href="#swagger">OpenAPI Spec</a>
+    </div>
+
+    <!-- Overview -->
+    <div id="overview" class="section">
+      <h2>Overview</h2>
+      <p>POIS is an ESAM (Event Signaling and Management) server that processes SCTE-35 signals and applies rule-based transformations. It provides:</p>
+      <ul>
+        <li><strong>ESAM XML Endpoint</strong>: Receives and processes SignalProcessingEvent messages</li>
+        <li><strong>REST API</strong>: Manages channels, rules, and views event history</li>
+        <li><strong>Rule Engine</strong>: Match conditions and transform signals</li>
+        <li><strong>Event Logging</strong>: Full audit trail with raw XML storage</li>
+      </ul>
+      
+      <div class="panel" style="margin-top: 24px;">
+        <h3>Base URL</h3>
+        <code>http://localhost:8090</code> (development)<br>
+        <code>https://pois.techexlab.com:8090</code> (production)
+      </div>
+    </div>
+
+    <!-- Authentication -->
+    <div id="authentication" class="section">
+      <h2>Authentication</h2>
+      <p>All API endpoints (except <code>/health</code>) require Bearer token authentication.</p>
+      
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <code>Authorization: Bearer dev-token</code>
+      </div>
+      
+      <p><strong>Default Token</strong>: <code>dev-token</code> (development only)</p>
+      <p>Set custom token using <code>POIS_AUTH_TOKEN</code> environment variable.</p>
+    </div>
+
+    <!-- ESAM Endpoint -->
+    <div id="esam" class="section">
+      <h2>ESAM Endpoint</h2>
+      
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/esam?channel={channel_name}</span>
+        </div>
+        <p class="endpoint-description">
+          Main ESAM endpoint that receives SignalProcessingEvent XML and returns SignalProcessingNotification XML based on matched rules.
+        </p>
+        
+        <h4>Query Parameters</h4>
+        <table class="param-table">
+          <tr>
+            <th>Parameter</th>
+            <th>Type</th>
+            <th>Required</th>
+            <th>Description</th>
+          </tr>
+          <tr>
+            <td><span class="param-name">channel</span></td>
+            <td>string</td>
+            <td>Yes</td>
+            <td>Channel name to process signal for</td>
+          </tr>
+        </table>
+
+        <h4>Request Body</h4>
+        <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          <code>&lt;?xml version="1.0"?&gt;
+&lt;esam:SignalProcessingEvent xmlns:esam="urn:cablelabs:iptvservices:esam:xsd:signal:1"
+                            xmlns:md="urn:cablelabs:md:xsd:signaling:3.0"&gt;
+  &lt;esam:AcquiredSignal acquisitionSignalID="test-001"
+                      acquisitionPointIdentity="station-01"
+                      acquisitionTime="2025-11-05T20:00:00Z"&gt;
+    &lt;md:UTCPoint utcPoint="2025-11-05T20:00:00Z"/&gt;
+    &lt;md:BinaryData signalType="SCTE35"&gt;/DAlAAAAAAAAAP/wFAVAAAsxf+//+pTQbf4ApO6oAGkAAAAAUIWI+A==&lt;/md:BinaryData&gt;
+  &lt;/esam:AcquiredSignal&gt;
+&lt;/esam:SignalProcessingEvent&gt;</code>
+        </div>
+
+        <h4>Response (200 OK)</h4>
+        <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          <code>&lt;SignalProcessingNotification xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
+  &lt;StatusCode classCode="0"&gt;
+    &lt;Note&gt;success&lt;/Note&gt;
+  &lt;/StatusCode&gt;
+  &lt;ResponseSignal action="noop" acquisitionSignalID="test-001"&gt;
+    &lt;UTCPoint utcPoint="2025-11-05T20:00:00Z"/&gt;
+    &lt;BinaryData signalType="SCTE35"&gt;/DAlAAAAAAAAAP/wFAVAAAsxf+//+pTQbf4ApO6oAGkAAAAAUIWI+A==&lt;/BinaryData&gt;
+  &lt;/ResponseSignal&gt;
+&lt;/SignalProcessingNotification&gt;</code>
+        </div>
+      </div>
+    </div>
+
+    <!-- Channels API -->
+    <div id="channels" class="section">
+      <h2>Channels API</h2>
+      
+      <!-- List Channels -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="endpoint-path">/api/channels</span>
+        </div>
+        <p class="endpoint-description">List all configured channels</p>
+        
+        <h4>Response</h4>
+        <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          <code>[
+  {
+    "id": 1,
+    "name": "live-sports",
+    "enabled": true,
+    "created_at": "2025-11-05T10:00:00Z",
+    "rules": [...]
+  }
+]</code>
+        </div>
+      </div>
+
+      <!-- Create Channel -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/channels</span>
+        </div>
+        <p class="endpoint-description">Create a new channel</p>
+        
+        <h4>Request Body</h4>
+        <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          <code>{
+  "name": "live-sports",
+  "enabled": true
+}</code>
+        </div>
+      </div>
+
+      <!-- Update Channel -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-put">PUT</span>
+          <span class="endpoint-path">/api/channels/{channel_name}</span>
+        </div>
+        <p class="endpoint-description">Update channel (enable/disable)</p>
+        
+        <h4>Request Body</h4>
+        <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          <code>{
+  "enabled": false
+}</code>
+        </div>
+      </div>
+
+      <!-- Delete Channel -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-delete">DELETE</span>
+          <span class="endpoint-path">/api/channels/{channel_name}</span>
+        </div>
+        <p class="endpoint-description">Delete a channel and all its rules</p>
+      </div>
+    </div>
+
+    <!-- Rules API -->
+    <div id="rules" class="section">
+      <h2>Rules API</h2>
+      
+      <!-- Create Rule -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/channels/{channel_name}/rules</span>
+        </div>
+        <p class="endpoint-description">Create a new rule for a channel</p>
+        
+        <h4>Request Body</h4>
+        <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          <code>{
+  "name": "Delete splice_insert",
+  "priority": 10,
+  "enabled": true,
+  "action": "delete",
+  "match_json": "{\"anyOf\":[{\"scte35.command\":\"splice_insert\"}]}",
+  "params_json": "{}"
+}</code>
+        </div>
+
+        <h4>Match JSON Examples</h4>
+        <div class="code-block">
+          <code>// Match any splice_insert command
+{"anyOf":[{"scte35.command":"splice_insert"}]}
+
+// Match program start (type 0x10)
+{"allOf":[{"scte35.command":"time_signal"},{"scte35.segmentation_type_id":"0x10"}]}
+
+// Match ESPN content
+{"scte35.upid":"*ESPN*"}
+
+// Complex: Match provider ads for premium content
+{
+  "allOf": [
+    {"scte35.segmentation_type_id":"0x30"},
+    {"scte35.upid":"*PREMIUM*"}
+  ]
+}</code>
+        </div>
+
+        <h4>Params JSON Examples</h4>
+        <div class="code-block">
+          <code>// Pass through unchanged
+{}
+
+// Build 60s splice insert
+{"build":{"command":"splice_insert_out","duration_s":60}}
+
+// Use extracted PTS with 5s offset
+{"build":{"command":"splice_insert_in_with_pts","use_extracted_pts":true,"pts_offset_s":5}}
+
+// Replace with pre-built SCTE-35
+{"scte35_b64":"/DAlAAAAAAAAAP/wFAVAAAsxf+//+pTQbf4ApO6oAGkAAAAAUIWI+A=="}</code>
+        </div>
+      </div>
+
+      <!-- Update Rule -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-put">PUT</span>
+          <span class="endpoint-path">/api/channels/{channel_name}/rules/{rule_id}</span>
+        </div>
+        <p class="endpoint-description">Update an existing rule</p>
+      </div>
+
+      <!-- Delete Rule -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-delete">DELETE</span>
+          <span class="endpoint-path">/api/channels/{channel_name}/rules/{rule_id}</span>
+        </div>
+        <p class="endpoint-description">Delete a rule</p>
+      </div>
+    </div>
+
+    <!-- Events API -->
+    <div id="events" class="section">
+      <h2>Events API</h2>
+      
+      <!-- List Events -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="endpoint-path">/api/events</span>
+        </div>
+        <p class="endpoint-description">List processed events with optional filtering</p>
+        
+        <h4>Query Parameters</h4>
+        <table class="param-table">
+          <tr>
+            <th>Parameter</th>
+            <th>Type</th>
+            <th>Default</th>
+            <th>Description</th>
+          </tr>
+          <tr>
+            <td><span class="param-name">limit</span></td>
+            <td>integer</td>
+            <td>100</td>
+            <td>Number of events (max 1000)</td>
+          </tr>
+          <tr>
+            <td><span class="param-name">offset</span></td>
+            <td>integer</td>
+            <td>0</td>
+            <td>Skip this many events</td>
+          </tr>
+          <tr>
+            <td><span class="param-name">channel</span></td>
+            <td>string</td>
+            <td>-</td>
+            <td>Filter by channel name</td>
+          </tr>
+          <tr>
+            <td><span class="param-name">action</span></td>
+            <td>string</td>
+            <td>-</td>
+            <td>Filter by action (noop, delete, replace)</td>
+          </tr>
+          <tr>
+            <td><span class="param-name">since</span></td>
+            <td>string</td>
+            <td>-</td>
+            <td>Time period (1h, 24h, 7d, 30d)</td>
+          </tr>
+        </table>
+      </div>
+
+      <!-- Get Event Detail -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="endpoint-path">/api/events/{event_id}</span>
+        </div>
+        <p class="endpoint-description">Get full event details including raw XML</p>
+        
+        <h4>Response</h4>
+        <div class="code-block">
+          <code>{
+  "id": 123,
+  "timestamp": "2025-11-05T20:00:00Z",
+  "channel_name": "live-sports",
+  "acquisition_signal_id": "test-001",
+  "action": "replace",
+  "matched_rule_name": "Program End → 60s Ad",
+  "raw_esam_request": "&lt;SignalProcessingEvent&gt;...&lt;/SignalProcessingEvent&gt;",
+  "raw_esam_response": "&lt;SignalProcessingNotification&gt;...&lt;/SignalProcessingNotification&gt;"
+}</code>
+        </div>
+      </div>
+
+      <!-- Get Statistics -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="endpoint-path">/api/events/stats</span>
+        </div>
+        <p class="endpoint-description">Get aggregate event statistics</p>
+        
+        <h4>Response</h4>
+        <div class="code-block">
+          <code>{
+  "total_events": 1234,
+  "events_last_24h": 567,
+  "avg_processing_time_ms": 1.5,
+  "by_action": {
+    "noop": 800,
+    "delete": 200,
+    "replace": 234
+  }
+}</code>
+        </div>
+      </div>
+    </div>
+
+    <!-- Code Examples -->
+    <div id="examples" class="section">
+      <h2>Code Examples</h2>
+      
+      <h3>cURL Examples</h3>
+      
+      <h4>Send ESAM Request</h4>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <code>curl -X POST "http://localhost:8090/esam?channel=live-sports" \
+  -H "Content-Type: application/xml" \
+  -d '&lt;?xml version="1.0"?&gt;
+&lt;SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
+  &lt;AcquiredSignal acquisitionSignalID="test-001"&gt;
+    &lt;UTCPoint utcPoint="2025-11-05T20:00:00Z"/&gt;
+  &lt;/AcquiredSignal&gt;
+&lt;/SignalProcessingEvent&gt;'</code>
+      </div>
+
+      <h4>Create Channel</h4>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <code>curl -X POST "http://localhost:8090/api/channels" \
+  -H "Authorization: Bearer dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"live-sports","enabled":true}'</code>
+      </div>
+
+      <h4>Create Rule</h4>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <code>curl -X POST "http://localhost:8090/api/channels/live-sports/rules" \
+  -H "Authorization: Bearer dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Delete splice_insert",
+    "priority": 10,
+    "action": "delete",
+    "match_json": "{\"anyOf\":[{\"scte35.command\":\"splice_insert\"}]}",
+    "params_json": "{}"
+  }'</code>
+      </div>
+
+      <h4>Get Events</h4>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <code>curl -H "Authorization: Bearer dev-token" \
+  "http://localhost:8090/api/events?channel=live-sports&limit=10"</code>
+      </div>
+
+      <h3>Python Examples</h3>
+      
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <code>import requests
+
+# Configuration
+BASE_URL = "http://localhost:8090"
+TOKEN = "dev-token"
+HEADERS = {
+    "Authorization": f"Bearer {TOKEN}",
+    "Content-Type": "application/json"
+}
+
+# Create channel
+response = requests.post(
+    f"{BASE_URL}/api/channels",
+    headers=HEADERS,
+    json={"name": "live-sports", "enabled": True}
+)
+print(response.json())
+
+# Create rule
+rule = {
+    "name": "Delete splice_insert",
+    "priority": 10,
+    "action": "delete",
+    "match_json": '{"anyOf":[{"scte35.command":"splice_insert"}]}',
+    "params_json": "{}"
+}
+response = requests.post(
+    f"{BASE_URL}/api/channels/live-sports/rules",
+    headers=HEADERS,
+    json=rule
+)
+print(response.json())
+
+# Send ESAM request
+esam_xml = '''&lt;?xml version="1.0"?&gt;
+&lt;SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
+  &lt;AcquiredSignal acquisitionSignalID="test-001"&gt;
+    &lt;UTCPoint utcPoint="2025-11-05T20:00:00Z"/&gt;
+  &lt;/AcquiredSignal&gt;
+&lt;/SignalProcessingEvent&gt;'''
+
+response = requests.post(
+    f"{BASE_URL}/esam?channel=live-sports",
+    headers={"Content-Type": "application/xml"},
+    data=esam_xml
+)
+print(response.text)</code>
+      </div>
+    </div>
+
+    <!-- OpenAPI Spec -->
+    <div id="swagger" class="section">
+      <h2>OpenAPI Specification</h2>
+      <p>Download the complete OpenAPI 3.0 specification for use with Swagger, Postman, or other API tools:</p>
+      
+      <div class="swagger-container">
+        <h3>Download</h3>
+        <a href="/openapi.yaml" class="btn btn-primary" download>Download openapi.yaml</a>
+        
+        <h3 style="margin-top: 32px;">Use with Swagger UI</h3>
+        <div class="code-block">
+          <code># Using Docker
+docker run -p 80:8080 -e SWAGGER_JSON=/openapi.yaml \
+  -v $(pwd)/openapi.yaml:/openapi.yaml \
+  swaggerapi/swagger-ui
+
+# Then open http://localhost</code>
+        </div>
+
+        <h3 style="margin-top: 32px;">Import to Postman</h3>
+        <p>1. Open Postman → Import → Upload openapi.yaml<br>
+        2. Collection will be created with all endpoints<br>
+        3. Add Bearer token to collection authorization</p>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="text-align: center; margin-top: 80px; padding: 40px 0; border-top: 1px solid var(--border);">
+      <p class="text-secondary">POIS v2.1.0 | <a href="https://github.com/bokelleher/rust-pois" target="_blank">GitHub</a> | <a href="/static/events.html">Event Monitor</a></p>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>
+    function copyCode(button) {
+      const codeBlock = button.nextElementSibling;
+      const text = codeBlock.textContent;
+      
+      navigator.clipboard.writeText(text).then(() => {
+        const originalText = button.textContent;
+        button.textContent = 'Copied!';
+        button.style.background = 'rgba(16, 185, 129, 0.2)';
+        button.style.borderColor = '#10b981';
+        
+        setTimeout(() => {
+          button.textContent = originalText;
+          button.style.background = '';
+          button.style.borderColor = '';
+        }, 2000);
+      });
+    }
+
+    // Smooth scroll to anchor links
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', function (e) {
+        e.preventDefault();
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+  </script>
+</body>
+</html>

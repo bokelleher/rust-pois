@@ -1,0 +1,590 @@
+openapi: 3.0.3
+info:
+  title: POIS - Placement Opportunity Insertion Service
+  description: |
+    POIS is an ESAM (Event Signaling and Management) server that processes SCTE-35 signals
+    and applies rule-based transformations. It provides a REST API for managing channels,
+    rules, and viewing event history.
+    
+    ## Features
+    - ESAM XML endpoint for receiving SCTE-35 signals
+    - Rule-based signal processing (match, transform, delete)
+    - Event logging and monitoring
+    - Multi-channel support
+    - Real-time statistics
+    
+    ## Authentication
+    All API endpoints require a Bearer token in the Authorization header.
+    Default development token: `dev-token`
+  version: 2.1.0
+  contact:
+    name: POIS GitHub
+    url: https://github.com/bokelleher/rust-pois
+  license:
+    name: MIT
+    url: https://github.com/bokelleher/rust-pois/blob/main/LICENSE
+
+servers:
+  - url: http://localhost:8090
+    description: Local development server
+  - url: https://pois.techexlab.com:8090
+    description: Production server
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: ESAM
+    description: ESAM XML endpoint for signal processing
+  - name: Channels
+    description: Channel management
+  - name: Rules
+    description: Rule management per channel
+  - name: Events
+    description: Event history and statistics
+  - name: Health
+    description: Server health and status
+
+paths:
+  /esam:
+    post:
+      tags: [ESAM]
+      summary: Process ESAM signal
+      description: |
+        Main ESAM endpoint that receives SignalProcessingEvent XML and returns
+        SignalProcessingNotification XML based on matched rules.
+      parameters:
+        - name: channel
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Channel name to process signal for
+          example: live-sports
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+              format: xml
+            example: |
+              <?xml version="1.0"?>
+              <esam:SignalProcessingEvent xmlns:esam="urn:cablelabs:iptvservices:esam:xsd:signal:1">
+                <esam:AcquiredSignal acquisitionSignalID="test-001">
+                  <md:UTCPoint utcPoint="2025-11-05T20:00:00Z"/>
+                  <md:BinaryData signalType="SCTE35">/DAlAAAAAAAAAP/wFAVAAAsxf+//+pTQbf4ApO6oAGkAAAAAUIWI+A==</md:BinaryData>
+                </esam:AcquiredSignal>
+              </esam:SignalProcessingEvent>
+      responses:
+        '200':
+          description: Signal processed successfully
+          content:
+            application/xml:
+              schema:
+                type: string
+                format: xml
+              example: |
+                <SignalProcessingNotification xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1">
+                  <StatusCode classCode="0">
+                    <Note>success</Note>
+                  </StatusCode>
+                  <ResponseSignal action="noop" acquisitionSignalID="test-001">
+                    <UTCPoint utcPoint="2025-11-05T20:00:00Z"/>
+                    <BinaryData signalType="SCTE35">/DAlAAAAAAAAAP/wFAVAAAsxf+//+pTQbf4ApO6oAGkAAAAAUIWI+A==</BinaryData>
+                  </ResponseSignal>
+                </SignalProcessingNotification>
+        '400':
+          description: Invalid XML or missing channel parameter
+        '404':
+          description: Channel not found
+
+  /api/channels:
+    get:
+      tags: [Channels]
+      summary: List all channels
+      description: Returns all configured channels with their rules
+      responses:
+        '200':
+          description: List of channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Channel'
+    
+    post:
+      tags: [Channels]
+      summary: Create new channel
+      description: Creates a new channel for signal processing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChannel'
+      responses:
+        '201':
+          description: Channel created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '400':
+          description: Invalid request body
+
+  /api/channels/{channel_name}:
+    get:
+      tags: [Channels]
+      summary: Get channel details
+      parameters:
+        - $ref: '#/components/parameters/ChannelName'
+      responses:
+        '200':
+          description: Channel details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '404':
+          description: Channel not found
+    
+    put:
+      tags: [Channels]
+      summary: Update channel
+      parameters:
+        - $ref: '#/components/parameters/ChannelName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateChannel'
+      responses:
+        '200':
+          description: Channel updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '404':
+          description: Channel not found
+    
+    delete:
+      tags: [Channels]
+      summary: Delete channel
+      parameters:
+        - $ref: '#/components/parameters/ChannelName'
+      responses:
+        '204':
+          description: Channel deleted
+        '404':
+          description: Channel not found
+
+  /api/channels/{channel_name}/rules:
+    get:
+      tags: [Rules]
+      summary: List rules for channel
+      parameters:
+        - $ref: '#/components/parameters/ChannelName'
+      responses:
+        '200':
+          description: List of rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Rule'
+    
+    post:
+      tags: [Rules]
+      summary: Create new rule
+      parameters:
+        - $ref: '#/components/parameters/ChannelName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRule'
+      responses:
+        '201':
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+
+  /api/channels/{channel_name}/rules/{rule_id}:
+    get:
+      tags: [Rules]
+      summary: Get rule details
+      parameters:
+        - $ref: '#/components/parameters/ChannelName'
+        - $ref: '#/components/parameters/RuleId'
+      responses:
+        '200':
+          description: Rule details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+    
+    put:
+      tags: [Rules]
+      summary: Update rule
+      parameters:
+        - $ref: '#/components/parameters/ChannelName'
+        - $ref: '#/components/parameters/RuleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRule'
+      responses:
+        '200':
+          description: Rule updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+    
+    delete:
+      tags: [Rules]
+      summary: Delete rule
+      parameters:
+        - $ref: '#/components/parameters/ChannelName'
+        - $ref: '#/components/parameters/RuleId'
+      responses:
+        '204':
+          description: Rule deleted
+
+  /api/events:
+    get:
+      tags: [Events]
+      summary: List events
+      description: Returns paginated list of processed events
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+          description: Number of events to return
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+          description: Number of events to skip
+        - name: channel
+          in: query
+          schema:
+            type: string
+          description: Filter by channel name
+        - name: action
+          in: query
+          schema:
+            type: string
+            enum: [noop, delete, replace]
+          description: Filter by action taken
+        - name: since
+          in: query
+          schema:
+            type: string
+            enum: [1h, 24h, 7d, 30d]
+          description: Time period filter
+      responses:
+        '200':
+          description: List of events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Event'
+
+  /api/events/{event_id}:
+    get:
+      tags: [Events]
+      summary: Get event details
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Event details with full XML
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventDetail'
+
+  /api/events/stats:
+    get:
+      tags: [Events]
+      summary: Get event statistics
+      description: Returns aggregate statistics about processed events
+      responses:
+        '200':
+          description: Event statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventStats'
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Returns server health status
+      security: []
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  version:
+                    type: string
+                    example: 2.1.0
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Use Bearer token authentication. Default development token: `dev-token`
+        
+        Example: `Authorization: Bearer dev-token`
+
+  parameters:
+    ChannelName:
+      name: channel_name
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Channel name
+      example: live-sports
+    
+    RuleId:
+      name: rule_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Rule ID
+      example: 1
+
+  schemas:
+    Channel:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: live-sports
+        enabled:
+          type: boolean
+          example: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rule'
+
+    CreateChannel:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: live-sports
+        enabled:
+          type: boolean
+          default: true
+
+    UpdateChannel:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+
+    Rule:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        channel_id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Delete splice_insert
+        priority:
+          type: integer
+          example: 10
+          description: Lower number = higher priority
+        enabled:
+          type: boolean
+          example: true
+        action:
+          type: string
+          enum: [noop, delete, replace]
+          example: delete
+        match_json:
+          type: string
+          example: '{"anyOf":[{"scte35.command":"splice_insert"}]}'
+        params_json:
+          type: string
+          example: '{}'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateRule:
+      type: object
+      required: [name, priority, action, match_json]
+      properties:
+        name:
+          type: string
+          example: Delete splice_insert
+        priority:
+          type: integer
+          example: 10
+        enabled:
+          type: boolean
+          default: true
+        action:
+          type: string
+          enum: [noop, delete, replace]
+        match_json:
+          type: string
+          description: JSON match conditions
+          example: '{"anyOf":[{"scte35.command":"splice_insert"}]}'
+        params_json:
+          type: string
+          description: JSON action parameters
+          example: '{}'
+
+    UpdateRule:
+      type: object
+      properties:
+        name:
+          type: string
+        priority:
+          type: integer
+        enabled:
+          type: boolean
+        action:
+          type: string
+          enum: [noop, delete, replace]
+        match_json:
+          type: string
+        params_json:
+          type: string
+
+    Event:
+      type: object
+      properties:
+        id:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+        channel_name:
+          type: string
+        acquisition_signal_id:
+          type: string
+        source_ip:
+          type: string
+        action:
+          type: string
+          enum: [noop, delete, replace]
+        matched_rule_name:
+          type: string
+          nullable: true
+        scte35_command:
+          type: string
+          nullable: true
+        scte35_type_id:
+          type: string
+          nullable: true
+        processing_time_ms:
+          type: integer
+        response_status:
+          type: integer
+
+    EventDetail:
+      allOf:
+        - $ref: '#/components/schemas/Event'
+        - type: object
+          properties:
+            raw_esam_request:
+              type: string
+              description: Full ESAM request XML
+            raw_esam_response:
+              type: string
+              description: Full ESAM response XML
+            utc_point:
+              type: string
+            user_agent:
+              type: string
+            request_size:
+              type: integer
+            matched_rule_id:
+              type: integer
+              nullable: true
+            error_message:
+              type: string
+              nullable: true
+            scte35_upid:
+              type: string
+              nullable: true
+
+    EventStats:
+      type: object
+      properties:
+        total_events:
+          type: integer
+          example: 1234
+        events_last_24h:
+          type: integer
+          example: 567
+        avg_processing_time_ms:
+          type: number
+          format: float
+          example: 1.5
+        by_action:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            noop: 800
+            delete: 200
+            replace: 234
