@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Serialize, sqlx::FromRow, Clone)]
 pub struct Channel {
@@ -61,4 +62,37 @@ pub struct DryRunResult {
     pub matched_rule_id: Option<i64>,
     pub action: String,
     pub note: String,
+}
+
+// === BACKUP/EXPORT MODELS ===
+
+#[derive(Serialize, Deserialize)]
+pub struct ExportedRule {
+    pub name: String,
+    pub priority: i64,
+    pub enabled: bool,
+
+    #[serde(default)]
+    pub match_json: Value,
+    pub action: String,
+
+    #[serde(default)]
+    pub params_json: Value,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ExportedChannel {
+    pub name: String,
+    pub enabled: bool,
+    pub timezone: String,
+    pub rules: Vec<ExportedRule>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RulesBackup {
+    pub version: u32,
+
+    #[serde(default)]
+    pub exported_at: Option<String>,
+    pub channels: Vec<ExportedChannel>,
 }
