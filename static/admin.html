@@ -17,13 +17,9 @@
         <header class="topbar">
           <div class="brand">
             <a href="/">
-              <!-- Option 1: Use your own logo image -->
-              <!-- <img src="/static/logo.png" alt="POIS" class="logo" /> -->
-              
-              <!-- Option 2: Use text logo (default) -->
-              <span class="logo-text">POIS</span>
+              <img src="https://esni.techexlab.com:3000/static/media/techex-logo.74b1230112edda6b3915.png" 
+                   alt="TechExLab" class="logo" />
             </a>
-            <a href="/static/admin.html" class="brand-sub">Admin</a>
           </div>
           <nav class="nav">
             <a href="/static/admin.html" class="active">Channels & Rules</a>
@@ -32,7 +28,17 @@
           </nav>
           <div class="spacer"></div>
           <div class="right">
-            <span id="tokenDisplay">token: ${localStorage.getItem("pois_token") ? "set" : "unset"}</span>
+            <input 
+              class="w-64" 
+              placeholder="Bearer token" 
+              id="headerTokenInput"
+              value=${localStorage.getItem("pois_token") || ""}
+              onInput=${(e) => localStorage.setItem("pois_token", e.target.value)}
+              style="width: 200px; height: 32px; padding: 6px 12px; font-size: 13px;"
+            />
+            <span id="tokenDisplay" style="margin-left: 8px;">
+              ${localStorage.getItem("pois_token") ? "✓ set" : "⚠ not set"}
+            </span>
           </div>
         </header>
       `;
@@ -205,7 +211,7 @@
           await API.del(`/rules/${ruleId}`);
           await fetchRules();
         } catch (e) {
-          alert(`Failed to delete rule: ${e.message}`);
+          alert(`Failed to delete: ${e.message}`);
         }
       };
 
@@ -214,41 +220,25 @@
           await API.put(`/rules/${rule.id}`, {
             name: rule.name,
             priority: rule.priority,
-            enabled: rule.enabled === 0,  // Toggle: 0 -> true, 1 -> false
-            match_json: JSON.parse(rule.match_json),
+            enabled: !rule.enabled,
+            match_json: JSON.parse(rule.match_json || '{}'),
             action: rule.action,
-            params_json: JSON.parse(rule.params_json)
+            params_json: JSON.parse(rule.params_json || '{}')
           });
           await fetchRules();
         } catch (e) {
-          alert(`Failed to update rule: ${e.message}`);
+          alert(`Failed to toggle rule: ${e.message}`);
         }
       };
 
       const startEdit = (rule) => {
         setEditingId(rule.id);
-        setSaving(false);
-        // Format JSON strings nicely for editing
-        let formattedMatch = rule.match_json === "null" ? "{}" : rule.match_json;
-        let formattedParams = rule.params_json === "null" ? "{}" : rule.params_json;
-        
-        try {
-          formattedMatch = JSON.stringify(JSON.parse(formattedMatch), null, 2);
-        } catch (e) {
-          formattedMatch = "{}";
-        }
-        try {
-          formattedParams = JSON.stringify(JSON.parse(formattedParams), null, 2);
-        } catch (e) {
-          formattedParams = "{}";
-        }
-        
         setDraft({
-          name: rule.name,
-          priority: String(rule.priority),
-          match_json: formattedMatch,
-          action: rule.action,
-          params_json: formattedParams
+          name: rule.name || "",
+          priority: String(rule.priority || 0),
+          action: rule.action || "noop",
+          match_json: rule.match_json || "{}",
+          params_json: rule.params_json || "{}"
         });
       };
 
@@ -259,11 +249,9 @@
       };
 
       const saveEdit = async (rule) => {
-        if (!draft) return;
-        
-        const trimmedName = (draft.name || "").trim();
+        const trimmedName = draft.name?.trim();
         if (!trimmedName) {
-          alert("Rule name is required.");
+          alert("Rule name cannot be empty.");
           return;
         }
         
@@ -320,24 +308,25 @@
               <div class="empty-state-text">Add a rule to get started.</div>
             </div>
           ` : html`
-            <div style="display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; flex-direction: column; gap: 16px;">
               ${rules.map(rule => {
                 const isEditing = editingId === rule.id;
                 const displayMatch = rule.match_json || '{}';
                 const displayParams = rule.params_json || '{}';
                 
                 return html`
-                  <div key=${rule.id} class="rule-card">
-                    <div class="flex items-center justify-between mb-3">
+                  <div key=${rule.id} class="panel" style="padding: 20px; margin-bottom: 0;">
+                    <div class="flex items-center justify-between mb-3" style="padding-bottom: 12px; border-bottom: 1px solid var(--border);">
                       ${isEditing ? html`
                         <input 
                           class="w-64" 
                           value=${draft?.name || ""} 
                           onInput=${e => setDraft(prev => ({ ...prev, name: e.target.value }))} 
                           placeholder="Rule name"
+                          style="margin: 0;"
                         />
                       ` : html`
-                        <div class="font-medium">${rule.name || 'Untitled'}</div>
+                        <div class="font-medium" style="font-size: 16px; color: var(--text-primary);">${rule.name || 'Untitled'}</div>
                       `}
                       <div class="flex gap-2">
                         ${isEditing ? html`
@@ -377,64 +366,58 @@
                         `}
                       </div>
                     </div>
+                    
                     ${isEditing ? html`
-                      <div style="display: flex; flex-direction: column; gap: 12px; font-size: 13px;">
-                        <label class="flex flex-col gap-1">
-                          <span class="text-xs text-muted" style="letter-spacing: 0.3px; text-transform: uppercase;">Priority</span>
-                          <input 
-                            type="number" 
-                            min="0" 
-                            class="w-32" 
-                            value=${draft?.priority || "0"} 
-                            onInput=${e => setDraft(prev => ({ ...prev, priority: e.target.value }))} 
-                          />
-                        </label>
-                        <label class="flex flex-col gap-1">
-                          <span class="text-xs text-muted" style="letter-spacing: 0.3px; text-transform: uppercase;">Match JSON</span>
-                          <textarea 
-                            rows="4" 
-                            class="font-mono text-xs" 
-                            value=${draft?.match_json || "{}"} 
-                            onInput=${e => setDraft(prev => ({ ...prev, match_json: e.target.value }))}
-                            placeholder='{"anyOf": [{"scte35.command": "time_signal"}]}'
-                          ></textarea>
-                        </label>
-                        <label class="flex flex-col gap-1">
-                          <span class="text-xs text-muted" style="letter-spacing: 0.3px; text-transform: uppercase;">Action</span>
-                          <select 
-                            class="w-48" 
-                            value=${draft?.action || "noop"} 
-                            onChange=${e => setDraft(prev => ({ ...prev, action: e.target.value }))}
-                          >
-                            <option value="noop">noop</option>
-                            <option value="delete">delete</option>
-                            <option value="replace">replace</option>
-                          </select>
-                        </label>
-                        <label class="flex flex-col gap-1">
-                          <span class="text-xs text-muted" style="letter-spacing: 0.3px; text-transform: uppercase;">Params JSON</span>
-                          <textarea 
-                            rows="4" 
-                            class="font-mono text-xs" 
-                            value=${draft?.params_json || "{}"} 
-                            onInput=${e => setDraft(prev => ({ ...prev, params_json: e.target.value }))}
-                            placeholder='{"scte35_b64": "..."}'
-                          ></textarea>
-                        </label>
+                      <div class="form-group mb-3" style="margin-top: 16px;">
+                        <label>Priority</label>
+                        <input 
+                          type="number" 
+                          value=${draft?.priority || 0} 
+                          onInput=${e => setDraft(prev => ({ ...prev, priority: e.target.value }))}
+                        />
+                      </div>
+                      <div class="form-group mb-3">
+                        <label>Action</label>
+                        <select value=${draft?.action || 'noop'} onChange=${e => setDraft(prev => ({ ...prev, action: e.target.value }))}>
+                          <option value="noop">No Operation</option>
+                          <option value="delete">Delete</option>
+                          <option value="replace">Replace</option>
+                        </select>
+                      </div>
+                      <div class="form-group mb-3">
+                        <label>Match JSON</label>
+                        <textarea 
+                          rows="4" 
+                          value=${draft?.match_json || '{}'} 
+                          onInput=${e => setDraft(prev => ({ ...prev, match_json: e.target.value }))}
+                        ></textarea>
+                      </div>
+                      <div class="form-group">
+                        <label>Params JSON</label>
+                        <textarea 
+                          rows="4" 
+                          value=${draft?.params_json || '{}'} 
+                          onInput=${e => setDraft(prev => ({ ...prev, params_json: e.target.value }))}
+                        ></textarea>
                       </div>
                     ` : html`
-                      <div style="display: flex; flex-direction: column; gap: 8px; font-size: 13px;">
-                        <div><strong>Priority:</strong> ${rule.priority || 0}</div>
+                      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 12px;">
                         <div>
-                          <strong>Match:</strong> 
-                          <pre class="text-xs mt-1" style="max-height: 150px; overflow: auto;">${displayMatch}</pre>
+                          <div style="font-size: 12px; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 4px;">Priority</div>
+                          <div style="color: var(--text-primary);">${rule.priority || 0}</div>
                         </div>
-                        <div><strong>Action:</strong> <span class=${'action-' + (rule.action || 'noop')}>${rule.action || 'noop'}</span></div>
                         <div>
-                          <strong>Params:</strong> 
-                          <pre class="text-xs mt-1" style="max-height: 150px; overflow: auto;">${displayParams}</pre>
+                          <div style="font-size: 12px; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 4px;">Action</div>
+                          <span class="action-${rule.action}">${rule.action}</span>
                         </div>
-                        <div class="text-muted">${rule.enabled ? 'Active' : 'Inactive'}</div>
+                        <div>
+                          <div style="font-size: 12px; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 4px;">Match JSON</div>
+                          <pre style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; overflow-x: auto; font-size: 12px; margin: 0;">${displayMatch}</pre>
+                        </div>
+                        <div>
+                          <div style="font-size: 12px; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 4px;">Params JSON</div>
+                          <pre style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; overflow-x: auto; font-size: 12px; margin: 0;">${displayParams}</pre>
+                        </div>
                       </div>
                     `}
                   </div>
@@ -442,38 +425,6 @@
               })}
             </div>
           `}
-
-          <${DryRun} channel=${channel} />
-        </div>
-      `;
-    }
-    
-    function DryRun({ channel }) {
-      const [xml, setXml] = hooks.useState(`<SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1" xmlns:sig="urn:cablelabs:md:xsd:signaling:3.0"><AcquiredSignal acquisitionSignalID="abc-123"><sig:UTCPoint utcPoint="2012-09-18T10:14:34Z"/></AcquiredSignal></SignalProcessingEvent>`);
-      const [result, setResult] = hooks.useState(null);
-      
-      const run = async () => {
-        try {
-          setResult(await API.post("/dryrun", { channel: channel.name, esam_xml: xml }));
-        } catch (e) {
-          alert(e);
-        }
-      };
-      
-      return html`
-        <div class="mt-6 panel">
-          <div class="card-title mb-4">Dry-run ESAM against rules</div>
-          <textarea class="w-full font-mono text-xs" rows="8" value=${xml} onInput=${e => setXml(e.target.value)}></textarea>
-          <div class="mt-2 flex items-center gap-2">
-            <button class="btn btn-primary" onClick=${run}>Run Test</button>
-            ${result && html`
-              <div class="text-sm">
-                → Action: <strong class="action-${result.action}">${result.action}</strong> 
-                ${result.matched_rule_id ? `(rule ${result.matched_rule_id})` : ''} 
-                — ${result.note}
-              </div>
-            `}
-          </div>
         </div>
       `;
     }
@@ -484,7 +435,6 @@
       return html`
         <div class="min-h-screen">
           <${Header} />
-          <${Toolbar} onToken=${() => {}} />
           <div class="grid grid-cols-12">
             <div class="col-span-3 border-r admin-sidebar">
               <${Channels} onSelect=${setSel} selected=${sel} />

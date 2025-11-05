@@ -354,6 +354,24 @@ button:disabled,
   font-size: 12px;
 }
 
+.btn-sm {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--field-bg);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-sm:hover {
+  background: var(--field-bg-hover);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
 /* === TABLES === */
 table {
   width: 100%;
@@ -389,6 +407,38 @@ tbody td {
   padding: 14px 12px;
   color: var(--text-primary);
   font-size: 14px;
+}
+
+/* Events table specific */
+.events-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.events-table th {
+  text-align: left;
+  padding: 14px 16px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-bottom: 2px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.events-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+}
+
+.events-table tbody tr {
+  transition: background 0.15s;
+}
+
+.events-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 /* === BADGES & STATUS === */
@@ -430,6 +480,25 @@ tbody td {
   background: rgba(255, 255, 255, 0.08);
   border-color: var(--border);
   color: var(--text-secondary);
+}
+
+/* Badge styles for events page */
+.badge-noop {
+  background: rgba(160, 160, 160, 0.15);
+  color: #a0a0a0;
+  border: 1px solid rgba(160, 160, 160, 0.3);
+}
+
+.badge-delete {
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--error);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+}
+
+.badge-replace {
+  background: rgba(102, 126, 234, 0.15);
+  color: var(--primary);
+  border: 1px solid rgba(102, 126, 234, 0.3);
 }
 
 /* Action badges (for POIS events) */
@@ -496,6 +565,12 @@ tbody td {
   border-radius: 12px;
   padding: 20px;
   text-align: center;
+  transition: all 0.2s;
+}
+
+.stat-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-2px);
 }
 
 .stat-number {
@@ -514,6 +589,12 @@ tbody td {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: 500;
+}
+
+.auto-refresh {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 /* === FILTER BAR === */
@@ -571,45 +652,63 @@ tbody td {
   font-size: 10px;
 }
 
-/* === MODAL === */
-.modal-backdrop {
+/* === MODAL - FIXED FOR EVENTS PAGE === */
+.modal {
   position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
-  display: flex;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10000;
+  display: none;
   align-items: center;
   justify-content: center;
-  z-index: 2000;
-  animation: fadeIn 0.2s;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+.modal.show {
+  display: flex;
+  opacity: 1;
+  pointer-events: all;
 }
 
-.modal {
+.modal-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.modal-content {
+  position: relative;
+  z-index: 10001;
   background: var(--panel);
   backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border);
   border-radius: 12px;
-  width: 800px;
-  max-width: 95vw;
-  max-height: 90vh;
+  width: 90%;
+  max-width: 800px;
+  max-height: 85vh;
   overflow-y: auto;
-  padding: 24px;
-  animation: slideUp 0.3s;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  animation: modalSlideIn 0.3s ease;
 }
 
-@keyframes slideUp {
+@keyframes modalSlideIn {
   from {
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(-30px) scale(0.95);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -617,9 +716,37 @@ tbody td {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
-  padding-bottom: 16px;
+  padding: 20px 24px;
   border-bottom: 1px solid var(--border);
+}
+
+.modal-header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 28px;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
 }
 
 .modal-title {
@@ -628,8 +755,41 @@ tbody td {
   color: var(--text-primary);
 }
 
-.modal-content {
+.modal-body {
+  padding: 24px;
   color: var(--text-primary);
+}
+
+/* Detail grid for event details */
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.detail-item {
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.detail-item strong {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.detail-item pre {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 /* === CODE / PRE === */
@@ -783,12 +943,6 @@ pre {
 
 .cursor-pointer {
   cursor: pointer;
-}
-
-.auto-refresh {
-  display: flex;
-  align-items: center;
-  gap: 12px;
 }
 
 /* === SCROLLBAR === */

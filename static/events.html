@@ -10,13 +10,9 @@
   <header class="topbar">
     <div class="brand">
       <a href="/">
-        <!-- Option 1: Use your own logo image -->
-        <!-- <img src="/static/logo.png" alt="POIS" class="logo"> -->
-        
-        <!-- Option 2: Use text logo (default) -->
-        <span class="logo-text">POIS</span>
+        <img src="https://esni.techexlab.com:3000/static/media/techex-logo.74b1230112edda6b3915.png" 
+             alt="TechExLab" class="logo">
       </a>
-      <a href="/static/events.html" class="brand-sub">Events</a>
     </div>
     <nav class="nav">
       <a href="/static/admin.html">Channels & Rules</a>
@@ -25,8 +21,10 @@
     </nav>
     <div class="spacer"></div>
     <div class="right">
-      <span id="tokenDisplay">token: unset</span>
-      <button class="btn" id="logoutBtn">Logout</button>
+      <input type="text" id="headerTokenInput" placeholder="Bearer token" 
+             style="width: 200px; height: 32px; padding: 6px 12px; font-size: 13px;"
+             oninput="localStorage.setItem('pois_token', this.value); updateTokenDisplay()">
+      <span id="tokenDisplay" style="margin-left: 8px;">⚠ not set</span>
     </div>
   </header>
 
@@ -57,405 +55,263 @@
         <div class="stat-label">Avg Time (ms)</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Actions (24h)</div>
-        <div id="actionBreakdown" class="text-sm mt-2">--</div>
+        <div class="stat-number" id="actionBreakdown">--</div>
+        <div class="stat-label">Actions</div>
       </div>
     </div>
 
     <!-- Filters -->
-    <div class="filter-bar">
-      <div class="form-group">
-        <label>Channel</label>
-        <select id="channelFilter">
-          <option value="">All Channels</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Action</label>
-        <select id="actionFilter">
-          <option value="">All Actions</option>
-          <option value="noop">noop</option>
-          <option value="delete">delete</option>
-          <option value="replace">replace</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Since</label>
-        <select id="sinceFilter">
-          <option value="">All Time</option>
-          <option value="1h">Last Hour</option>
-          <option value="24h">Last 24 Hours</option>
-          <option value="7d">Last 7 Days</option>
-          <option value="30d">Last 30 Days</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Search</label>
-        <input type="text" id="searchInput" placeholder="Signal ID, IP, or Rule...">
+    <div class="panel" style="margin-top: 24px;">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="channelFilter">Channel</label>
+          <input type="text" id="channelFilter" placeholder="All channels">
+        </div>
+        <div class="form-group">
+          <label for="actionFilter">Action</label>
+          <select id="actionFilter">
+            <option value="">All actions</option>
+            <option value="noop">No-op</option>
+            <option value="delete">Delete</option>
+            <option value="replace">Replace</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="limitFilter">Limit</label>
+          <select id="limitFilter">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="applyFiltersBtn" style="align-self: flex-end;">Apply Filters</button>
       </div>
     </div>
 
     <!-- Events Table -->
-    <div class="panel" style="padding: 0;">
-      <table>
+    <div class="panel" style="margin-top: 24px; overflow-x: auto;">
+      <table class="events-table">
         <thead>
           <tr>
-            <th class="sortable-header" data-sort="timestamp">
-              Timestamp<span class="sort-indicator">↕</span>
-            </th>
-            <th class="sortable-header" data-sort="channel_name">
-              Channel<span class="sort-indicator">↕</span>
-            </th>
-            <th>Signal ID</th>
-            <th>Source IP</th>
-            <th>SCTE-35 Cmd</th>
-            <th>PTS Time</th>
-            <th>Matched Rule</th>
-            <th class="sortable-header" data-sort="action">
-              Action<span class="sort-indicator">↕</span>
-            </th>
-            <th class="text-right sortable-header" data-sort="processing_time_ms">
-              Time (ms)<span class="sort-indicator">↕</span>
-            </th>
-            <th class="text-right">Status</th>
+            <th>Timestamp</th>
+            <th>Channel</th>
+            <th>Action</th>
+            <th>Message</th>
+            <th>Processing (ms)</th>
             <th>Details</th>
           </tr>
         </thead>
         <tbody id="eventsTableBody">
           <tr>
-            <td colspan="11" class="text-center p-8 text-muted">Loading events...</td>
+            <td colspan="6" style="text-align: center; padding: 40px; color: var(--text-secondary);">
+              Loading events...
+            </td>
           </tr>
         </tbody>
       </table>
     </div>
 
     <!-- Pagination -->
-    <div class="pagination">
-      <div class="pagination-info">
-        Showing <span id="showingStart">0</span>-<span id="showingEnd">0</span> | 
-        <span id="eventCount">0 events</span>
-      </div>
-      <div class="pagination-controls">
-        <button id="prevPage" class="btn">← Previous</button>
-        <span class="text-muted">Page <span id="currentPage">1</span></span>
-        <button id="nextPage" class="btn">Next →</button>
-      </div>
+    <div class="flex justify-between items-center" style="margin-top: 24px;">
+      <button class="btn" id="prevPageBtn" disabled>← Previous</button>
+      <span id="pageInfo">Page 1</span>
+      <button class="btn" id="nextPageBtn">Next →</button>
     </div>
   </main>
 
   <!-- Event Detail Modal -->
-  <div id="eventDetailModal" class="modal-backdrop hidden">
-    <div class="modal">
+  <div id="eventModal" class="modal">
+    <div class="modal-backdrop" onclick="closeModal()"></div>
+    <div class="modal-content">
       <div class="modal-header">
-        <h2 class="modal-title">Event Details</h2>
-        <button class="btn" onclick="eventMonitor.closeEventDetail()">Close</button>
+        <h2>Event Details</h2>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
       </div>
-      <div class="modal-content" id="eventDetailContent"></div>
+      <div id="eventDetails" class="modal-body"></div>
     </div>
   </div>
 
-  <script src="/static/app.js"></script>
   <script>
-    class EventMonitor {
-      constructor() {
-        this.currentPage = 1;
-        this.pageSize = 50;
-        this.sortBy = 'timestamp';
-        this.sortOrder = 'desc';
-        this.filters = {
-          channel: '',
-          action: '',
-          since: '',
-          search: ''
-        };
-        this.autoRefreshInterval = null;
-        this.init();
-      }
+    // Token management
+    function updateTokenDisplay() {
+      const token = localStorage.getItem('pois_token') || '';
+      document.getElementById('tokenDisplay').textContent = token ? '✓ set' : '⚠ not set';
+    }
 
-      init() {
-        this.setupEventListeners();
-        this.loadEvents();
-        this.loadChannels();
-        this.loadStatistics();
-        this.startAutoRefresh();
-      }
+    // Load token on page load
+    document.addEventListener('DOMContentLoaded', function() {
+      const token = localStorage.getItem('pois_token') || '';
+      document.getElementById('headerTokenInput').value = token;
+      updateTokenDisplay();
+      loadStatistics();
+      loadEvents();
+    });
 
-      setupEventListeners() {
-        document.getElementById('refreshBtn').addEventListener('click', () => {
-          this.loadEvents();
-          this.loadStatistics();
-        });
+    // State
+    let currentPage = 1;
+    let currentLimit = 50;
+    let autoRefreshInterval = null;
 
-        document.getElementById('autoRefresh').addEventListener('change', (e) => {
-          if (e.target.checked) {
-            this.startAutoRefresh();
-          } else {
-            this.stopAutoRefresh();
-          }
-        });
-
-        document.getElementById('channelFilter').addEventListener('change', (e) => {
-          this.filters.channel = e.target.value;
-          this.currentPage = 1;
-          this.loadEvents();
-        });
-
-        document.getElementById('actionFilter').addEventListener('change', (e) => {
-          this.filters.action = e.target.value;
-          this.currentPage = 1;
-          this.loadEvents();
-        });
-
-        document.getElementById('sinceFilter').addEventListener('change', (e) => {
-          this.filters.since = e.target.value;
-          this.currentPage = 1;
-          this.loadEvents();
-        });
-
-        document.getElementById('searchInput').addEventListener('input', (e) => {
-          this.filters.search = e.target.value;
-          clearTimeout(this.searchTimeout);
-          this.searchTimeout = setTimeout(() => {
-            this.currentPage = 1;
-            this.loadEvents();
-          }, 300);
-        });
-
-        document.getElementById('prevPage').addEventListener('click', () => {
-          if (this.currentPage > 1) {
-            this.currentPage--;
-            this.loadEvents();
-          }
-        });
-
-        document.getElementById('nextPage').addEventListener('click', () => {
-          this.currentPage++;
-          this.loadEvents();
-        });
-
-        document.querySelectorAll('.sortable-header').forEach(header => {
-          header.addEventListener('click', () => {
-            const sortField = header.dataset.sort;
-            if (this.sortBy === sortField) {
-              this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
-            } else {
-              this.sortBy = sortField;
-              this.sortOrder = 'desc';
-            }
-            this.updateSortIndicators();
-            this.loadEvents();
-          });
-        });
-      }
-
-      startAutoRefresh() {
-        this.stopAutoRefresh();
-        this.autoRefreshInterval = setInterval(() => {
-          this.loadEvents();
-          this.loadStatistics();
-        }, 30000);
-      }
-
-      stopAutoRefresh() {
-        if (this.autoRefreshInterval) {
-          clearInterval(this.autoRefreshInterval);
-          this.autoRefreshInterval = null;
+    // API calls
+    async function apiCall(endpoint) {
+      const token = localStorage.getItem('pois_token') || '';
+      const response = await fetch(`/api${endpoint}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
         }
-      }
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    }
 
-      async loadChannels() {
-        try {
-          const response = await fetch('/api/channels', {
-            headers: { 'Authorization': `Bearer ${POIS_TOKEN.get()}` }
-          });
-          const channels = await response.json();
-          
-          const select = document.getElementById('channelFilter');
-          channels.forEach(ch => {
-            const option = document.createElement('option');
-            option.value = ch.name;
-            option.textContent = ch.name;
-            select.appendChild(option);
-          });
-        } catch (error) {
-          console.error('Failed to load channels:', error);
-        }
-      }
-
-      async loadStatistics() {
-        try {
-          const response = await fetch('/api/events/stats', {
-            headers: { 'Authorization': `Bearer ${POIS_TOKEN.get()}` }
-          });
-          const stats = await response.json();
-          
-          document.getElementById('totalEvents').textContent = stats.total_events || '--';
-          document.getElementById('last24hEvents').textContent = stats.last_24h_events || '--';
-          document.getElementById('avgProcessingTime').textContent = 
-            stats.avg_processing_time_ms ? stats.avg_processing_time_ms.toFixed(1) : '--';
-          
-          if (stats.action_counts) {
-            const breakdown = Object.entries(stats.action_counts)
-              .map(([action, count]) => `${action}: ${count}`)
-              .join('<br>');
-            document.getElementById('actionBreakdown').innerHTML = breakdown;
-          }
-        } catch (error) {
-          console.error('Failed to load statistics:', error);
-        }
-      }
-
-      async loadEvents() {
-        try {
-          const params = new URLSearchParams({
-            limit: this.pageSize.toString(),
-            offset: ((this.currentPage - 1) * this.pageSize).toString()
-          });
-
-          if (this.filters.channel) params.append('channel', this.filters.channel);
-          if (this.filters.action) params.append('action', this.filters.action);
-          if (this.filters.since) params.append('since', this.filters.since);
-          if (this.filters.search) params.append('search', this.filters.search);
-
-          const response = await fetch(`/api/events?${params}`, {
-            headers: { 'Authorization': `Bearer ${POIS_TOKEN.get()}` }
-          });
-          const events = await response.json();
-          
-          this.renderEventsTable(events);
-          this.updatePagination(events.length);
-          
-        } catch (error) {
-          console.error('Failed to load events:', error);
-          document.getElementById('eventsTableBody').innerHTML = 
-            '<tr><td colspan="11" class="text-center p-8 text-error">Failed to load events</td></tr>';
-        }
-      }
-
-      renderEventsTable(events) {
-        const tbody = document.getElementById('eventsTableBody');
+    async function loadStatistics() {
+      try {
+        const stats = await apiCall('/events/stats');
+        document.getElementById('totalEvents').textContent = stats.total_events || 0;
+        document.getElementById('last24hEvents').textContent = stats.last_24h_events || 0;
+        document.getElementById('avgProcessingTime').textContent = 
+          stats.avg_processing_time_ms ? stats.avg_processing_time_ms.toFixed(1) : '--';
         
-        if (events.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="11" class="text-center p-8 text-muted">No events found</td></tr>';
-          return;
-        }
-
-        tbody.innerHTML = events.map(event => `
-          <tr class="cursor-pointer" onclick="eventMonitor.showEventDetail(${event.id})">
-            <td class="p-3 text-sm">${this.formatTimestamp(event.timestamp)}</td>
-            <td class="p-3 text-sm font-medium">${this.escapeHtml(event.channel_name)}</td>
-            <td class="p-3 text-sm font-mono">${this.escapeHtml(event.acquisition_signal_id)}</td>
-            <td class="p-3 text-sm">${event.source_ip || '--'}</td>
-            <td class="p-3 text-sm">${event.scte35_command || '--'}</td>
-            <td class="p-3 text-sm font-mono">${this.formatPtsTime(event['scte35.pts_time'])}</td>
-            <td class="p-3 text-sm">${event.matched_rule_name || '<span class="text-muted">no match</span>'}</td>
-            <td class="p-3">
-              <span class="action-${event.action}">${event.action}</span>
-            </td>
-            <td class="p-3 text-sm text-right">${event.processing_time_ms || '--'}</td>
-            <td class="p-3 text-right">
-              <span class="status-${event.response_status}">${event.response_status}</span>
-            </td>
-            <td class="p-3 text-center">
-              <button class="btn btn-small" onclick="event.stopPropagation(); eventMonitor.showEventDetail(${event.id})">View</button>
-            </td>
-          </tr>
-        `).join('');
-      }
-
-      async showEventDetail(eventId) {
-        try {
-          const response = await fetch(`/api/events/${eventId}`, {
-            headers: { 'Authorization': `Bearer ${POIS_TOKEN.get()}` }
-          });
-          const event = await response.json();
-          
-          const modal = document.getElementById('eventDetailModal');
-          const content = document.getElementById('eventDetailContent');
-          
-          content.innerHTML = `
-            <div style="display: flex; flex-direction: column; gap: 16px;">
-              <div><strong>Event ID:</strong> ${event.id}</div>
-              <div><strong>Timestamp:</strong> ${this.formatTimestamp(event.timestamp)}</div>
-              <div><strong>Channel:</strong> ${event.channel_name}</div>
-              <div><strong>Acquisition Signal ID:</strong> ${event.acquisition_signal_id}</div>
-              <div><strong>Source IP:</strong> ${event.source_ip || 'N/A'}</div>
-              <div><strong>Action:</strong> <span class="action-${event.action}">${event.action}</span></div>
-              <div><strong>Processing Time:</strong> ${event.processing_time_ms} ms</div>
-              <div><strong>Response Status:</strong> <span class="status-${event.response_status}">${event.response_status}</span></div>
-              ${event.matched_rule_name ? `<div><strong>Matched Rule:</strong> ${event.matched_rule_name}</div>` : ''}
-              ${event.scte35_command ? `<div><strong>SCTE-35 Command:</strong> ${event.scte35_command}</div>` : ''}
-              ${event['scte35.pts_time'] ? `<div><strong>PTS Time:</strong> ${this.formatPtsTime(event['scte35.pts_time'])}</div>` : ''}
-              ${event.esam_request_xml ? `
-                <div>
-                  <strong>ESAM Request XML:</strong>
-                  <pre class="mt-2">${this.escapeHtml(event.esam_request_xml)}</pre>
-                </div>
-              ` : ''}
-              ${event.esam_response_xml ? `
-                <div>
-                  <strong>ESAM Response XML:</strong>
-                  <pre class="mt-2">${this.escapeHtml(event.esam_response_xml)}</pre>
-                </div>
-              ` : ''}
-            </div>
-          `;
-          
-          modal.classList.remove('hidden');
-        } catch (error) {
-          console.error('Failed to load event details:', error);
-          alert('Failed to load event details');
-        }
-      }
-
-      closeEventDetail() {
-        document.getElementById('eventDetailModal').classList.add('hidden');
-      }
-
-      updatePagination(eventCount) {
-        const start = (this.currentPage - 1) * this.pageSize + 1;
-        const end = start + eventCount - 1;
-        
-        document.getElementById('showingStart').textContent = eventCount > 0 ? start : 0;
-        document.getElementById('showingEnd').textContent = eventCount > 0 ? end : 0;
-        document.getElementById('currentPage').textContent = this.currentPage;
-        
-        document.getElementById('prevPage').disabled = this.currentPage <= 1;
-        document.getElementById('nextPage').disabled = eventCount < this.pageSize;
-        
-        document.getElementById('eventCount').textContent = `${eventCount} events on this page`;
-      }
-
-      updateSortIndicators() {
-        document.querySelectorAll('.sort-indicator').forEach(indicator => {
-          indicator.textContent = '↕';
-        });
-        
-        const activeHeader = document.querySelector(`[data-sort="${this.sortBy}"] .sort-indicator`);
-        if (activeHeader) {
-          activeHeader.textContent = this.sortOrder === 'asc' ? '↑' : '↓';
-        }
-      }
-
-      formatTimestamp(ts) {
-        if (!ts) return '--';
-        return new Date(ts).toLocaleString();
-      }
-
-      formatPtsTime(pts) {
-        if (!pts) return '--';
-        return pts.toString();
-      }
-
-      escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        const actions = stats.action_counts || {};
+        const actionText = `${actions.noop || 0}n / ${actions.delete || 0}d / ${actions.replace || 0}r`;
+        document.getElementById('actionBreakdown').textContent = actionText;
+      } catch (error) {
+        console.error('Failed to load statistics:', error);
       }
     }
 
-    const eventMonitor = new EventMonitor();
+    async function loadEvents() {
+      const channel = document.getElementById('channelFilter').value;
+      const action = document.getElementById('actionFilter').value;
+      const limit = parseInt(document.getElementById('limitFilter').value);
+      const offset = (currentPage - 1) * limit;
+
+      let endpoint = `/events?limit=${limit}&offset=${offset}`;
+      if (channel) endpoint += `&channel=${encodeURIComponent(channel)}`;
+      if (action) endpoint += `&action=${encodeURIComponent(action)}`;
+
+      try {
+        const events = await apiCall(endpoint);
+        renderEvents(events);
+        document.getElementById('pageInfo').textContent = `Page ${currentPage}`;
+        document.getElementById('prevPageBtn').disabled = currentPage === 1;
+        document.getElementById('nextPageBtn').disabled = events.length < limit;
+      } catch (error) {
+        console.error('Failed to load events:', error);
+        document.getElementById('eventsTableBody').innerHTML = `
+          <tr><td colspan="6" style="text-align: center; padding: 40px; color: var(--error);">
+            Failed to load events: ${error.message}
+          </td></tr>
+        `;
+      }
+    }
+
+    function renderEvents(events) {
+      const tbody = document.getElementById('eventsTableBody');
+      if (events.length === 0) {
+        tbody.innerHTML = `
+          <tr><td colspan="6" style="text-align: center; padding: 40px; color: var(--text-secondary);">
+            No events found
+          </td></tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = events.map(event => `
+        <tr>
+          <td>${new Date(event.timestamp).toLocaleString()}</td>
+          <td>${event.channel_name}</td>
+          <td><span class="badge badge-${event.action}">${event.action}</span></td>
+          <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            ${event.esam_signal_id || '--'}
+          </td>
+          <td>${event.processing_time_ms ? event.processing_time_ms.toFixed(1) : '--'}</td>
+          <td><button class="btn-sm" onclick="showEventDetails(${event.id})">View</button></td>
+        </tr>
+      `).join('');
+    }
+
+    async function showEventDetails(eventId) {
+      try {
+        const event = await apiCall(`/events/${eventId}`);
+        const details = document.getElementById('eventDetails');
+        details.innerHTML = `
+          <div class="detail-grid">
+            <div class="detail-item"><strong>ID:</strong> ${event.id}</div>
+            <div class="detail-item"><strong>Channel:</strong> ${event.channel_name}</div>
+            <div class="detail-item"><strong>Action:</strong> ${event.action}</div>
+            <div class="detail-item"><strong>Timestamp:</strong> ${new Date(event.timestamp).toLocaleString()}</div>
+            <div class="detail-item"><strong>Processing Time:</strong> ${event.processing_time_ms ? event.processing_time_ms.toFixed(2) + ' ms' : '--'}</div>
+            <div class="detail-item"><strong>ESAM Signal ID:</strong> ${event.esam_signal_id || '--'}</div>
+            ${event.esam_xml ? `<div class="detail-item" style="grid-column: 1 / -1;">
+              <strong>ESAM XML:</strong>
+              <pre style="background: var(--field-bg); padding: 12px; border-radius: 8px; overflow-x: auto; margin-top: 8px;">${event.esam_xml}</pre>
+            </div>` : ''}
+            ${event.scte35_base64 ? `<div class="detail-item" style="grid-column: 1 / -1;">
+              <strong>SCTE-35:</strong>
+              <pre style="background: var(--field-bg); padding: 12px; border-radius: 8px; overflow-x: auto; margin-top: 8px;">${event.scte35_base64}</pre>
+            </div>` : ''}
+          </div>
+        `;
+        document.getElementById('eventModal').classList.add('show');
+      } catch (error) {
+        alert('Failed to load event details: ' + error.message);
+      }
+    }
+
+    function closeModal() {
+      document.getElementById('eventModal').classList.remove('show');
+    }
+
+    // Event listeners
+    document.getElementById('refreshBtn').addEventListener('click', () => {
+      loadStatistics();
+      loadEvents();
+    });
+
+    document.getElementById('applyFiltersBtn').addEventListener('click', () => {
+      currentPage = 1;
+      loadEvents();
+    });
+
+    document.getElementById('prevPageBtn').addEventListener('click', () => {
+      if (currentPage > 1) {
+        currentPage--;
+        loadEvents();
+      }
+    });
+
+    document.getElementById('nextPageBtn').addEventListener('click', () => {
+      currentPage++;
+      loadEvents();
+    });
+
+    document.getElementById('autoRefresh').addEventListener('change', (e) => {
+      if (e.target.checked) {
+        autoRefreshInterval = setInterval(() => {
+          loadStatistics();
+          loadEvents();
+        }, 30000);
+      } else {
+        if (autoRefreshInterval) {
+          clearInterval(autoRefreshInterval);
+          autoRefreshInterval = null;
+        }
+      }
+    });
+
+    // Start auto-refresh
+    autoRefreshInterval = setInterval(() => {
+      loadStatistics();
+      loadEvents();
+    }, 30000);
+
+    // Close modal on outside click
+    document.getElementById('eventModal').addEventListener('click', (e) => {
+      if (e.target.classList.contains('modal-backdrop')) {
+        closeModal();
+      }
+    });
   </script>
 </body>
 </html>

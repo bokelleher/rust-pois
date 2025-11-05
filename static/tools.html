@@ -11,13 +11,9 @@
   <header class="topbar">
     <div class="brand">
       <a href="/">
-        <!-- Option 1: Use your own logo image -->
-        <!-- <img src="/static/logo.png" alt="POIS" class="logo"> -->
-        
-        <!-- Option 2: Use text logo (default) -->
-        <span class="logo-text">POIS</span>
+        <img src="https://esni.techexlab.com:3000/static/media/techex-logo.74b1230112edda6b3915.png" 
+             alt="TechExLab" class="logo">
       </a>
-      <a href="/static/admin.html" class="brand-sub">Admin</a>
     </div>
     <nav class="nav">
       <a href="/static/admin.html">Channels & Rules</a>
@@ -26,27 +22,24 @@
     </nav>
     <div class="spacer"></div>
     <div class="right">
-      <span id="tokenDisplay">token: unset</span>
-      <button class="btn" id="logoutBtn">Logout</button>
+      <input type="text" id="headerTokenInput" placeholder="Bearer token" 
+             style="width: 200px; height: 32px; padding: 6px 12px; font-size: 13px;"
+             oninput="localStorage.setItem('pois_token', this.value); document.getElementById('tokenDisplay').textContent = this.value ? '✓ set' : '⚠ not set'">
+      <span id="tokenDisplay" style="margin-left: 8px;">⚠ not set</span>
+      <script>
+        // Load token on page load
+        document.addEventListener('DOMContentLoaded', function() {
+          const token = localStorage.getItem('pois_token') || '';
+          document.getElementById('headerTokenInput').value = token;
+          document.getElementById('tokenDisplay').textContent = token ? '✓ set' : '⚠ not set';
+        });
+      </script>
     </div>
   </header>
 
   <main class="content content-max-width">
     <h1 class="grad-text">SCTE-35 Builder</h1>
     
-    <div class="panel">
-      <div class="card-header">
-        <div class="card-title">Authentication</div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="tokenInput">Bearer token</label>
-          <input id="tokenInput" type="text" placeholder="dev-token">
-        </div>
-        <button id="saveTokenBtn" class="btn">Save Token</button>
-      </div>
-    </div>
-
     <div class="panel">
       <div class="card-header">
         <div class="card-title">Build Configuration</div>
@@ -74,98 +67,8 @@
         </div>
       </div>
       
-      <div id="status" class="text-sm mt-2 text-muted"></div>
+      <div id="status" style="margin-top: 16px;"></div>
     </div>
-
-    <p class="small text-muted mt-4">
-      API: <code>POST /api/tools/scte35/build</code> (requires Authorization: Bearer)
-    </p>
   </main>
-
-  <script>
-    (function(){
-      const tokInput = document.getElementById('tokenInput');
-      const saveBtn = document.getElementById('saveTokenBtn');
-      const cmd = document.getElementById('cmd');
-      const dur = document.getElementById('dur');
-      const btn = document.getElementById('buildBtn');
-      const out = document.getElementById('b64');
-      const status = document.getElementById('status');
-      const copyB64 = document.getElementById('copyB64');
-      
-      document.addEventListener('DOMContentLoaded', () => { 
-        tokInput.value = POIS_TOKEN.get(); 
-      });
-      
-      saveBtn.addEventListener('click', () => { 
-        POIS_TOKEN.set(tokInput.value.trim()); 
-        status.textContent = 'Token saved successfully';
-        status.className = 'text-sm mt-2 text-success';
-        setTimeout(() => {
-          status.textContent = '';
-          status.className = 'text-sm mt-2 text-muted';
-        }, 2000); 
-      });
-      
-      btn.addEventListener('click', async () => {
-        const token = POIS_TOKEN.get();
-        if (!token) {
-          alert('Please set a bearer token first.');
-          return;
-        }
-        
-        btn.disabled = true;
-        status.textContent = 'Building SCTE-35...';
-        status.className = 'text-sm mt-2 text-muted';
-        
-        try {
-          const res = await fetch('/api/tools/scte35/build', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              command: cmd.value,
-              duration_seconds: parseInt(dur.value, 10)
-            })
-          });
-          
-          if (!res.ok) {
-            throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-          }
-          
-          const data = await res.json();
-          out.value = data.base64 || '';
-          status.textContent = 'SCTE-35 built successfully!';
-          status.className = 'text-sm mt-2 text-success';
-        } catch (e) {
-          status.textContent = `Error: ${e.message}`;
-          status.className = 'text-sm mt-2 text-error';
-          out.value = '';
-        } finally {
-          btn.disabled = false;
-          setTimeout(() => {
-            if (status.className.includes('success')) {
-              status.textContent = '';
-              status.className = 'text-sm mt-2 text-muted';
-            }
-          }, 3000);
-        }
-      });
-      
-      copyB64.addEventListener('click', () => {
-        out.select();
-        document.execCommand('copy');
-        const orig = copyB64.textContent;
-        copyB64.textContent = 'Copied!';
-        copyB64.className = 'btn btn-success';
-        setTimeout(() => {
-          copyB64.textContent = orig;
-          copyB64.className = 'btn';
-        }, 1500);
-      });
-    })();
-  </script>
 </body>
 </html>
