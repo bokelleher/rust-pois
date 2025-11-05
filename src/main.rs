@@ -4,6 +4,7 @@ mod rules;
 mod esam;
 mod scte35; // SCTE-35 builder module
 mod event_logging; // Events Logging
+mod backup; // Backup/restore module
 
 use axum::{
     body::Body,
@@ -102,6 +103,11 @@ async fn main() -> anyhow::Result<()> {
                 );
                 api
             },
+        )
+        // Add routes
+        .nest("/api/backup", Router::new()
+            .route("/export/channel/:id", post(backup::export_channel_only))
+            // ... (see RUST_INTEGRATION.md)
         )
         .with_state(state)
         .layer(CorsLayer::permissive())
