@@ -150,6 +150,7 @@ Type=simple
 WorkingDirectory=${INSTALL_DIR}
 ExecStart=/usr/local/bin/${BINARY_NAME} --port ${PORT}
 Environment=RUST_LOG=info
+Environment=POIS_STORE_RAW_PAYLOADS=true
 Restart=on-failure
 RestartSec=5
 User=${SERVICE_USER}
