@@ -66,6 +66,13 @@
       color: var(--secondary);
     }
     
+    .section h4 {
+      font-size: 18px;
+      margin-top: 24px;
+      margin-bottom: 12px;
+      color: var(--text-primary);
+    }
+    
     .endpoint {
       background: var(--panel-bg);
       border: 1px solid var(--border);
@@ -165,6 +172,69 @@
       padding: 24px;
       margin-top: 32px;
     }
+
+    .use-case {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .use-case-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .use-case-number {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+      color: white;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .use-case-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .use-case-scenario {
+      background: rgba(139, 92, 246, 0.1);
+      border-left: 3px solid var(--primary);
+      padding: 12px 16px;
+      margin: 16px 0;
+      border-radius: 4px;
+    }
+
+    .rule-config {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 12px;
+      margin: 16px 0;
+      padding: 16px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+    }
+
+    .rule-label {
+      font-weight: 600;
+      color: var(--secondary);
+    }
+
+    .rule-value {
+      font-family: 'Courier New', monospace;
+      color: var(--text-primary);
+    }
   </style>
 </head>
 <body>
@@ -195,6 +265,7 @@
     <div class="docs-nav">
       <a href="#overview">Overview</a>
       <a href="#authentication">Authentication</a>
+      <a href="#use-cases">Use Cases</a>
       <a href="#esam">ESAM Endpoint</a>
       <a href="#channels">Channels API</a>
       <a href="#rules">Rules API</a>
@@ -233,6 +304,299 @@
       
       <p><strong>Default Token</strong>: <code>dev-token</code> (development only)</p>
       <p>Set custom token using <code>POIS_AUTH_TOKEN</code> environment variable.</p>
+    </div>
+
+    <!-- Use Cases Section -->
+    <div id="use-cases" class="section">
+      <h2>Common Use Cases</h2>
+      <p>Real-world examples of POIS rule configurations for common broadcast scenarios.</p>
+
+      <!-- Use Case 1 -->
+      <div class="use-case">
+        <div class="use-case-header">
+          <div class="use-case-number">1</div>
+          <div class="use-case-title">Block All Upstream Ad Markers</div>
+        </div>
+        
+        <div class="use-case-scenario">
+          <strong>Scenario:</strong> Upstream provider sends ad markers you want to ignore completely.
+        </div>
+
+        <div class="rule-config">
+          <div class="rule-label">Name:</div>
+          <div class="rule-value">Block Upstream Ads</div>
+          
+          <div class="rule-label">Priority:</div>
+          <div class="rule-value">0</div>
+          
+          <div class="rule-label">Action:</div>
+          <div class="rule-value">delete</div>
+          
+          <div class="rule-label">Match JSON:</div>
+          <div class="rule-value">
+            <div class="code-block" style="margin: 8px 0;">
+              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+              <code>{
+  "anyOf": [
+    {"scte35.segmentation_type_id": "0x30"},
+    {"scte35.segmentation_type_id": "0x32"}
+  ]
+}</code>
+            </div>
+          </div>
+          
+          <div class="rule-label">Params JSON:</div>
+          <div class="rule-value"><code>{ }</code> (empty - pass through unchanged)</div>
+        </div>
+
+        <p><strong>Result:</strong> All provider (0x30) and distributor (0x32) ad markers are deleted before reaching downstream systems.</p>
+      </div>
+
+      <!-- Use Case 2 -->
+      <div class="use-case">
+        <div class="use-case-header">
+          <div class="use-case-number">2</div>
+          <div class="use-case-title">Convert Program Boundaries to Ad Breaks</div>
+        </div>
+        
+        <div class="use-case-scenario">
+          <strong>Scenario:</strong> Network sends program end markers; you want to insert 60-second local ad breaks.
+        </div>
+
+        <div class="rule-config">
+          <div class="rule-label">Name:</div>
+          <div class="rule-value">Program End → 60s Ad</div>
+          
+          <div class="rule-label">Priority:</div>
+          <div class="rule-value">10</div>
+          
+          <div class="rule-label">Action:</div>
+          <div class="rule-value">replace</div>
+          
+          <div class="rule-label">Match JSON:</div>
+          <div class="rule-value">
+            <div class="code-block" style="margin: 8px 0;">
+              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+              <code>{
+  "allOf": [
+    {"scte35.command": "time_signal"},
+    {"scte35.segmentation_type_id": "0x11"}
+  ]
+}</code>
+            </div>
+          </div>
+          
+          <div class="rule-label">Params JSON:</div>
+          <div class="rule-value">
+            <div class="code-block" style="margin: 8px 0;">
+              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+              <code>{
+  "build": {
+    "command": "splice_insert_out",
+    "duration_s": 60
+  }
+}</code>
+            </div>
+          </div>
+        </div>
+
+        <p><strong>Result:</strong> Every program end signal (0x11) is transformed into a 60-second splice_insert ad break.</p>
+      </div>
+
+      <!-- Use Case 3 -->
+      <div class="use-case">
+        <div class="use-case-header">
+          <div class="use-case-number">3</div>
+          <div class="use-case-title">Pass Through Premium Content Only</div>
+        </div>
+        
+        <div class="use-case-scenario">
+          <strong>Scenario:</strong> Only process signals tagged with premium sports content identifiers.
+        </div>
+
+        <div class="rule-config">
+          <div class="rule-label">Name:</div>
+          <div class="rule-value">ESPN Premium Only</div>
+          
+          <div class="rule-label">Priority:</div>
+          <div class="rule-value">5</div>
+          
+          <div class="rule-label">Action:</div>
+          <div class="rule-value">replace</div>
+          
+          <div class="rule-label">Match JSON:</div>
+          <div class="rule-value">
+            <div class="code-block" style="margin: 8px 0;">
+              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+              <code>{
+  "allOf": [
+    {"scte35.command": "time_signal"},
+    {"scte35.upid": "*ESPN_PREMIUM*"}
+  ]
+}</code>
+            </div>
+          </div>
+          
+          <div class="rule-label">Params JSON:</div>
+          <div class="rule-value"><code>{ }</code> (empty - pass through unchanged)</div>
+        </div>
+
+        <p><strong>Result:</strong> Only signals containing "ESPN_PREMIUM" in the UPID are passed through unchanged.</p>
+      </div>
+
+      <!-- Use Case 4 -->
+      <div class="use-case">
+        <div class="use-case-header">
+          <div class="use-case-number">4</div>
+          <div class="use-case-title">Tag Signals with Network ID</div>
+        </div>
+        
+        <div class="use-case-scenario">
+          <strong>Scenario:</strong> Add your network identifier to all outgoing signals for tracking.
+        </div>
+
+        <div class="rule-config">
+          <div class="rule-label">Name:</div>
+          <div class="rule-value">Add Network UPID</div>
+          
+          <div class="rule-label">Priority:</div>
+          <div class="rule-value">20</div>
+          
+          <div class="rule-label">Action:</div>
+          <div class="rule-value">replace</div>
+          
+          <div class="rule-label">Match JSON:</div>
+          <div class="rule-value">
+            <div class="code-block" style="margin: 8px 0;">
+              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+              <code>{
+  "anyOf": [
+    {"scte35.command": "time_signal"}
+  ]
+}</code>
+            </div>
+          </div>
+          
+          <div class="rule-label">Params JSON:</div>
+          <div class="rule-value">
+            <div class="code-block" style="margin: 8px 0;">
+              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+              <code>{
+  "build": {
+    "command": "time_signal",
+    "upid_type": "TI",
+    "upid_value": "YOUR-NETWORK-12345",
+    "use_extracted_pts": true
+  }
+}</code>
+            </div>
+          </div>
+        </div>
+
+        <p><strong>Result:</strong> All time_signal commands get your network UPID injected while preserving the original PTS timing.</p>
+      </div>
+
+      <!-- Use Case 5 -->
+      <div class="use-case">
+        <div class="use-case-header">
+          <div class="use-case-number">5</div>
+          <div class="use-case-title">Variable Ad Break Durations</div>
+        </div>
+        
+        <div class="use-case-scenario">
+          <strong>Scenario:</strong> Premium content gets longer ad breaks than standard content.
+        </div>
+
+        <p><strong>Strategy:</strong> Use multiple rules with different priorities - first match wins.</p>
+
+        <h4>Rule 1: Premium Content (Higher Priority)</h4>
+        <div class="rule-config" style="background: rgba(139, 92, 246, 0.05);">
+          <div class="rule-label">Priority:</div>
+          <div class="rule-value">5</div>
+          
+          <div class="rule-label">Match:</div>
+          <div class="rule-value"><code>{"scte35.upid": "*PREMIUM*"}</code></div>
+          
+          <div class="rule-label">Params:</div>
+          <div class="rule-value"><code>{"build": {"command": "splice_insert_out", "duration_s": 120}}</code></div>
+        </div>
+
+        <h4>Rule 2: Standard Content (Lower Priority)</h4>
+        <div class="rule-config" style="background: rgba(59, 130, 246, 0.05);">
+          <div class="rule-label">Priority:</div>
+          <div class="rule-value">10</div>
+          
+          <div class="rule-label">Match:</div>
+          <div class="rule-value"><code>{"anyOf": [{"scte35.command": "time_signal"}]}</code></div>
+          
+          <div class="rule-label">Params:</div>
+          <div class="rule-value"><code>{"build": {"command": "splice_insert_out", "duration_s": 60}}</code></div>
+        </div>
+
+        <p><strong>Result:</strong> Premium content gets 120-second breaks, everything else gets 60-second breaks.</p>
+      </div>
+
+      <!-- Use Case 6 -->
+      <div class="use-case">
+        <div class="use-case-header">
+          <div class="use-case-number">6</div>
+          <div class="use-case-title">Delete Test Signals</div>
+        </div>
+        
+        <div class="use-case-scenario">
+          <strong>Scenario:</strong> Block test signals from reaching production downstream systems.
+        </div>
+
+        <div class="rule-config">
+          <div class="rule-label">Name:</div>
+          <div class="rule-value">Delete Test Signals</div>
+          
+          <div class="rule-label">Priority:</div>
+          <div class="rule-value">0</div>
+          
+          <div class="rule-label">Action:</div>
+          <div class="rule-value">delete</div>
+          
+          <div class="rule-label">Match JSON:</div>
+          <div class="rule-value">
+            <div class="code-block" style="margin: 8px 0;">
+              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+              <code>{
+  "acquisition_signal_id": "test-*"
+}</code>
+            </div>
+          </div>
+          
+          <div class="rule-label">Params JSON:</div>
+          <div class="rule-value"><code>{ }</code> (empty - pass through unchanged)</div>
+        </div>
+
+        <p><strong>Result:</strong> Any signal with acquisition ID starting with "test-" is deleted.</p>
+      </div>
+
+      <div class="panel" style="margin-top: 32px;">
+        <h3 style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+          <svg width="24" height="24" fill="currentColor" viewBox="0 0 16 16" style="color: var(--primary);">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          More Examples
+        </h3>
+        <p>For complete reference including:</p>
+        <ul style="margin-bottom: 24px; padding-left: 24px; margin-top: 12px;">
+          <li>Match rule syntax and operators</li>
+          <li>All available match fields</li>
+          <li>Action parameter options</li>
+          <li>SCTE-35 segmentation type reference</li>
+          <li>Advanced multi-condition examples</li>
+          <li>Testing strategies</li>
+        </ul>
+        <a href="https://github.com/bokelleher/rust-pois/blob/main/USE_CASES.md" target="_blank" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 8px;">
+          <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          View Complete USE_CASES.md on GitHub
+        </a>
+      </div>
     </div>
 
     <!-- ESAM Endpoint -->
@@ -658,7 +1022,7 @@ print(response.text)</code>
       
       <div class="swagger-container">
         <h3>Download</h3>
-        <a href="/openapi.yaml" class="btn btn-primary" download>Download openapi.yaml</a>
+        <a href="/static/openapi.yaml" class="btn btn-primary" download>Download openapi.yaml</a>
         
         <h3 style="margin-top: 32px;">Use with Swagger UI</h3>
         <div class="code-block">
