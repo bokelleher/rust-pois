@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>POIS Tools — SCTE-35 Builder</title>
+  <title>POIS Tools – SCTE-35 Builder</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/app.js" defer></script>
@@ -19,22 +19,14 @@
       <a href="/static/admin.html">Channels & Rules</a>
       <a href="/static/tools.html" class="active">SCTE-35 Builder</a>
       <a href="/static/events.html">Event Monitor</a>
+      <a href="/static/users.html">Users</a>
+      <a href="/static/tokens.html">API Tokens</a>
       <a href="/static/docs.html">API Docs</a>
     </nav>
     <div class="spacer"></div>
     <div class="right">
-      <input type="text" id="headerTokenInput" placeholder="Bearer token" 
-             style="width: 200px; height: 32px; padding: 6px 12px; font-size: 13px;"
-             oninput="localStorage.setItem('pois_token', this.value); document.getElementById('tokenDisplay').textContent = this.value ? '✓ set' : '⚠ not set'">
-      <span id="tokenDisplay" style="margin-left: 8px;">⚠ not set</span>
-      <script>
-        // Load token on page load
-        document.addEventListener('DOMContentLoaded', function() {
-          const token = localStorage.getItem('pois_token') || '';
-          document.getElementById('headerTokenInput').value = token;
-          document.getElementById('tokenDisplay').textContent = token ? '✓ set' : '⚠ not set';
-        });
-      </script>
+      <span id="currentUser">Loading...</span>
+      <button class="btn" id="logoutBtn">Logout</button>
     </div>
   </header>
 
@@ -71,5 +63,44 @@
       <div id="status" style="margin-top: 16px;"></div>
     </div>
   </main>
+
+  <script>
+    // Display current user
+    const userInfo = JSON.parse(localStorage.getItem('pois_user') || '{}');
+    if (userInfo.username) {
+      document.getElementById('currentUser').textContent = userInfo.username;
+    } else {
+      document.getElementById('currentUser').textContent = 'admin';
+    }
+
+    // Logout handler
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+      localStorage.removeItem('pois_token');
+      localStorage.removeItem('pois_user');
+      window.location.href = '/static/login.html';
+    });
+    
+    // Hide Users menu from non-admins
+    (async function() {
+      try {
+        const token = localStorage.getItem('pois_token');
+        if (!token) return;
+        
+        const response = await fetch('/api/auth/me', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (response.ok) {
+          const user = await response.json();
+          if (user.role !== 'admin') {
+            const usersLinks = document.querySelectorAll('a[href="/static/users.html"]');
+            usersLinks.forEach(link => link.style.display = 'none');
+          }
+        }
+      } catch (e) {
+        console.error('Error checking user role:', e);
+      }
+    })();
+  </script>
 </body>
 </html>

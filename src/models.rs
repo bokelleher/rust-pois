@@ -7,6 +7,8 @@ pub struct Channel {
     pub name: String,
     pub enabled: i64,
     pub timezone: String,
+    pub owner_user_id: Option<i64>,  // NEW: ownership tracking
+    pub deleted_at: Option<String>,   // NEW: soft delete
     pub created_at: String,
     pub updated_at: String,
 }
@@ -28,6 +30,8 @@ pub struct Rule {
     pub match_json: String,
     pub action: String,
     pub params_json: String,
+    pub owner_user_id: Option<i64>,  // NEW: ownership tracking
+    pub deleted_at: Option<String>,   // NEW: soft delete
     pub created_at: String,
     pub updated_at: String,
 }

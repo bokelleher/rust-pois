@@ -13,6 +13,23 @@
     const html = htm.bind(h);
     
     function Header() {
+      hooks.useEffect(() => {
+        const logoutBtn = document.getElementById("logoutBtn");
+        if (logoutBtn && !logoutBtn.onclick) {
+          logoutBtn.onclick = () => {
+            localStorage.removeItem("pois_token");
+            localStorage.removeItem("pois_user");
+            window.location.href = "/static/login.html";
+          };
+        }
+        
+        const userInfo = JSON.parse(localStorage.getItem("pois_user") || "{}");
+        const userSpan = document.getElementById("currentUser");
+        if (userSpan && userInfo.username) {
+          userSpan.textContent = userInfo.username;
+        }
+      }, []);
+      
       return html`
         <header class="topbar">
           <div class="brand">
@@ -25,26 +42,18 @@
             <a href="/static/admin.html" class="active">Channels & Rules</a>
             <a href="/static/tools.html">SCTE-35 Builder</a>
             <a href="/static/events.html">Event Monitor</a>
+            <a href="/static/users.html">Users</a>
+            <a href="/static/tokens.html">API Tokens</a>
             <a href="/static/docs.html">API Docs</a>
           </nav>
           <div class="spacer"></div>
           <div class="right">
-            <input 
-              class="w-64" 
-              placeholder="Bearer token" 
-              id="headerTokenInput"
-              value=${localStorage.getItem("pois_token") || ""}
-              onInput=${(e) => localStorage.setItem("pois_token", e.target.value)}
-              style="width: 200px; height: 32px; padding: 6px 12px; font-size: 13px;"
-            />
-            <span id="tokenDisplay" style="margin-left: 8px;">
-              ${localStorage.getItem("pois_token") ? "✓ set" : "⚠ not set"}
-            </span>
+            <span id="currentUser">admin</span>
+            <button class="btn" id="logoutBtn">Logout</button>
           </div>
         </header>
       `;
     }
-    
     const API = {
       async get(p) { return req("GET", p) },
       async post(p, b) { return req("POST", p, b) },
@@ -454,6 +463,28 @@
     }
     
     render(html`<${App} />`, document.body);
+    
+    // Hide Users menu from non-admins
+    (async function() {
+      try {
+        const token = localStorage.getItem('pois_token');
+        if (!token) return;
+        
+        const response = await fetch('/api/auth/me', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (response.ok) {
+          const user = await response.json();
+          if (user.role !== 'admin') {
+            const usersLinks = document.querySelectorAll('a[href="/static/users.html"]');
+            usersLinks.forEach(link => link.style.display = 'none');
+          }
+        }
+      } catch (e) {
+        console.error('Error checking user role:', e);
+      }
+    })();
   </script>
   <script src="/static/app.js"></script>
 </head>

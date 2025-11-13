@@ -96,12 +96,41 @@
       <a href="/static/admin.html">Channels & Rules</a>
       <a href="/static/tools.html">SCTE-35 Builder</a>
       <a href="/static/events.html" class="active">Event Monitor</a>
+      <a href="/static/users.html">Users</a>
+      <a href="/static/tokens.html">API Tokens</a>
       <a href="/static/docs.html">API Docs</a>
     </nav>
     <div class="spacer"></div>
     <div class="right">
-      <span id="tokenDisplay">token: unset</span>
+      <span id="currentUser">Loading...</span>
+      <button class="btn" id="logoutBtn">Logout</button>
     </div>
+  <script>
+    // Display current user
+    const userInfo = JSON.parse(localStorage.getItem("pois_user") || "{}");
+    if (userInfo.username) {
+      document.getElementById("currentUser").textContent = userInfo.username;
+    } else {
+      document.getElementById("currentUser").textContent = "admin";
+    }
+
+    // Logout handler
+    document.getElementById("logoutBtn").addEventListener("click", () => {
+      localStorage.removeItem("pois_token");
+      localStorage.removeItem("pois_user");
+      window.location.href = "/static/login.html";
+    });
+  </script>
+    </div>
+  <script>
+    // Logout handler
+    document.getElementById("logoutBtn").addEventListener("click", () => {
+      localStorage.removeItem("pois_token");
+      localStorage.removeItem("pois_user");
+      window.location.href = "/static/login.html";
+    });
+  </script>
+
   </header>
 
   <main class="content events-max-width">
@@ -578,6 +607,28 @@
     }
 
     const eventMonitor = new EventMonitor();
+    
+    // Hide Users menu from non-admins
+    (async function() {
+      try {
+        const token = localStorage.getItem('pois_token');
+        if (!token) return;
+        
+        const response = await fetch('/api/auth/me', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (response.ok) {
+          const user = await response.json();
+          if (user.role !== 'admin') {
+            const usersLinks = document.querySelectorAll('a[href="/static/users.html"]');
+            usersLinks.forEach(link => link.style.display = 'none');
+          }
+        }
+      } catch (e) {
+        console.error('Error checking user role:', e);
+      }
+    })();
   </script>
 </body>
 </html>

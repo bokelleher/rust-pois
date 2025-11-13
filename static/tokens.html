@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>POIS - API Tokens</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a href="/">
+        <img src="https://esni.techexlab.com:3000/static/media/techex-logo.74b1230112edda6b3915.png" 
+             alt="TechExLab" class="logo" />
+      </a>
+    </div>
+    <nav class="nav">
+      <a href="/static/admin.html">Channels & Rules</a>
+      <a href="/static/tools.html">SCTE-35 Builder</a>
+      <a href="/static/events.html">Event Monitor</a>
+      <a href="/static/users.html">Users</a>
+      <a href="/static/tokens.html" class="active">API Tokens</a>
+      <a href="/static/docs.html">API Docs</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="right">
+      <span id="currentUser">Loading...</span>
+      <button class="btn" id="logoutBtn">Logout</button>
+    </div>
+  </header>
+
+  <main class="content content-max-width">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+      <h1 class="grad-text">API Tokens</h1>
+      <button class="btn-primary" id="createTokenBtn">Create Token</button>
+    </div>
+    
+    <div class="panel" style="background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.3); margin-bottom: 24px;">
+      <p style="margin: 0; color: #93c5fd;">
+        <strong>ℹ️ API Tokens</strong> allow you to authenticate API requests without using your password. 
+        Tokens can expire and can be revoked at any time.
+      </p>
+    </div>
+
+    <div id="errorAlert" class="panel" style="display: none; background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3);">
+      <p id="errorText" style="color: #fca5a5; margin: 0;"></p>
+    </div>
+    
+    <div id="successAlert" class="panel" style="display: none; background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.3);">
+      <p id="successText" style="color: #6ee7b7; margin: 0;"></p>
+    </div>
+
+    <div class="panel">
+      <div class="card-header">
+        <div class="card-title">Your API Tokens</div>
+      </div>
+      
+      <div id="tokensTable">
+        <p style="text-align: center; padding: 32px; color: #9ca3af;">Loading tokens...</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Create Token Modal -->
+  <div id="tokenModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="panel" style="max-width: 500px; width: 90%; margin: 0;">
+      <div class="card-header">
+        <div class="card-title">Create API Token</div>
+        <button class="btn" id="closeModalBtn">×</button>
+      </div>
+      
+      <form id="tokenForm">
+        <div class="form-group">
+          <label for="tokenName">Token Name *</label>
+          <input type="text" id="tokenName" required placeholder="e.g., Production Server, CI/CD Pipeline">
+          <small style="color: #9ca3af; display: block; margin-top: 4px;">
+            Give your token a descriptive name to remember what it's used for
+          </small>
+        </div>
+        
+        <div class="form-group">
+          <label for="tokenExpiry">Expires In</label>
+          <select id="tokenExpiry">
+            <option value="30">30 days</option>
+            <option value="90" selected>90 days</option>
+            <option value="180">180 days</option>
+            <option value="365">1 year</option>
+          </select>
+        </div>
+        
+        <div style="display: flex; gap: 12px; justify-content: flex-end;">
+          <button type="button" class="btn" id="cancelModalBtn">Cancel</button>
+          <button type="submit" class="btn-primary">Create Token</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Show Token Modal -->
+  <div id="showTokenModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="panel" style="max-width: 600px; width: 90%; margin: 0;">
+      <div class="card-header">
+        <div class="card-title">⚠️ Save Your Token</div>
+      </div>
+      
+      <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+        <p style="color: #fcd34d; margin: 0;">
+          <strong>Important:</strong> This is the only time you'll see this token. 
+          Copy it now and store it securely. You won't be able to see it again!
+        </p>
+      </div>
+      
+      <div class="form-group">
+        <label>Your New Token</label>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="newTokenValue" readonly style="flex: 1; font-family: monospace; font-size: 12px;">
+          <button class="btn" id="copyTokenBtn">Copy</button>
+        </div>
+      </div>
+      
+      <div class="form-group">
+        <label>Token Information</label>
+        <div style="background: rgba(31, 41, 55, 0.8); border-radius: 8px; padding: 12px;">
+          <div style="margin-bottom: 8px;">
+            <span style="color: #9ca3af;">Name:</span>
+            <span style="color: #f3f4f6; margin-left: 8px;" id="newTokenName"></span>
+          </div>
+          <div>
+            <span style="color: #9ca3af;">Expires:</span>
+            <span style="color: #f3f4f6; margin-left: 8px;" id="newTokenExpires"></span>
+          </div>
+        </div>
+      </div>
+      
+      <div style="text-align: center;">
+        <button class="btn-primary" id="closeShowTokenBtn">I've Saved My Token</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '/api';
+    
+    // Auth helpers
+    function getToken() {
+      return localStorage.getItem('pois_token');
+    }
+    
+    function requireAuth() {
+      const token = getToken();
+      if (!token) {
+        window.location.href = '/static/login.html';
+        return false;
+      }
+      return true;
+    }
+    
+    async function fetchAPI(url, options = {}) {
+      const token = getToken();
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          ...options.headers
+        }
+      });
+      
+      if (response.status === 401) {
+        localStorage.removeItem('pois_token');
+        window.location.href = '/static/login.html';
+        throw new Error('Unauthorized');
+      }
+      
+      return response;
+    }
+    
+    // Alert handling
+    function showError(message) {
+      const errorAlert = document.getElementById('errorAlert');
+      const errorText = document.getElementById('errorText');
+      errorText.textContent = message;
+      errorAlert.style.display = 'block';
+      setTimeout(() => {
+        errorAlert.style.display = 'none';
+      }, 5000);
+    }
+    
+    function showSuccess(message) {
+      const successAlert = document.getElementById('successAlert');
+      const successText = document.getElementById('successText');
+      successText.textContent = message;
+      successAlert.style.display = 'block';
+      setTimeout(() => {
+        successAlert.style.display = 'none';
+      }, 5000);
+    }
+    
+    // Modal handling
+    const tokenModal = document.getElementById('tokenModal');
+    const showTokenModal = document.getElementById('showTokenModal');
+    
+    function openModal() {
+      document.getElementById('tokenForm').reset();
+      tokenModal.style.display = 'flex';
+    }
+    
+    function closeModal() {
+      tokenModal.style.display = 'none';
+    }
+    
+    function closeShowTokenModal() {
+      showTokenModal.style.display = 'none';
+      loadTokens();
+    }
+    
+    document.getElementById('createTokenBtn').addEventListener('click', openModal);
+    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+    document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
+    document.getElementById('closeShowTokenBtn').addEventListener('click', closeShowTokenModal);
+    
+    // Create token form
+    document.getElementById('tokenForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const name = document.getElementById('tokenName').value.trim();
+      const expiresInDays = parseInt(document.getElementById('tokenExpiry').value);
+      
+      try {
+        const response = await fetchAPI(`${API_BASE}/tokens`, {
+          method: 'POST',
+          body: JSON.stringify({ name, expires_in_days: expiresInDays })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          
+          // Close create modal
+          closeModal();
+          
+          // Show token to user
+          document.getElementById('newTokenValue').value = data.token;
+          document.getElementById('newTokenName').textContent = data.token_info.name;
+          document.getElementById('newTokenExpires').textContent = new Date(data.token_info.expires_at).toLocaleString();
+          showTokenModal.style.display = 'flex';
+        } else {
+          const data = await response.json();
+          showError(data.error || 'Failed to create token');
+        }
+      } catch (error) {
+        console.error('Error creating token:', error);
+        showError('Failed to create token');
+      }
+    });
+    
+    // Copy token
+    document.getElementById('copyTokenBtn').addEventListener('click', () => {
+      const tokenInput = document.getElementById('newTokenValue');
+      tokenInput.select();
+      document.execCommand('copy');
+      showSuccess('Token copied to clipboard!');
+    });
+    
+    // Load tokens
+    async function loadTokens() {
+      try {
+        const response = await fetchAPI(`${API_BASE}/tokens`);
+        const tokens = await response.json();
+        
+        const table = document.getElementById('tokensTable');
+        
+        if (tokens.length === 0) {
+          table.innerHTML = '<p style="text-align: center; padding: 32px; color: #9ca3af;">No API tokens found. Create one to get started.</p>';
+          return;
+        }
+        
+        table.innerHTML = `
+          <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="border-bottom: 1px solid rgba(139, 92, 246, 0.3);">
+                <th style="text-align: left; padding: 12px;">Name</th>
+                <th style="text-align: left; padding: 12px;">Created</th>
+                <th style="text-align: left; padding: 12px;">Expires</th>
+                <th style="text-align: left; padding: 12px;">Last Used</th>
+                <th style="text-align: center; padding: 12px;">Status</th>
+                <th style="text-align: right; padding: 12px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tokens.map(token => {
+                const expiresAt = token.expires_at ? new Date(token.expires_at) : null;
+                const isExpired = expiresAt && expiresAt < new Date();
+                const isActive = !token.revoked && !isExpired;
+                
+                return `
+                  <tr style="border-bottom: 1px solid rgba(139, 92, 246, 0.1);">
+                    <td style="padding: 12px; font-weight: 500;">${escapeHtml(token.name)}</td>
+                    <td style="padding: 12px; color: #9ca3af; font-size: 14px;">
+                      ${new Date(token.created_at).toLocaleDateString()}
+                    </td>
+                    <td style="padding: 12px; color: #9ca3af; font-size: 14px;">
+                      ${expiresAt ? expiresAt.toLocaleDateString() : 'Never'}
+                      ${isExpired ? '<span style="color: #fca5a5;">(Expired)</span>' : ''}
+                    </td>
+                    <td style="padding: 12px; color: #9ca3af; font-size: 14px;">
+                      ${token.last_used ? new Date(token.last_used).toLocaleString() : 'Never'}
+                    </td>
+                    <td style="padding: 12px; text-align: center;">
+                      <span style="padding: 4px 8px; border-radius: 4px; font-size: 12px; ${
+                        isActive 
+                          ? 'background: rgba(16, 185, 129, 0.2); color: #6ee7b7;' 
+                          : 'background: rgba(239, 68, 68, 0.2); color: #fca5a5;'
+                      }">
+                        ${token.revoked ? 'Revoked' : isExpired ? 'Expired' : 'Active'}
+                      </span>
+                    </td>
+                    <td style="padding: 12px; text-align: right;">
+                      ${!token.revoked && !isExpired ? `
+                        <button class="btn" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5;" 
+                          onclick="revokeToken(${token.id}, '${escapeHtml(token.name)}')">
+                          Revoke
+                        </button>
+                      ` : '-'}
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (error) {
+        console.error('Error loading tokens:', error);
+        showError('Failed to load tokens');
+      }
+    }
+    
+    // Revoke token
+    window.revokeToken = async function(tokenId, name) {
+      if (!confirm(`Are you sure you want to revoke the token "${name}"?\n\nThis action cannot be undone and any applications using this token will stop working.`)) {
+        return;
+      }
+      
+      try {
+        const response = await fetchAPI(`${API_BASE}/tokens/${tokenId}`, {
+          method: 'DELETE'
+        });
+        
+        if (response.ok) {
+          showSuccess('Token revoked successfully');
+          loadTokens();
+        } else {
+          const data = await response.json();
+          showError(data.error || 'Failed to revoke token');
+        }
+      } catch (error) {
+        console.error('Error revoking token:', error);
+        showError('Failed to revoke token');
+      }
+    };
+    
+    // Logout
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+      localStorage.removeItem('pois_token');
+      localStorage.removeItem('pois_user');
+      window.location.href = '/static/login.html';
+    });
+    
+    // Load current user
+    async function loadCurrentUser() {
+      try {
+        const response = await fetchAPI('/api/auth/me');
+        const data = await response.json();
+        document.getElementById('currentUser').textContent = data.username;
+      } catch (error) {
+        console.error('Error loading current user:', error);
+      }
+    }
+    
+    // Utility
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+    
+    // Initialize
+    if (requireAuth()) {
+      loadCurrentUser();
+      loadTokens();
+    }
+    
+    // Hide Users menu from non-admins
+    (async function() {
+      try {
+        const token = localStorage.getItem('pois_token');
+        if (!token) return;
+        
+        const response = await fetch('/api/auth/me', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (response.ok) {
+          const user = await response.json();
+          if (user.role !== 'admin') {
+            const usersLinks = document.querySelectorAll('a[href="/static/users.html"]');
+            usersLinks.forEach(link => link.style.display = 'none');
+          }
+        }
+      } catch (e) {
+        console.error('Error checking user role:', e);
+      }
+    })();
+  </script>
+</body>
+</html>

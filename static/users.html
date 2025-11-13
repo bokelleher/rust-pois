@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>POIS - User Management</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a href="/">
+        <img src="https://esni.techexlab.com:3000/static/media/techex-logo.74b1230112edda6b3915.png" 
+             alt="TechExLab" class="logo" />
+      </a>
+    </div>
+    <nav class="nav">
+      <a href="/static/admin.html">Channels & Rules</a>
+      <a href="/static/tools.html">SCTE-35 Builder</a>
+      <a href="/static/events.html">Event Monitor</a>
+      <a href="/static/users.html" class="active">Users</a>
+      <a href="/static/tokens.html">API Tokens</a>
+      <a href="/static/docs.html">API Docs</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="right">
+      <span id="currentUser">Loading...</span>
+      <button class="btn" id="logoutBtn">Logout</button>
+    </div>
+  </header>
+
+  <main class="content content-max-width">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+      <h1 class="grad-text">User Management</h1>
+      <button class="btn-primary" id="createUserBtn">Create User</button>
+    </div>
+    
+    <div id="errorAlert" class="panel" style="display: none; background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3);">
+      <p id="errorText" style="color: #fca5a5; margin: 0;"></p>
+    </div>
+
+    <div class="panel">
+      <div class="card-header">
+        <div class="card-title">Users</div>
+      </div>
+      
+      <div id="usersTable">
+        <p style="text-align: center; padding: 32px; color: #9ca3af;">Loading users...</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Create/Edit User Modal -->
+  <div id="userModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="panel" style="max-width: 500px; width: 90%; margin: 0;">
+      <div class="card-header">
+        <div class="card-title" id="modalTitle">Create User</div>
+        <button class="btn" id="closeModalBtn">×</button>
+      </div>
+      
+      <form id="userForm">
+        <div class="form-group">
+          <label for="modalUsername">Username *</label>
+          <input type="text" id="modalUsername" required minlength="3">
+        </div>
+        
+        <div class="form-group" id="passwordGroup">
+          <label for="modalPassword">Password *</label>
+          <input type="password" id="modalPassword" required minlength="8">
+        </div>
+        
+        <div class="form-group">
+          <label for="modalEmail">Email</label>
+          <input type="email" id="modalEmail">
+        </div>
+        
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="modalIsAdmin">
+            Administrator
+          </label>
+        </div>
+        
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="modalIsActive" checked>
+            Active
+          </label>
+        </div>
+        
+        <div style="display: flex; gap: 12px; justify-content: flex-end;">
+          <button type="button" class="btn" id="cancelModalBtn">Cancel</button>
+          <button type="submit" class="btn-primary" id="saveUserBtn">Create User</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '/api';
+    let currentEditingUserId = null;
+    
+    // Auth helpers
+    function getToken() {
+      return localStorage.getItem('pois_token');
+    }
+    
+    function requireAuth() {
+      const token = getToken();
+      if (!token) {
+        window.location.href = '/static/login.html';
+        return false;
+      }
+      return true;
+    }
+    
+    async function fetchAPI(url, options = {}) {
+      const token = getToken();
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          ...options.headers
+        }
+      });
+      
+      if (response.status === 401) {
+        localStorage.removeItem('pois_token');
+        window.location.href = '/static/login.html';
+        throw new Error('Unauthorized');
+      }
+      
+      return response;
+    }
+    
+    // Error handling
+    function showError(message) {
+      const errorAlert = document.getElementById('errorAlert');
+      const errorText = document.getElementById('errorText');
+      errorText.textContent = message;
+      errorAlert.style.display = 'block';
+      setTimeout(() => {
+        errorAlert.style.display = 'none';
+      }, 5000);
+    }
+    
+    // Modal handling
+    const userModal = document.getElementById('userModal');
+    const modalTitle = document.getElementById('modalTitle');
+    const userForm = document.getElementById('userForm');
+    const passwordGroup = document.getElementById('passwordGroup');
+    
+    function openModal(mode = 'create', user = null) {
+      currentEditingUserId = user?.id || null;
+      
+      if (mode === 'create') {
+        modalTitle.textContent = 'Create User';
+        document.getElementById('saveUserBtn').textContent = 'Create User';
+        userForm.reset();
+        passwordGroup.style.display = 'block';
+        document.getElementById('modalPassword').required = true;
+        document.getElementById('modalIsActive').checked = true;
+      } else {
+        modalTitle.textContent = 'Edit User';
+        document.getElementById('saveUserBtn').textContent = 'Save Changes';
+        document.getElementById('modalUsername').value = user.username;
+        document.getElementById('modalEmail').value = user.email || '';
+        document.getElementById('modalIsAdmin').checked = user.role === "admin";
+        document.getElementById('modalIsActive').checked = user.enabled;
+        passwordGroup.style.display = 'none';
+        document.getElementById('modalPassword').required = false;
+      }
+      
+      userModal.style.display = 'flex';
+    }
+    
+    function closeModal() {
+      userModal.style.display = 'none';
+      currentEditingUserId = null;
+    }
+    
+    document.getElementById('createUserBtn').addEventListener('click', () => openModal('create'));
+    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+    document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
+    
+    // Form submission
+    userForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const username = document.getElementById('modalUsername').value.trim();
+      const password = document.getElementById('modalPassword').value;
+      const email = document.getElementById('modalEmail').value.trim() || null;
+      const isAdmin = document.getElementById('modalIsAdmin').checked;
+      const isActive = document.getElementById('modalIsActive').checked;
+      
+      try {
+        let response;
+        if (currentEditingUserId) {
+          // Update user
+          response = await fetchAPI(`${API_BASE}/users/${currentEditingUserId}`, {
+            method: 'PUT',
+            body: JSON.stringify({ role: isAdmin ? "admin" : "user", enabled: isActive, email: email })
+          });
+        } else {
+          // Create user
+          response = await fetchAPI(`${API_BASE}/users`, {
+            method: 'POST',
+            body: JSON.stringify({ username, password, role: isAdmin ? "admin" : "user", email: email })
+          });
+        }
+        
+        if (response.ok) {
+          closeModal();
+          loadUsers();
+        } else {
+          const data = await response.json();
+          showError(data.error || 'Failed to save user');
+        }
+      } catch (error) {
+        console.error('Error saving user:', error);
+        showError('Failed to save user');
+      }
+    });
+    
+    // Load and display users
+    async function loadUsers() {
+      try {
+        const response = await fetchAPI(`${API_BASE}/users`);
+        const users = await response.json();
+        
+        const table = document.getElementById('usersTable');
+        
+        if (users.length === 0) {
+          table.innerHTML = '<p style="text-align: center; padding: 32px; color: #9ca3af;">No users found</p>';
+          return;
+        }
+        
+        table.innerHTML = `
+          <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="border-bottom: 1px solid rgba(139, 92, 246, 0.3);">
+                <th style="text-align: left; padding: 12px;">Username</th>
+                <th style="text-align: left; padding: 12px;">Email</th>
+                <th style="text-align: center; padding: 12px;">Role</th>
+                <th style="text-align: center; padding: 12px;">Status</th>
+                <th style="text-align: left; padding: 12px;">Last Login</th>
+                <th style="text-align: right; padding: 12px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${users.map(user => `
+                <tr style="border-bottom: 1px solid rgba(139, 92, 246, 0.1);">
+                  <td style="padding: 12px; font-weight: 500;">${escapeHtml(user.username)}</td>
+                  <td style="padding: 12px; color: #9ca3af;">${user.email ? escapeHtml(user.email) : '-'}</td>
+                  <td style="padding: 12px; text-align: center;">
+                    <span style="padding: 4px 8px; border-radius: 4px; font-size: 12px; ${user.role === 'admin' ? 'background: rgba(139, 92, 246, 0.2); color: #c4b5fd;' : 'background: rgba(75, 85, 99, 0.3); color: #9ca3af;'}">
+                      ${user.role === 'admin' ? 'Admin' : 'User'}
+                    </span>
+                  </td>
+                  <td style="padding: 12px; text-align: center;">
+                    <span style="padding: 4px 8px; border-radius: 4px; font-size: 12px; ${user.enabled ? 'background: rgba(16, 185, 129, 0.2); color: #6ee7b7;' : 'background: rgba(239, 68, 68, 0.2); color: #fca5a5;'}">
+                      ${user.enabled ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td style="padding: 12px; color: #9ca3af; font-size: 14px;">
+                    ${user.last_login ? new Date(user.last_login).toLocaleString() : 'Never'}
+                  </td>
+                  <td style="padding: 12px; text-align: right;">
+                    <button class="btn" style="margin-right: 8px;" onclick="editUser(${user.id})">Edit</button>
+                    <button class="btn" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5;" onclick="deleteUser(${user.id}, '${escapeHtml(user.username)}')">Delete</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (error) {
+        console.error('Error loading users:', error);
+        showError('Failed to load users');
+      }
+    }
+    
+    // Edit user
+    window.editUser = async function(userId) {
+      try {
+        const response = await fetchAPI(`${API_BASE}/users/${userId}`);
+        const user = await response.json();
+        openModal('edit', user);
+      } catch (error) {
+        console.error('Error loading user:', error);
+        showError('Failed to load user');
+      }
+    };
+    
+    // Delete user
+    window.deleteUser = async function(userId, username) {
+      if (!confirm(`Are you sure you want to delete user "${username}"?`)) {
+        return;
+      }
+      
+      try {
+        const response = await fetchAPI(`${API_BASE}/users/${userId}`, {
+          method: 'DELETE'
+        });
+        
+        if (response.ok || response.status === 204) {
+          loadUsers();
+        } else {
+          const data = await response.json();
+          showError(data.error || 'Failed to delete user');
+        }
+      } catch (error) {
+        console.error('Error deleting user:', error);
+        showError('Failed to delete user');
+      }
+    };
+    
+    // Logout
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+      localStorage.removeItem('pois_token');
+      localStorage.removeItem('pois_user');
+      window.location.href = '/static/login.html';
+    });
+    
+    // Load current user info
+    async function loadCurrentUser() {
+      try {
+        const response = await fetchAPI('/api/auth/me');
+        const data = await response.json();
+        document.getElementById('currentUser').textContent = data.username;
+        
+        // Check if admin - redirect non-admins
+        if (data.role !== 'admin') {
+          showError('You do not have permission to access this page');
+          setTimeout(() => {
+            window.location.href = '/static/admin.html';
+          }, 1500);
+          return false;
+        }
+        return true;
+      } catch (error) {
+        console.error('Error loading current user:', error);
+        return false;
+      }
+    }
+    
+    // Utility function
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+    
+    // Initialize
+    if (requireAuth()) {
+      loadCurrentUser().then(isAdmin => {
+        if (isAdmin) {
+          loadUsers();
+        }
+      });
+    }
+  </script>
+</body>
+</html>

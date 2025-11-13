@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Token Test</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1a1a1a; color: #00ff00; }
+        .test { margin: 10px 0; padding: 10px; background: #2a2a2a; border-radius: 4px; }
+        .pass { border-left: 4px solid #00ff00; }
+        .fail { border-left: 4px solid #ff0000; color: #ff6666; }
+        button { background: #4a4a4a; color: #00ff00; border: 1px solid #00ff00; padding: 10px 20px; cursor: pointer; }
+        button:hover { background: #5a5a5a; }
+    </style>
+</head>
+<body>
+    <h1>POIS Token Test</h1>
+    <button onclick="runTests()">Run Tests</button>
+    <div id="results"></div>
+    
+    <script>
+        async function runTests() {
+            const results = document.getElementById('results');
+            results.innerHTML = '';
+            
+            function addResult(message, pass) {
+                const div = document.createElement('div');
+                div.className = 'test ' + (pass ? 'pass' : 'fail');
+                div.textContent = (pass ? '✓ ' : '✗ ') + message;
+                results.appendChild(div);
+            }
+            
+            // Test 1: Check if token exists
+            const token = localStorage.getItem('pois_token');
+            addResult(`Token in localStorage: ${token ? 'YES' : 'NO'}`, !!token);
+            
+            if (token) {
+                addResult(`Token value: ${token.substring(0, 20)}...`, true);
+            }
+            
+            // Test 2: Check if user info exists
+            const userStr = localStorage.getItem('pois_user');
+            const user = userStr ? JSON.parse(userStr) : null;
+            addResult(`User info in localStorage: ${user ? 'YES' : 'NO'}`, !!user);
+            
+            if (user) {
+                addResult(`Username: ${user.username}, Role: ${user.role}`, true);
+            }
+            
+            // Test 3: Verify token with /api/auth/me
+            if (token) {
+                try {
+                    const meResp = await fetch('/api/auth/me', {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    
+                    if (meResp.ok) {
+                        const meData = await meResp.json();
+                        addResult(`Token validation: SUCCESS (user: ${meData.username})`, true);
+                    } else {
+                        addResult(`Token validation: FAILED (${meResp.status})`, false);
+                    }
+                } catch (e) {
+                    addResult(`Token validation: ERROR (${e.message})`, false);
+                }
+            }
+            
+            // Test 4: Try to fetch channels
+            if (token) {
+                try {
+                    const channelsResp = await fetch('/api/channels', {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    
+                    if (channelsResp.ok) {
+                        const channels = await channelsResp.json();
+                        addResult(`Fetch channels: SUCCESS (${channels.length} channels)`, true);
+                        
+                        channels.forEach(ch => {
+                            addResult(`  Channel: "${ch.name}" (owner_user_id: ${ch.owner_user_id || 'NULL'})`, true);
+                        });
+                    } else {
+                        const text = await channelsResp.text();
+                        addResult(`Fetch channels: FAILED (${channelsResp.status}: ${text})`, false);
+                    }
+                } catch (e) {
+                    addResult(`Fetch channels: ERROR (${e.message})`, false);
+                }
+            }
+        }
+        
+        // Run tests on load if token exists
+        if (localStorage.getItem('pois_token')) {
+            runTests();
+        }
+    </script>
+</body>
+</html>
