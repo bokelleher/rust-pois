@@ -122,18 +122,22 @@ This release introduces a complete authentication and authorization system with 
    git pull
    sudo systemctl stop pois
    sudo ./install.sh
-   sudo systemctl start pois
    ```
+   
+   **Note**: If this is a fresh database, the installer will prompt you to create an admin user:
+   - Admin username (default: `admin`)
+   - Admin email (default: `admin@example.com`)
+   - Admin password (minimum 8 characters, with confirmation)
 
-3. **Create your first user** (via web UI):
+3. **Log in to the web UI**:
    - Navigate to `https://your-server/login.html`
-   - Click "Register" if no users exist
-   - Create admin account
+   - Enter your admin credentials
+   - You're now authenticated!
 
 4. **Generate API token** (for scripts):
-   - Log in to web UI
-   - Go to "Tokens" page
-   - Generate new token
+   - After logging in, go to "Tokens" page
+   - Click "Generate Token"
+   - Copy the token for use in API scripts
    - Update scripts with: `Authorization: Bearer YOUR_TOKEN`
 
 5. **Update API scripts**:
