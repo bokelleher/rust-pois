@@ -1,4 +1,10 @@
 <!doctype html>
+<!--
+  users.html - User Management
+  Version: 3.0.2
+  Last updated: 2024-11-14
+  Changes: Uses header.js for navigation, txcue logo, fixed script loading order
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
@@ -7,27 +13,7 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <a href="/">
-        <img src="https://esni.techexlab.com:3000/static/media/techex-logo.74b1230112edda6b3915.png" 
-             alt="TechExLab" class="logo" />
-      </a>
-    </div>
-    <nav class="nav">
-      <a href="/static/admin.html">Channels & Rules</a>
-      <a href="/static/tools.html">SCTE-35 Builder</a>
-      <a href="/static/events.html">Event Monitor</a>
-      <a href="/static/users.html" class="active">Users</a>
-      <a href="/static/tokens.html">API Tokens</a>
-      <a href="/static/docs.html">API Docs</a>
-    </nav>
-    <div class="spacer"></div>
-    <div class="right">
-      <span id="currentUser">Loading...</span>
-      <button class="btn" id="logoutBtn">Logout</button>
-    </div>
-  </header>
+  <!-- Header will be injected by header.js -->
 
   <main class="content content-max-width">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
@@ -96,22 +82,18 @@
     </div>
   </div>
 
+  <script src="/static/header.js"></script>
   <script>
     const API_BASE = '/api';
     let currentEditingUserId = null;
     
     // Auth helpers
     function getToken() {
-      return localStorage.getItem('pois_token');
+      return POIS_AUTH.getToken();
     }
     
     function requireAuth() {
-      const token = getToken();
-      if (!token) {
-        window.location.href = '/static/login.html';
-        return false;
-      }
-      return true;
+      return POIS_AUTH.requireAuth();
     }
     
     async function fetchAPI(url, options = {}) {
@@ -316,19 +298,11 @@
       }
     };
     
-    // Logout
-    document.getElementById('logoutBtn').addEventListener('click', () => {
-      localStorage.removeItem('pois_token');
-      localStorage.removeItem('pois_user');
-      window.location.href = '/static/login.html';
-    });
-    
     // Load current user info
     async function loadCurrentUser() {
       try {
         const response = await fetchAPI('/api/auth/me');
         const data = await response.json();
-        document.getElementById('currentUser').textContent = data.username;
         
         // Check if admin - redirect non-admins
         if (data.role !== 'admin') {
@@ -353,13 +327,15 @@
     }
     
     // Initialize
-    if (requireAuth()) {
-      loadCurrentUser().then(isAdmin => {
-        if (isAdmin) {
-          loadUsers();
-        }
-      });
-    }
+    window.addEventListener('load', function() {
+      if (requireAuth()) {
+        loadCurrentUser().then(isAdmin => {
+          if (isAdmin) {
+            loadUsers();
+          }
+        });
+      }
+    });
   </script>
 </body>
 </html>

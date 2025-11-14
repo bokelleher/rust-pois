@@ -79,7 +79,7 @@ impl JwtService {
     /// Generate an API token (custom expiration)
     pub fn generate_api_token(
         &self,
-        token_id: i64,
+        _token_id: i64,
         user_id: i64,
         username: &str,
         role: &str,

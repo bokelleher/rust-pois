@@ -1,34 +1,19 @@
 <!doctype html>
+<!--
+  tools.html - SCTE-35 Builder
+  Version: 3.0.1
+  Last updated: 2024-11-14
+  Changes: Uses header.js for navigation, scripts at end of body
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>POIS Tools – SCTE-35 Builder</title>
+  <title>POIS Tools — SCTE-35 Builder</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <a href="/">
-        <img src="https://esni.techexlab.com:3000/static/media/techex-logo.74b1230112edda6b3915.png" 
-             alt="TechExLab" class="logo">
-      </a>
-    </div>
-    <nav class="nav">
-      <a href="/static/admin.html">Channels & Rules</a>
-      <a href="/static/tools.html" class="active">SCTE-35 Builder</a>
-      <a href="/static/events.html">Event Monitor</a>
-      <a href="/static/users.html">Users</a>
-      <a href="/static/tokens.html">API Tokens</a>
-      <a href="/static/docs.html">API Docs</a>
-    </nav>
-    <div class="spacer"></div>
-    <div class="right">
-      <span id="currentUser">Loading...</span>
-      <button class="btn" id="logoutBtn">Logout</button>
-    </div>
-  </header>
+  <!-- Header will be injected by header.js -->
 
   <main class="content content-max-width">
     <h1 class="grad-text">SCTE-35 Builder</h1>
@@ -60,47 +45,86 @@
         </div>
       </div>
       
-      <div id="status" style="margin-top: 16px;"></div>
+      <div id="status" class="text-sm mt-2 text-muted"></div>
     </div>
+
+    <p class="small text-muted mt-4">
+      API: <code>POST /api/tools/scte35/build</code> (requires Authorization: Bearer)
+    </p>
   </main>
 
   <script>
-    // Display current user
-    const userInfo = JSON.parse(localStorage.getItem('pois_user') || '{}');
-    if (userInfo.username) {
-      document.getElementById('currentUser').textContent = userInfo.username;
-    } else {
-      document.getElementById('currentUser').textContent = 'admin';
-    }
-
-    // Logout handler
-    document.getElementById('logoutBtn').addEventListener('click', () => {
-      localStorage.removeItem('pois_token');
-      localStorage.removeItem('pois_user');
-      window.location.href = '/static/login.html';
-    });
-    
-    // Hide Users menu from non-admins
-    (async function() {
-      try {
-        const token = localStorage.getItem('pois_token');
-        if (!token) return;
-        
-        const response = await fetch('/api/auth/me', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        
-        if (response.ok) {
-          const user = await response.json();
-          if (user.role !== 'admin') {
-            const usersLinks = document.querySelectorAll('a[href="/static/users.html"]');
-            usersLinks.forEach(link => link.style.display = 'none');
-          }
+    (function(){
+      const cmd = document.getElementById('cmd');
+      const dur = document.getElementById('dur');
+      const btn = document.getElementById('buildBtn');
+      const out = document.getElementById('b64');
+      const status = document.getElementById('status');
+      const copyB64 = document.getElementById('copyB64');
+      
+      btn.addEventListener('click', async () => {
+        const token = POIS_AUTH.getToken();
+        if (!token) {
+          alert('You must be logged in to use this tool.');
+          window.location.href = '/static/login.html';
+          return;
         }
-      } catch (e) {
-        console.error('Error checking user role:', e);
-      }
+        
+        btn.disabled = true;
+        status.textContent = 'Building SCTE-35...';
+        status.className = 'text-sm mt-2 text-muted';
+        
+        try {
+          const res = await fetch('/api/tools/scte35/build', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              command: cmd.value,
+              duration_seconds: parseInt(dur.value, 10)
+            })
+          });
+          
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+          }
+          
+          const data = await res.json();
+          out.value = data.base64 || '';
+          status.textContent = 'SCTE-35 built successfully!';
+          status.className = 'text-sm mt-2 text-success';
+        } catch (e) {
+          status.textContent = `Error: ${e.message}`;
+          status.className = 'text-sm mt-2 text-error';
+          out.value = '';
+        } finally {
+          btn.disabled = false;
+          setTimeout(() => {
+            if (status.className.includes('success')) {
+              status.textContent = '';
+              status.className = 'text-sm mt-2 text-muted';
+            }
+          }, 3000);
+        }
+      });
+      
+      copyB64.addEventListener('click', () => {
+        out.select();
+        document.execCommand('copy');
+        const orig = copyB64.textContent;
+        copyB64.textContent = 'Copied!';
+        copyB64.className = 'btn btn-success';
+        setTimeout(() => {
+          copyB64.textContent = orig;
+          copyB64.className = 'btn';
+        }, 1500);
+      });
     })();
   </script>
+  
+  <script src="/static/app.js"></script>
+  <script src="/static/header.js"></script>
 </body>
 </html>

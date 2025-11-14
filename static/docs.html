@@ -1,9 +1,15 @@
-<!DOCTYPE html>
+<!doctype html>
+<!--
+  docs.html - API Documentation
+  Version: 3.0.3
+  Last updated: 2024-11-14
+  Changes: Uses header.js for navigation, txcue logo, fixed script loading order
+-->
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>POIS API Documentation</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>POIS - API Documentation</title>
   <link rel="stylesheet" href="/static/app.css">
   <style>
     .docs-container {
@@ -238,26 +244,7 @@
   </style>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <a href="/">
-        <img src="https://esni.techexlab.com:3000/static/media/techex-logo.74b1230112edda6b3915.png" alt="TechExLab" class="logo">
-      </a>
-    </div>
-    <nav class="nav">
-      <a href="/static/admin.html">Channels & Rules</a>
-      <a href="/static/tools.html">SCTE-35 Builder</a>
-      <a href="/static/events.html">Event Monitor</a>
-      <a href="/static/users.html">Users</a>
-      <a href="/static/tokens.html">API Tokens</a>
-      <a href="/static/docs.html" class="active">API Docs</a>
-    </nav>
-    <div class="spacer"></div>
-    <div class="right">
-      <span id="currentUser">Loading...</span>
-      <button class="btn" id="logoutBtn">Logout</button>
-    </div>
-  </header>
+  <!-- Header will be injected by header.js -->
 
   <main class="docs-container">
     <div class="docs-header">
@@ -282,323 +269,202 @@
       <h2>Overview</h2>
       <p>POIS is an ESAM (Event Signaling and Management) server that processes SCTE-35 signals and applies rule-based transformations. It provides:</p>
       <ul>
-        <li><strong>ESAM XML Endpoint</strong>: Receives and processes SignalProcessingEvent messages</li>
-        <li><strong>REST API</strong>: Manages channels, rules, and views event history</li>
-        <li><strong>Rule Engine</strong>: Match conditions and transform signals</li>
-        <li><strong>Event Logging</strong>: Full audit trail with raw XML storage</li>
+        <li><strong>ESAM Signal Processing</strong> - Handle SignalProcessingEvent XML requests</li>
+        <li><strong>Rule-Based Transformations</strong> - Match, modify, replace, or delete signals</li>
+        <li><strong>Multi-Channel Support</strong> - Independent rule sets per channel</li>
+        <li><strong>Event Logging</strong> - Track all processed signals</li>
+        <li><strong>RESTful API</strong> - Manage channels, rules, and view events</li>
       </ul>
-      
-      <div class="panel" style="margin-top: 24px;">
-        <h3>Base URL</h3>
-        <code>http://localhost:8090</code> (development)<br>
-        <code>https://pois.techexlab.com:8090</code> (production)
-      </div>
     </div>
 
     <!-- Authentication -->
     <div id="authentication" class="section">
       <h2>Authentication</h2>
-      <p>All API endpoints (except <code>/health</code>) require Bearer token authentication.</p>
+      <p>All API endpoints (except ESAM) require Bearer token authentication:</p>
       
       <div class="code-block">
-        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <code>Authorization: Bearer dev-token</code>
+        <code>Authorization: Bearer your-token-here</code>
       </div>
-      
-      <p><strong>Default Token</strong>: <code>dev-token</code> (development only)</p>
-      <p>Set custom token using <code>POIS_AUTH_TOKEN</code> environment variable.</p>
+
+      <p>The ESAM endpoint (<code>/esam</code>) does not require authentication.</p>
+
+      <h3>Getting a Token</h3>
+      <p>Tokens are managed through the web interface or API:</p>
+      <ul>
+        <li>Web UI: <a href="/static/tokens.html">Tokens Page</a></li>
+        <li>API: <code>POST /api/tokens</code></li>
+      </ul>
     </div>
 
-    <!-- Use Cases Section -->
+    <!-- Use Cases -->
     <div id="use-cases" class="section">
       <h2>Common Use Cases</h2>
-      <p>Real-world examples of POIS rule configurations for common broadcast scenarios.</p>
+      <p>Here are practical examples of how to use POIS for real-world scenarios:</p>
 
       <!-- Use Case 1 -->
       <div class="use-case">
         <div class="use-case-header">
           <div class="use-case-number">1</div>
-          <div class="use-case-title">Block All Upstream Ad Markers</div>
+          <div class="use-case-title">Convert Program End to Ad Break</div>
         </div>
         
         <div class="use-case-scenario">
-          <strong>Scenario:</strong> Upstream provider sends ad markers you want to ignore completely.
+          <strong>Scenario:</strong> Your playout system sends program_end signals, but your ad insertion system expects splice_insert for ad breaks.
         </div>
-
+        
+        <p><strong>Solution:</strong> Create a rule that transforms program_end to splice_insert with a 60-second break duration:</p>
+        
         <div class="rule-config">
           <div class="rule-label">Name:</div>
-          <div class="rule-value">Block Upstream Ads</div>
-          
-          <div class="rule-label">Priority:</div>
-          <div class="rule-value">0</div>
+          <div class="rule-value">Program End → 60s Ad Break</div>
           
           <div class="rule-label">Action:</div>
-          <div class="rule-value">delete</div>
+          <div class="rule-value">replace</div>
           
-          <div class="rule-label">Match JSON:</div>
-          <div class="rule-value">
-            <div class="code-block" style="margin: 8px 0;">
-              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-              <code>{
-  "anyOf": [
-    {"scte35.segmentation_type_id": "0x30"},
-    {"scte35.segmentation_type_id": "0x32"}
-  ]
-}</code>
-            </div>
-          </div>
+          <div class="rule-label">Match:</div>
+          <div class="rule-value">{"anyOf":[{"scte35.command":"program_end"}]}</div>
           
-          <div class="rule-label">Params JSON:</div>
-          <div class="rule-value"><code>{ }</code> (empty - pass through unchanged)</div>
+          <div class="rule-label">Parameters:</div>
+          <div class="rule-value">{"command":"splice_insert","duration_ticks":5400000,"pts_adjustment":0}</div>
         </div>
-
-        <p><strong>Result:</strong> All provider (0x30) and distributor (0x32) ad markers are deleted before reaching downstream systems.</p>
+        
+        <p><strong>Result:</strong> Every program_end signal is automatically converted to a 60-second ad opportunity.</p>
       </div>
 
       <!-- Use Case 2 -->
       <div class="use-case">
         <div class="use-case-header">
           <div class="use-case-number">2</div>
-          <div class="use-case-title">Convert Program Boundaries to Ad Breaks</div>
+          <div class="use-case-title">Filter Out Internal Test Signals</div>
         </div>
         
         <div class="use-case-scenario">
-          <strong>Scenario:</strong> Network sends program end markers; you want to insert 60-second local ad breaks.
+          <strong>Scenario:</strong> Your testing team sends SCTE-35 signals with "test-" prefixed IDs that should not reach production ad servers.
         </div>
-
+        
+        <p><strong>Solution:</strong> Create a high-priority rule to delete any signals with test IDs:</p>
+        
         <div class="rule-config">
           <div class="rule-label">Name:</div>
-          <div class="rule-value">Program End → 60s Ad</div>
+          <div class="rule-value">Delete Test Signals</div>
           
           <div class="rule-label">Priority:</div>
-          <div class="rule-value">10</div>
+          <div class="rule-value">1 (highest)</div>
           
           <div class="rule-label">Action:</div>
-          <div class="rule-value">replace</div>
+          <div class="rule-value">delete</div>
           
-          <div class="rule-label">Match JSON:</div>
-          <div class="rule-value">
-            <div class="code-block" style="margin: 8px 0;">
-              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-              <code>{
-  "allOf": [
-    {"scte35.command": "time_signal"},
-    {"scte35.segmentation_type_id": "0x11"}
-  ]
-}</code>
-            </div>
-          </div>
-          
-          <div class="rule-label">Params JSON:</div>
-          <div class="rule-value">
-            <div class="code-block" style="margin: 8px 0;">
-              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-              <code>{
-  "build": {
-    "command": "splice_insert_out",
-    "duration_s": 60
-  }
-}</code>
-            </div>
-          </div>
+          <div class="rule-label">Match:</div>
+          <div class="rule-value">{"anyOf":[{"acquisition_signal_id":"test-*"}]}</div>
         </div>
-
-        <p><strong>Result:</strong> Every program end signal (0x11) is transformed into a 60-second splice_insert ad break.</p>
+        
+        <p><strong>Result:</strong> All signals with IDs starting with "test-" are silently dropped before reaching downstream systems.</p>
       </div>
 
       <!-- Use Case 3 -->
       <div class="use-case">
         <div class="use-case-header">
           <div class="use-case-number">3</div>
-          <div class="use-case-title">Pass Through Premium Content Only</div>
+          <div class="use-case-title">Adjust Ad Break Duration</div>
         </div>
         
         <div class="use-case-scenario">
-          <strong>Scenario:</strong> Only process signals tagged with premium sports content identifiers.
+          <strong>Scenario:</strong> Your network requires all ad breaks to be exactly 90 seconds, but upstream signals vary between 60-120 seconds.
         </div>
-
+        
+        <p><strong>Solution:</strong> Create a rule that normalizes all splice_insert durations to 90 seconds:</p>
+        
         <div class="rule-config">
           <div class="rule-label">Name:</div>
-          <div class="rule-value">ESPN Premium Only</div>
-          
-          <div class="rule-label">Priority:</div>
-          <div class="rule-value">5</div>
+          <div class="rule-value">Normalize to 90s Breaks</div>
           
           <div class="rule-label">Action:</div>
           <div class="rule-value">replace</div>
           
-          <div class="rule-label">Match JSON:</div>
-          <div class="rule-value">
-            <div class="code-block" style="margin: 8px 0;">
-              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-              <code>{
-  "allOf": [
-    {"scte35.command": "time_signal"},
-    {"scte35.upid": "*ESPN_PREMIUM*"}
-  ]
-}</code>
-            </div>
-          </div>
+          <div class="rule-label">Match:</div>
+          <div class="rule-value">{"anyOf":[{"scte35.command":"splice_insert"}]}</div>
           
-          <div class="rule-label">Params JSON:</div>
-          <div class="rule-value"><code>{ }</code> (empty - pass through unchanged)</div>
+          <div class="rule-label">Parameters:</div>
+          <div class="rule-value">{"command":"splice_insert","duration_ticks":8100000}</div>
         </div>
-
-        <p><strong>Result:</strong> Only signals containing "ESPN_PREMIUM" in the UPID are passed through unchanged.</p>
+        
+        <p><strong>Result:</strong> All splice_insert signals are rewritten to have exactly 90 seconds duration (8.1M ticks at 90kHz).</p>
       </div>
 
       <!-- Use Case 4 -->
       <div class="use-case">
         <div class="use-case-header">
           <div class="use-case-number">4</div>
-          <div class="use-case-title">Tag Signals with Network ID</div>
+          <div class="use-case-title">Add PTS Adjustment for Encoding Delay</div>
         </div>
         
         <div class="use-case-scenario">
-          <strong>Scenario:</strong> Add your network identifier to all outgoing signals for tracking.
+          <strong>Scenario:</strong> Your encoding pipeline introduces a 2-second delay, and SCTE-35 timing needs to be adjusted to compensate.
         </div>
-
+        
+        <p><strong>Solution:</strong> Create a rule that adds 180,000 ticks (2 seconds at 90kHz) to all signals:</p>
+        
         <div class="rule-config">
           <div class="rule-label">Name:</div>
-          <div class="rule-value">Add Network UPID</div>
-          
-          <div class="rule-label">Priority:</div>
-          <div class="rule-value">20</div>
+          <div class="rule-value">Add 2s Encoding Delay</div>
           
           <div class="rule-label">Action:</div>
           <div class="rule-value">replace</div>
           
-          <div class="rule-label">Match JSON:</div>
-          <div class="rule-value">
-            <div class="code-block" style="margin: 8px 0;">
-              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-              <code>{
-  "anyOf": [
-    {"scte35.command": "time_signal"}
-  ]
-}</code>
-            </div>
-          </div>
+          <div class="rule-label">Match:</div>
+          <div class="rule-value">{"anyOf":[{}]}</div>
           
-          <div class="rule-label">Params JSON:</div>
-          <div class="rule-value">
-            <div class="code-block" style="margin: 8px 0;">
-              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-              <code>{
-  "build": {
-    "command": "time_signal",
-    "upid_type": "TI",
-    "upid_value": "YOUR-NETWORK-12345",
-    "use_extracted_pts": true
-  }
-}</code>
-            </div>
-          </div>
+          <div class="rule-label">Parameters:</div>
+          <div class="rule-value">{"pts_adjustment":180000}</div>
         </div>
-
-        <p><strong>Result:</strong> All time_signal commands get your network UPID injected while preserving the original PTS timing.</p>
+        
+        <p><strong>Result:</strong> All SCTE-35 signals have their timing adjusted by 2 seconds to synchronize with the encoding delay.</p>
       </div>
 
       <!-- Use Case 5 -->
       <div class="use-case">
         <div class="use-case-header">
           <div class="use-case-number">5</div>
-          <div class="use-case-title">Variable Ad Break Durations</div>
+          <div class="use-case-title">Route Different Channels to Different Ad Servers</div>
         </div>
         
         <div class="use-case-scenario">
-          <strong>Scenario:</strong> Premium content gets longer ad breaks than standard content.
-        </div>
-
-        <p><strong>Strategy:</strong> Use multiple rules with different priorities - first match wins.</p>
-
-        <h4>Rule 1: Premium Content (Higher Priority)</h4>
-        <div class="rule-config" style="background: rgba(139, 92, 246, 0.05);">
-          <div class="rule-label">Priority:</div>
-          <div class="rule-value">5</div>
-          
-          <div class="rule-label">Match:</div>
-          <div class="rule-value"><code>{"scte35.upid": "*PREMIUM*"}</code></div>
-          
-          <div class="rule-label">Params:</div>
-          <div class="rule-value"><code>{"build": {"command": "splice_insert_out", "duration_s": 120}}</code></div>
-        </div>
-
-        <h4>Rule 2: Standard Content (Lower Priority)</h4>
-        <div class="rule-config" style="background: rgba(59, 130, 246, 0.05);">
-          <div class="rule-label">Priority:</div>
-          <div class="rule-value">10</div>
-          
-          <div class="rule-label">Match:</div>
-          <div class="rule-value"><code>{"anyOf": [{"scte35.command": "time_signal"}]}</code></div>
-          
-          <div class="rule-label">Params:</div>
-          <div class="rule-value"><code>{"build": {"command": "splice_insert_out", "duration_s": 60}}</code></div>
-        </div>
-
-        <p><strong>Result:</strong> Premium content gets 120-second breaks, everything else gets 60-second breaks.</p>
-      </div>
-
-      <!-- Use Case 6 -->
-      <div class="use-case">
-        <div class="use-case-header">
-          <div class="use-case-number">6</div>
-          <div class="use-case-title">Delete Test Signals</div>
+          <strong>Scenario:</strong> You have sports content on Channel A (using AdServer1) and news on Channel B (using AdServer2), each requiring different signal formats.
         </div>
         
-        <div class="use-case-scenario">
-          <strong>Scenario:</strong> Block test signals from reaching production downstream systems.
-        </div>
-
+        <p><strong>Solution:</strong> Create separate channels with custom rules:</p>
+        
         <div class="rule-config">
-          <div class="rule-label">Name:</div>
-          <div class="rule-value">Delete Test Signals</div>
+          <div class="rule-label">Channel A:</div>
+          <div class="rule-value">sports-live</div>
           
-          <div class="rule-label">Priority:</div>
-          <div class="rule-value">0</div>
+          <div class="rule-label">Rule:</div>
+          <div class="rule-value">Convert all to 30s breaks (AdServer1 format)</div>
           
-          <div class="rule-label">Action:</div>
-          <div class="rule-value">delete</div>
-          
-          <div class="rule-label">Match JSON:</div>
-          <div class="rule-value">
-            <div class="code-block" style="margin: 8px 0;">
-              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-              <code>{
-  "acquisition_signal_id": "test-*"
-}</code>
-            </div>
-          </div>
-          
-          <div class="rule-label">Params JSON:</div>
-          <div class="rule-value"><code>{ }</code> (empty - pass through unchanged)</div>
+          <div class="rule-label">Parameters:</div>
+          <div class="rule-value">{"command":"splice_insert","duration_ticks":2700000}</div>
         </div>
+        
+        <div class="rule-config">
+          <div class="rule-label">Channel B:</div>
+          <div class="rule-value">news-24x7</div>
+          
+          <div class="rule-label">Rule:</div>
+          <div class="rule-value">Convert all to program_start/program_end (AdServer2 format)</div>
+          
+          <div class="rule-label">Parameters:</div>
+          <div class="rule-value">{"command":"program_start"}</div>
+        </div>
+        
+        <p><strong>Result:</strong> Each channel independently transforms signals according to its downstream ad server requirements.</p>
+        
+        <div class="code-block">
+          <code># Sports channel uses sports-live rules
+POST /esam?channel=sports-live
 
-        <p><strong>Result:</strong> Any signal with acquisition ID starting with "test-" is deleted.</p>
-      </div>
-
-      <div class="panel" style="margin-top: 32px;">
-        <h3 style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-          <svg width="24" height="24" fill="currentColor" viewBox="0 0 16 16" style="color: var(--primary);">
-            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
-          </svg>
-          More Examples
-        </h3>
-        <p>For complete reference including:</p>
-        <ul style="margin-bottom: 24px; padding-left: 24px; margin-top: 12px;">
-          <li>Match rule syntax and operators</li>
-          <li>All available match fields</li>
-          <li>Action parameter options</li>
-          <li>SCTE-35 segmentation type reference</li>
-          <li>Advanced multi-condition examples</li>
-          <li>Testing strategies</li>
-        </ul>
-        <a href="https://github.com/bokelleher/rust-pois/blob/main/USE_CASES.md" target="_blank" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 8px;">
-          <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
-          </svg>
-          View Complete USE_CASES.md on GitHub
-        </a>
+# News channel uses news-24x7 rules
+POST /esam?channel=news-24x7</code>
+        </div>
       </div>
     </div>
 
@@ -611,9 +477,7 @@
           <span class="method method-post">POST</span>
           <span class="endpoint-path">/esam?channel={channel_name}</span>
         </div>
-        <p class="endpoint-description">
-          Main ESAM endpoint that receives SignalProcessingEvent XML and returns SignalProcessingNotification XML based on matched rules.
-        </p>
+        <p class="endpoint-description">Process SCTE-35 signal through channel rules</p>
         
         <h4>Query Parameters</h4>
         <table class="param-table">
@@ -627,37 +491,45 @@
             <td><span class="param-name">channel</span></td>
             <td>string</td>
             <td>Yes</td>
-            <td>Channel name to process signal for</td>
+            <td>Channel name to use for processing</td>
           </tr>
         </table>
 
         <h4>Request Body</h4>
+        <p>XML SignalProcessingEvent conforming to SCTE-130 Part 5</p>
         <div class="code-block">
-          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
           <code>&lt;?xml version="1.0"?&gt;
-&lt;esam:SignalProcessingEvent xmlns:esam="urn:cablelabs:iptvservices:esam:xsd:signal:1"
-                            xmlns:md="urn:cablelabs:md:xsd:signaling:3.0"&gt;
-  &lt;esam:AcquiredSignal acquisitionSignalID="test-001"
-                      acquisitionPointIdentity="station-01"
-                      acquisitionTime="2025-11-05T20:00:00Z"&gt;
-    &lt;md:UTCPoint utcPoint="2025-11-05T20:00:00Z"/&gt;
-    &lt;md:BinaryData signalType="SCTE35"&gt;/DAlAAAAAAAAAP/wFAVAAAsxf+//+pTQbf4ApO6oAGkAAAAAUIWI+A==&lt;/md:BinaryData&gt;
-  &lt;/esam:AcquiredSignal&gt;
-&lt;/esam:SignalProcessingEvent&gt;</code>
+&lt;SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
+  &lt;AcquiredSignal acquisitionSignalID="test-001"&gt;
+    &lt;UTCPoint utcPoint="2025-11-05T20:00:00Z"/&gt;
+    &lt;SCTE35PointDescriptor&gt;
+      &lt;SCTE35Command&gt;/DA4AAAAAAAA///wBQb+AAAAAAA=&lt;/SCTE35Command&gt;
+    &lt;/SCTE35PointDescriptor&gt;
+  &lt;/AcquiredSignal&gt;
+&lt;/SignalProcessingEvent&gt;</code>
         </div>
 
-        <h4>Response (200 OK)</h4>
+        <h4>Response</h4>
+        <p>XML SignalProcessingNotification with processed signal</p>
         <div class="code-block">
-          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-          <code>&lt;SignalProcessingNotification xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
-  &lt;StatusCode classCode="0"&gt;
-    &lt;Note&gt;success&lt;/Note&gt;
-  &lt;/StatusCode&gt;
-  &lt;ResponseSignal action="noop" acquisitionSignalID="test-001"&gt;
+          <code>&lt;?xml version="1.0"?&gt;
+&lt;SignalProcessingNotification xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
+  &lt;ResponseSignal acquisitionSignalID="test-001"&gt;
     &lt;UTCPoint utcPoint="2025-11-05T20:00:00Z"/&gt;
-    &lt;BinaryData signalType="SCTE35"&gt;/DAlAAAAAAAAAP/wFAVAAAsxf+//+pTQbf4ApO6oAGkAAAAAUIWI+A==&lt;/BinaryData&gt;
+    &lt;SCTE35PointDescriptor&gt;
+      &lt;SCTE35Command&gt;/DBHAAAAAAAA///wBQb+AAAAAAA=&lt;/SCTE35Command&gt;
+    &lt;/SCTE35PointDescriptor&gt;
   &lt;/ResponseSignal&gt;
 &lt;/SignalProcessingNotification&gt;</code>
+        </div>
+      </div>
+
+      <h3>Alternative URL Format</h3>
+      <p>Channel can also be specified as a path parameter:</p>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/esam/channel/{channel_name}</span>
         </div>
       </div>
     </div>
@@ -672,20 +544,39 @@
           <span class="method method-get">GET</span>
           <span class="endpoint-path">/api/channels</span>
         </div>
-        <p class="endpoint-description">List all configured channels</p>
+        <p class="endpoint-description">List all channels</p>
         
         <h4>Response</h4>
         <div class="code-block">
-          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
           <code>[
   {
     "id": 1,
     "name": "live-sports",
     "enabled": true,
-    "created_at": "2025-11-05T10:00:00Z",
-    "rules": [...]
+    "owner_id": 1,
+    "created_at": "2025-11-01T10:00:00Z"
   }
 ]</code>
+        </div>
+      </div>
+
+      <!-- Get Channel -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="endpoint-path">/api/channels/{channel_name}</span>
+        </div>
+        <p class="endpoint-description">Get channel details</p>
+        
+        <h4>Response</h4>
+        <div class="code-block">
+          <code>{
+  "id": 1,
+  "name": "live-sports",
+  "enabled": true,
+  "owner_id": 1,
+  "created_at": "2025-11-01T10:00:00Z"
+}</code>
         </div>
       </div>
 
@@ -699,10 +590,20 @@
         
         <h4>Request Body</h4>
         <div class="code-block">
-          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
           <code>{
   "name": "live-sports",
   "enabled": true
+}</code>
+        </div>
+
+        <h4>Response</h4>
+        <div class="code-block">
+          <code>{
+  "id": 1,
+  "name": "live-sports",
+  "enabled": true,
+  "owner_id": 1,
+  "created_at": "2025-11-01T10:00:00Z"
 }</code>
         </div>
       </div>
@@ -713,11 +614,10 @@
           <span class="method method-put">PUT</span>
           <span class="endpoint-path">/api/channels/{channel_name}</span>
         </div>
-        <p class="endpoint-description">Update channel (enable/disable)</p>
+        <p class="endpoint-description">Update channel settings</p>
         
         <h4>Request Body</h4>
         <div class="code-block">
-          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
           <code>{
   "enabled": false
 }</code>
@@ -738,17 +638,42 @@
     <div id="rules" class="section">
       <h2>Rules API</h2>
       
+      <!-- List Rules -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="endpoint-path">/api/channels/{channel_name}/rules</span>
+        </div>
+        <p class="endpoint-description">List all rules for a channel</p>
+        
+        <h4>Response</h4>
+        <div class="code-block">
+          <code>[
+  {
+    "id": 1,
+    "channel_id": 1,
+    "name": "Delete splice_insert",
+    "priority": 10,
+    "enabled": true,
+    "action": "delete",
+    "match_json": "{\"anyOf\":[{\"scte35.command\":\"splice_insert\"}]}",
+    "params_json": "{}",
+    "created_at": "2025-11-01T10:00:00Z"
+  }
+]</code>
+        </div>
+      </div>
+
       <!-- Create Rule -->
       <div class="endpoint">
         <div class="endpoint-header">
           <span class="method method-post">POST</span>
           <span class="endpoint-path">/api/channels/{channel_name}/rules</span>
         </div>
-        <p class="endpoint-description">Create a new rule for a channel</p>
+        <p class="endpoint-description">Create a new rule</p>
         
         <h4>Request Body</h4>
         <div class="code-block">
-          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
           <code>{
   "name": "Delete splice_insert",
   "priority": 10,
@@ -759,39 +684,56 @@
 }</code>
         </div>
 
-        <h4>Match JSON Examples</h4>
+        <h4>Rule Actions</h4>
+        <table class="param-table">
+          <tr>
+            <th>Action</th>
+            <th>Description</th>
+          </tr>
+          <tr>
+            <td><span class="param-name">noop</span></td>
+            <td>Log match but don't modify signal</td>
+          </tr>
+          <tr>
+            <td><span class="param-name">delete</span></td>
+            <td>Remove signal from output</td>
+          </tr>
+          <tr>
+            <td><span class="param-name">replace</span></td>
+            <td>Modify signal based on params_json</td>
+          </tr>
+        </table>
+
+        <h4>Match Criteria</h4>
+        <p>The <code>match_json</code> field supports pattern matching:</p>
         <div class="code-block">
-          <code>// Match any splice_insert command
+          <code>// Match any signal with splice_insert command
 {"anyOf":[{"scte35.command":"splice_insert"}]}
 
-// Match program start (type 0x10)
-{"allOf":[{"scte35.command":"time_signal"},{"scte35.segmentation_type_id":"0x10"}]}
+// Match signals with specific acquisition ID
+{"anyOf":[{"acquisition_signal_id":"test-001"}]}
 
-// Match ESPN content
-{"scte35.upid":"*ESPN*"}
+// Match using wildcards
+{"anyOf":[{"acquisition_signal_id":"prod-*"}]}
 
-// Complex: Match provider ads for premium content
-{
-  "allOf": [
-    {"scte35.segmentation_type_id":"0x30"},
-    {"scte35.upid":"*PREMIUM*"}
-  ]
-}</code>
+// Match all signals (empty condition)
+{"anyOf":[{}]}</code>
         </div>
 
-        <h4>Params JSON Examples</h4>
+        <h4>Replace Parameters</h4>
+        <p>The <code>params_json</code> field for replace action:</p>
         <div class="code-block">
-          <code>// Pass through unchanged
-{}
+          <code>// Change command type
+{"command":"splice_insert"}
 
-// Build 60s splice insert
-{"build":{"command":"splice_insert_out","duration_s":60}}
+// Set duration (in 90kHz ticks)
+{"duration_ticks":5400000}
 
-// Use extracted PTS with 5s offset
-{"build":{"command":"splice_insert_in_with_pts","use_extracted_pts":true,"pts_offset_s":5}}
+// Adjust PTS timing
+{"pts_adjustment":180000}
 
-// Replace with pre-built SCTE-35
-{"scte35_b64":"/DAlAAAAAAAAAP/wFAVAAAsxf+//+pTQbf4ApO6oAGkAAAAAUIWI+A=="}</code>
+// Combine multiple changes
+{"command":"splice_insert","duration_ticks":5400000,"pts_adjustment":0}</code>
         </div>
       </div>
 
@@ -824,7 +766,7 @@
           <span class="method method-get">GET</span>
           <span class="endpoint-path">/api/events</span>
         </div>
-        <p class="endpoint-description">List processed events with optional filtering</p>
+        <p class="endpoint-description">Query processed events</p>
         
         <h4>Query Parameters</h4>
         <table class="param-table">
@@ -964,57 +906,69 @@
   "http://localhost:8090/api/events?channel=live-sports&limit=10"</code>
       </div>
 
-      <h3>Python Examples</h3>
+      <h3>Rust Examples</h3>
       
       <div class="code-block">
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <code>import requests
+        <code>use reqwest;
+use serde_json::json;
 
-# Configuration
-BASE_URL = "http://localhost:8090"
-TOKEN = "dev-token"
-HEADERS = {
-    "Authorization": f"Bearer {TOKEN}",
-    "Content-Type": "application/json"
-}
+#[tokio::main]
+async fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let client = reqwest::Client::new();
+    let base_url = "http://localhost:8090";
+    let token = "dev-token";
 
-# Create channel
-response = requests.post(
-    f"{BASE_URL}/api/channels",
-    headers=HEADERS,
-    json={"name": "live-sports", "enabled": True}
-)
-print(response.json())
+    // Create channel
+    let response = client
+        .post(&format!("{}/api/channels", base_url))
+        .header("Authorization", format!("Bearer {}", token))
+        .json(&json!({
+            "name": "live-sports",
+            "enabled": true
+        }))
+        .send()
+        .await?;
+    
+    println!("Channel created: {:?}", response.json::&lt;serde_json::Value&gt;().await?);
 
-# Create rule
-rule = {
-    "name": "Delete splice_insert",
-    "priority": 10,
-    "action": "delete",
-    "match_json": '{"anyOf":[{"scte35.command":"splice_insert"}]}',
-    "params_json": "{}"
-}
-response = requests.post(
-    f"{BASE_URL}/api/channels/live-sports/rules",
-    headers=HEADERS,
-    json=rule
-)
-print(response.json())
+    // Create rule
+    let rule = json!({
+        "name": "Delete splice_insert",
+        "priority": 10,
+        "action": "delete",
+        "match_json": r#"{"anyOf":[{"scte35.command":"splice_insert"}]}"#,
+        "params_json": "{}"
+    });
+    
+    let response = client
+        .post(&format!("{}/api/channels/live-sports/rules", base_url))
+        .header("Authorization", format!("Bearer {}", token))
+        .json(&rule)
+        .send()
+        .await?;
+    
+    println!("Rule created: {:?}", response.json::&lt;serde_json::Value&gt;().await?);
 
-# Send ESAM request
-esam_xml = '''&lt;?xml version="1.0"?&gt;
+    // Send ESAM request
+    let esam_xml = r#"&lt;?xml version="1.0"?&gt;
 &lt;SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
   &lt;AcquiredSignal acquisitionSignalID="test-001"&gt;
     &lt;UTCPoint utcPoint="2025-11-05T20:00:00Z"/&gt;
   &lt;/AcquiredSignal&gt;
-&lt;/SignalProcessingEvent&gt;'''
+&lt;/SignalProcessingEvent&gt;"#;
 
-response = requests.post(
-    f"{BASE_URL}/esam?channel=live-sports",
-    headers={"Content-Type": "application/xml"},
-    data=esam_xml
-)
-print(response.text)</code>
+    let response = client
+        .post(&format!("{}/esam?channel=live-sports", base_url))
+        .header("Content-Type", "application/xml")
+        .body(esam_xml)
+        .send()
+        .await?;
+    
+    println!("ESAM response: {}", response.text().await?);
+
+    Ok(())
+}</code>
       </div>
     </div>
 
@@ -1050,7 +1004,7 @@ docker run -p 80:8080 -e SWAGGER_JSON=/openapi.yaml \
     </div>
   </main>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/header.js"></script>
   <script>
     function copyCode(button) {
       const codeBlock = button.nextElementSibling;
@@ -1080,44 +1034,6 @@ docker run -p 80:8080 -e SWAGGER_JSON=/openapi.yaml \
         }
       });
     });
-  </script>
-  <script>
-    // Display current user
-    const userInfo = JSON.parse(localStorage.getItem("pois_user") || "{}");
-    if (userInfo.username) {
-      document.getElementById("currentUser").textContent = userInfo.username;
-    } else {
-      document.getElementById("currentUser").textContent = "admin";
-    }
-
-    // Logout handler
-    document.getElementById("logoutBtn").addEventListener("click", () => {
-      localStorage.removeItem("pois_token");
-      localStorage.removeItem("pois_user");
-      window.location.href = "/static/login.html";
-    });
-    
-    // Hide Users menu from non-admins
-    (async function() {
-      try {
-        const token = localStorage.getItem('pois_token');
-        if (!token) return;
-        
-        const response = await fetch('/api/auth/me', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        
-        if (response.ok) {
-          const user = await response.json();
-          if (user.role !== 'admin') {
-            const usersLinks = document.querySelectorAll('a[href="/static/users.html"]');
-            usersLinks.forEach(link => link.style.display = 'none');
-          }
-        }
-      } catch (e) {
-        console.error('Error checking user role:', e);
-      }
-    })();
   </script>
 </body>
 </html>

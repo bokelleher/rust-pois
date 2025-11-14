@@ -1,127 +1,136 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>POIS Login</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>POIS - Login</title>
   <link rel="stylesheet" href="/static/app.css">
   <style>
-    .login-container {
-      min-height: 100vh;
+    body {
       display: flex;
       align-items: center;
       justify-content: center;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
     }
-    
-    .login-card {
-      background: rgba(17, 24, 39, 0.95);
-      border: 1px solid rgba(139, 92, 246, 0.3);
-      border-radius: 16px;
-      padding: 48px;
+
+    .login-container {
       width: 100%;
-      max-width: 420px;
-      backdrop-filter: blur(16px);
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      max-width: 400px;
     }
-    
+
+    .login-card {
+      background: var(--panel);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 40px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+
     .login-header {
       text-align: center;
       margin-bottom: 32px;
     }
-    
-    .login-logo {
-      font-size: 48px;
-      font-weight: 700;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+
+    .login-title {
+      font-size: 32px;
+      font-weight: 600;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
       -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
       background-clip: text;
+      -webkit-text-fill-color: transparent;
       margin-bottom: 8px;
     }
-    
+
     .login-subtitle {
-      color: #9ca3af;
+      color: var(--text-secondary);
       font-size: 14px;
     }
-    
+
     .form-group {
-      margin-bottom: 24px;
+      margin-bottom: 20px;
     }
-    
-    .form-label {
+
+    .form-group label {
       display: block;
       margin-bottom: 8px;
-      color: #d1d5db;
-      font-size: 14px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
       font-weight: 500;
     }
-    
-    .form-input {
+
+    .form-group input {
       width: 100%;
-      padding: 12px 16px;
-      background: rgba(31, 41, 55, 0.8);
-      border: 1px solid rgba(139, 92, 246, 0.3);
+      padding: 12px 14px;
+      background: var(--field-bg);
+      border: 1px solid var(--border);
       border-radius: 8px;
-      color: #f3f4f6;
+      color: var(--text-primary);
       font-size: 14px;
+      font-family: inherit;
       transition: all 0.2s;
     }
-    
-    .form-input:focus {
+
+    .form-group input:focus {
       outline: none;
-      border-color: #8b5cf6;
-      box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+      border-color: var(--primary);
+      background: var(--field-bg-hover);
     }
-    
+
     .btn-login {
       width: 100%;
-      padding: 12px 24px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 12px;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+      color: white;
       border: none;
       border-radius: 8px;
-      color: white;
-      font-size: 16px;
+      font-size: 14px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.2s;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
-    
+
     .btn-login:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 10px 20px rgba(139, 92, 246, 0.3);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
     }
-    
+
     .btn-login:active {
       transform: translateY(0);
     }
-    
+
     .btn-login:disabled {
       opacity: 0.6;
       cursor: not-allowed;
       transform: none;
     }
-    
+
     .error-message {
       background: rgba(239, 68, 68, 0.1);
       border: 1px solid rgba(239, 68, 68, 0.3);
-      border-radius: 8px;
+      color: #ef4444;
       padding: 12px;
-      margin-bottom: 24px;
-      color: #fca5a5;
-      font-size: 14px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 13px;
       display: none;
     }
-    
-    .error-message.show {
-      display: block;
-    }
-    
-    .footer {
-      margin-top: 32px;
-      text-align: center;
-      color: #6b7280;
-      font-size: 12px;
+
+    .success-message {
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      color: #22c55e;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      display: none;
     }
   </style>
 </head>
@@ -129,138 +138,143 @@
   <div class="login-container">
     <div class="login-card">
       <div class="login-header">
-        <div class="login-logo">POIS</div>
-        <div class="login-subtitle">Placement Opportunity Information Service</div>
+        <img src="/static/images/txcue-white.svg" alt="txcue" style="height: 48px; margin: 0 auto 16px; display: block;">
+        <p class="login-subtitle">Placement Opportunity Information Service</p>
       </div>
-      
+
       <div id="errorMessage" class="error-message"></div>
-      
+      <div id="successMessage" class="success-message"></div>
+
       <form id="loginForm">
         <div class="form-group">
-          <label for="username" class="form-label">Username</label>
-          <input
-            type="text"
-            id="username"
-            class="form-input"
-            placeholder="Enter your username"
-            required
+          <label for="username">Username</label>
+          <input 
+            type="text" 
+            id="username" 
+            name="username" 
+            required 
             autocomplete="username"
-          />
+            placeholder="Enter your username"
+          >
         </div>
-        
+
         <div class="form-group">
-          <label for="password" class="form-label">Password</label>
-          <input
-            type="password"
-            id="password"
-            class="form-input"
-            placeholder="Enter your password"
-            required
+          <label for="password">Password</label>
+          <input 
+            type="password" 
+            id="password" 
+            name="password" 
+            required 
             autocomplete="current-password"
-          />
+            placeholder="Enter your password"
+          >
         </div>
-        
+
         <button type="submit" class="btn-login" id="loginBtn">
-          Sign In
+          Login
         </button>
       </form>
-      
-      <div class="footer">
-        &copy; 2025 POIS Server
-      </div>
     </div>
   </div>
-  
+
   <script>
-    const loginForm = document.getElementById('loginForm');
-    const errorMessage = document.getElementById('errorMessage');
-    const loginBtn = document.getElementById('loginBtn');
-    const usernameInput = document.getElementById('username');
-    const passwordInput = document.getElementById('password');
-    
-    // Check if already logged in
-    const existingToken = localStorage.getItem('pois_token');
-    if (existingToken) {
-      // Verify token is still valid
-      fetch('/api/auth/me', {
-        headers: {
-          'Authorization': `Bearer ${existingToken}`
-        }
-      })
-      .then(res => {
-        if (res.ok) {
-          // Token is valid, redirect to admin
-          window.location.href = '/static/admin.html';
-        } else {
-          // Token invalid, clear it
+    (function() {
+      'use strict';
+
+      const form = document.getElementById('loginForm');
+      const loginBtn = document.getElementById('loginBtn');
+      const errorMessage = document.getElementById('errorMessage');
+      const successMessage = document.getElementById('successMessage');
+      const usernameInput = document.getElementById('username');
+      const passwordInput = document.getElementById('password');
+
+      // Check if already logged in
+      const existingToken = localStorage.getItem('pois_token');
+      if (existingToken) {
+        try {
+          const payload = JSON.parse(atob(existingToken.split('.')[1]));
+          const now = Math.floor(Date.now() / 1000);
+          if (payload.exp > now) {
+            // Token still valid, redirect to admin
+            window.location.href = '/static/admin.html';
+            return;
+          } else {
+            // Token expired, clear it
+            localStorage.removeItem('pois_token');
+            localStorage.removeItem('pois_user');
+          }
+        } catch (e) {
+          // Invalid token, clear it
           localStorage.removeItem('pois_token');
+          localStorage.removeItem('pois_user');
         }
-      })
-      .catch(() => {
-        localStorage.removeItem('pois_token');
-      });
-    }
-    
-    function showError(message) {
-      errorMessage.textContent = message;
-      errorMessage.classList.add('show');
-    }
-    
-    function hideError() {
-      errorMessage.classList.remove('show');
-    }
-    
-    loginForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      hideError();
-      
-      const username = usernameInput.value.trim();
-      const password = passwordInput.value;
-      
-      if (!username || !password) {
-        showError('Please enter both username and password');
-        return;
       }
-      
-      // Disable form during login
-      loginBtn.disabled = true;
-      loginBtn.textContent = 'Signing in...';
-      
-      try {
-        const response = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ username, password })
-        });
-        
-        const data = await response.json();
-        
-        if (response.ok) {
-          // Store token
+
+      function showError(message) {
+        errorMessage.textContent = message;
+        errorMessage.style.display = 'block';
+        successMessage.style.display = 'none';
+        setTimeout(() => {
+          errorMessage.style.display = 'none';
+        }, 5000);
+      }
+
+      function showSuccess(message) {
+        successMessage.textContent = message;
+        successMessage.style.display = 'block';
+        errorMessage.style.display = 'none';
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const username = usernameInput.value.trim();
+        const password = passwordInput.value;
+
+        if (!username || !password) {
+          showError('Please enter both username and password');
+          return;
+        }
+
+        loginBtn.disabled = true;
+        loginBtn.textContent = 'Logging in...';
+
+        try {
+          const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ username, password })
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(data.error || 'Login failed');
+          }
+
+          // Store token and user info
           localStorage.setItem('pois_token', data.token);
-          
-          // Store user info
           localStorage.setItem('pois_user', JSON.stringify(data.user));
-          
-          // Redirect to admin panel
-          window.location.href = '/static/admin.html';
-        } else {
-          showError(data.error || 'Login failed. Please check your credentials.');
+
+          showSuccess('Login successful! Redirecting...');
+
+          // Redirect to admin page
+          setTimeout(() => {
+            window.location.href = '/static/admin.html';
+          }, 500);
+
+        } catch (error) {
+          showError(error.message || 'Login failed. Please try again.');
           loginBtn.disabled = false;
-          loginBtn.textContent = 'Sign In';
+          loginBtn.textContent = 'Login';
         }
-      } catch (error) {
-        console.error('Login error:', error);
-        showError('Network error. Please check your connection and try again.');
-        loginBtn.disabled = false;
-        loginBtn.textContent = 'Sign In';
-      }
-    });
-    
-    // Focus username on load
-    usernameInput.focus();
+      });
+
+      // Focus username field on load
+      usernameInput.focus();
+    })();
   </script>
 </body>
 </html>

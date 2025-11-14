@@ -1,7 +1,7 @@
 // src/main.rs
-// Version: 3.0.3
-// Last Modified: 2025-01-09
-// Changes: Updated event stats to be filtered by user's owned channels
+// Version: 3.0.4
+// Last Modified: 2025-01-14
+// Changes: Added server-side HTML templating with shared header support
 
 mod models;
 mod rules;
@@ -11,10 +11,11 @@ mod event_logging;
 mod backup;
 mod jwt_auth;
 mod auth_handlers;
+mod templates;
 
 use axum::{
     body::Body,
-    extract::{ConnectInfo, Extension, Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::{HeaderMap, Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -27,6 +28,8 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Instant};
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+
+use crate::templates::TemplateEngine;
 
 use crate::event_logging::{
     ClientInfo, EsamEvent, EsamEventView, EventFilters, EventLogger, ProcessingMetrics,
@@ -43,6 +46,7 @@ struct AppState {
     db: Pool<Sqlite>,
     admin_token: String,
     event_logger: EventLogger,
+    template_engine: Arc<TemplateEngine>,
 }
 
 #[tokio::main]
@@ -54,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    info!("Starting POIS v3.0.3 - Multi-tenancy enabled");
+    info!("Starting POIS v3.0.4 - Multi-tenancy enabled");
 
     let db_url = std::env::var("POIS_DB").unwrap_or_else(|_| "sqlite://pois.db".to_string());
     let admin_token =
@@ -83,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
 
     let event_logger = EventLogger::new(db.clone());
     let auth_service = jwt_auth::AuthService::new(db.clone(), jwt_secret.clone());
+    let template_engine = Arc::new(TemplateEngine::new("static"));
 
     let auth_state = Arc::new(auth_handlers::AuthState {
         db: db.clone(),
@@ -93,6 +98,7 @@ async fn main() -> anyhow::Result<()> {
         db,
         admin_token,
         event_logger,
+        template_engine,
     });
 
     let auth_public = Router::new()
@@ -133,17 +139,26 @@ async fn main() -> anyhow::Result<()> {
         .route("/esam/channel/:channel", post(handle_esam_with_path))
         .route("/healthz", get(|| async { "ok" }))
         .route("/esam", post(handle_esam))
-        .with_state(state.clone())
         .nest_service("/static", ServeDir::new("static"))
-        .route("/", get(|| async { axum::response::Redirect::temporary("/static/login.html") }))
-        .route("/tools.html", get(|| async { axum::response::Redirect::temporary("/static/tools.html") }))
-        .route("/events.html", get(|| async { axum::response::Redirect::temporary("/static/events.html") }))
-        .route("/login.html", get(|| async { axum::response::Redirect::temporary("/static/login.html") }))
-        .route("/users.html", get(|| async { axum::response::Redirect::temporary("/static/users.html") }))
-        .route("/tokens.html", get(|| async { axum::response::Redirect::temporary("/static/tokens.html") }))
+        .route("/", get(|| async { axum::response::Redirect::temporary("/events") }))
+        .route("/admin", get(|| async { axum::response::Redirect::temporary("/static/admin.html") }))
+        .route("/admin.html", get(|| async { axum::response::Redirect::temporary("/static/admin.html") }))
+        .route("/events", get(serve_events))
+        .route("/events.html", get(serve_events))
+        .route("/tools", get(serve_tools))
+        .route("/tools.html", get(serve_tools))
+        .route("/docs", get(serve_docs))
+        .route("/docs.html", get(serve_docs))
+        .route("/users", get(serve_users))
+        .route("/users.html", get(serve_users))
+        .route("/tokens", get(serve_tokens))
+        .route("/tokens.html", get(serve_tokens))
+        .route("/login", get(serve_login))
+        .route("/login.html", get(serve_login))
         .merge(auth_public)
         .merge(auth_protected)
         .merge(pois_api)
+        .with_state(state.clone())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
 
@@ -156,12 +171,12 @@ async fn main() -> anyhow::Result<()> {
         let config = RustlsConfig::from_pem_file(cert_path, key_path).await?;
         info!("POIS listening with TLS on https://{addr}");
         axum_server::bind_rustls(addr, config)
-            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+            .serve(app.into_make_service())
             .await?;
     } else {
         info!("POIS listening on http://{addr}");
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
+        axum::serve(listener, app.into_make_service()).await?;
     }
 
     Ok(())
@@ -223,34 +238,80 @@ async fn require_bearer(
     }
 }
 
+// Template rendering handlers
+async fn serve_events() -> impl IntoResponse {
+    axum::response::Redirect::temporary("/static/events.html")
+}
+
+async fn serve_tools() -> impl IntoResponse {
+    axum::response::Redirect::temporary("/static/tools.html")
+}
+
+async fn serve_docs() -> impl IntoResponse {
+    axum::response::Redirect::temporary("/static/docs.html")
+}
+
+async fn serve_users() -> impl IntoResponse {
+    axum::response::Redirect::temporary("/static/admin.html")
+}
+
+async fn serve_tokens() -> impl IntoResponse {
+    axum::response::Redirect::temporary("/static/admin.html")
+}
+
+async fn serve_login() -> impl IntoResponse {
+    axum::response::Redirect::temporary("/static/admin.html")
+}
+
+async fn render_template(st: &AppState, template: &str, title: &str) -> Response {
+    let mut vars = HashMap::new();
+    vars.insert("page_title".to_string(), title.to_string());
+    
+    match st.template_engine.render(template, Some(&vars)) {
+        Ok(html) => {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                axum::http::header::CONTENT_TYPE,
+                "text/html; charset=utf-8".parse().unwrap(),
+            );
+            (StatusCode::OK, headers, html).into_response()
+        }
+        Err(e) => {
+            info!("Template error for {}: {}", template, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Template error: {}", e),
+            )
+                .into_response()
+        }
+    }
+}
+
 async fn handle_esam(
     State(st): State<Arc<AppState>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    handle_esam_impl(st, addr, headers, body, None).await
+    handle_esam_impl(st, headers, body, None).await
 }
 
 async fn handle_esam_with_path(
     State(st): State<Arc<AppState>>,
     Path(channel_name): Path<String>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    handle_esam_impl(st, addr, headers, body, Some(channel_name)).await
+    handle_esam_impl(st, headers, body, Some(channel_name)).await
 }
 
 async fn handle_esam_impl(
     st: Arc<AppState>,
-    addr: SocketAddr,
     headers: HeaderMap,
     body: String,
     path_channel: Option<String>,
 ) -> impl IntoResponse {
     let start = Instant::now();
-    let client_info = ClientInfo::from_headers_and_addr(&headers, Some(addr));
+    let client_info = ClientInfo::from_headers_and_addr(&headers, None);
 
     let facts = match extract_facts(&body) {
         Ok(v) => v,
@@ -277,7 +338,7 @@ async fn handle_esam_impl(
     .ok()
     .flatten();
 
-    let Some((channel_id, tz)) = ch else {
+    let Some((channel_id, _tz)) = ch else {
         return (StatusCode::NOT_FOUND, "channel not found or disabled".to_string()).into_response();
     };
 
