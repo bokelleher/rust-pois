@@ -1,9 +1,9 @@
 <!doctype html>
 <!--
   admin.html - POIS Admin Panel
-  Version: 3.0.1
+  Version: 3.0.8
   Last updated: 2024-11-14
-  Changes: Added txcue logo, removed bearer token toolbar, full navigation with logout
+  Changes: Fixed JSON prettification (moved parsing outside template string)
 -->
 <html lang="en">
 <head>
@@ -339,8 +339,25 @@
             <div class="rules-list">
               ${rules.map(rule => {
                 const isEditing = editingId === rule.id;
+                
+                // Prettify JSON outside the template
+                let prettyMatch = '{}';
+                let prettyParams = '{}';
+                try {
+                  const matchParsed = typeof rule.match_json === 'string' ? JSON.parse(rule.match_json) : rule.match_json;
+                  prettyMatch = JSON.stringify(matchParsed, null, 2);
+                } catch (e) {
+                  prettyMatch = rule.match_json || '{}';
+                }
+                try {
+                  const paramsParsed = typeof rule.params_json === 'string' ? JSON.parse(rule.params_json) : rule.params_json;
+                  prettyParams = JSON.stringify(paramsParsed, null, 2);
+                } catch (e) {
+                  prettyParams = rule.params_json || '{}';
+                }
+                
                 return html`
-                  <div class="rule-item" key=${rule.id}>
+                  <div class="panel" key=${rule.id} style="padding: 20px; margin-bottom: 16px;">
                     ${isEditing ? html`
                       <div class="rule-edit-form">
                         <div class="form-row">
@@ -365,10 +382,9 @@
                               value=${draft.action} 
                               onChange=${e => setDraft({...draft, action: e.target.value})}
                             >
-                              <option value="noop">No Operation</option>
-                              <option value="inject_segdesc">Inject Segmentation Descriptor</option>
-                              <option value="replace_pts">Replace PTS</option>
-                              <option value="filter">Filter</option>
+                              <option value="noop">noop (passthrough)</option>
+                              <option value="replace">replace</option>
+                              <option value="delete">delete</option>
                             </select>
                           </div>
                         </div>
@@ -399,20 +415,38 @@
                       </div>
                     ` : html`
                       <div class="rule-display">
-                        <div class="rule-header">
-                          <div class="rule-info">
-                            <div class="rule-name">${rule.name}</div>
-                            <div class="rule-meta">
-                              Priority: ${rule.priority} | Action: ${rule.action} | 
-                              ${rule.enabled !== 0 ? html`<span class="badge badge-success">Enabled</span>` : html`<span class="badge badge-muted">Disabled</span>`}
-                            </div>
-                          </div>
-                          <div class="rule-actions">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
+                          <h3 style="font-size: 18px; font-weight: 600; color: var(--text-primary); margin: 0;">${rule.name}</h3>
+                          <div style="display: flex; gap: 8px;">
                             <button class="btn btn-small" onClick=${() => toggleRule(rule)}>
                               ${rule.enabled !== 0 ? 'Disable' : 'Enable'}
                             </button>
                             <button class="btn btn-small" onClick=${() => startEdit(rule)}>Edit</button>
                             <button class="btn btn-small text-error" onClick=${() => deleteRule(rule.id)}>Delete</button>
+                          </div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px;">
+                          <div>
+                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; letter-spacing: 0.5px;">Priority</div>
+                            <div style="color: var(--text-primary); font-size: 14px;">${rule.priority}</div>
+                          </div>
+                          <div>
+                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; letter-spacing: 0.5px;">Action</div>
+                            <span style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; ${
+                              rule.action === 'noop' ? 'background: rgba(139, 92, 246, 0.2); color: #c4b5fd;' :
+                              rule.action === 'delete' ? 'background: rgba(239, 68, 68, 0.2); color: #fca5a5;' :
+                              'background: rgba(16, 185, 129, 0.2); color: #6ee7b7;'
+                            }">${rule.action}</span>
+                          </div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                          <div>
+                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; letter-spacing: 0.5px;">Match JSON</div>
+                            <pre style="background: rgba(0, 0, 0, 0.3); padding: 12px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 12px; color: var(--text-primary); margin: 0; border: 1px solid rgba(139, 92, 246, 0.2);">${prettyMatch}</pre>
+                          </div>
+                          <div>
+                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; letter-spacing: 0.5px;">Params JSON</div>
+                            <pre style="background: rgba(0, 0, 0, 0.3); padding: 12px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 12px; color: var(--text-primary); margin: 0; border: 1px solid rgba(139, 92, 246, 0.2);">${prettyParams}</pre>
                           </div>
                         </div>
                       </div>
