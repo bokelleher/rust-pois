@@ -1,0 +1,524 @@
+<!-- 
+  POIS Live Monitor - v3.1.0
+  Real-time ESAM signal monitoring with WebSocket connection
+  File: static/monitor.html
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>POIS Live Monitor</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <!-- CRITICAL: Load app.js FIRST to define POIS_TOKEN -->
+  <script src="/static/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a href="/"><span class="logo-text">POIS</span></a>
+      <a href="/static/monitor.html" class="brand-sub">Live Monitor</a>
+    </div>
+    <nav class="nav">
+      <a href="/static/admin.html">Channels & Rules</a>
+      <a href="/static/tools.html">SCTE-35 Builder</a>
+      <a href="/static/events.html">Event Monitor</a>
+      <a href="/static/monitor.html" class="active">Live Monitor</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="right">
+      <span id="tokenDisplay">token: unset</span>
+      <button class="btn" id="logoutBtn">Logout</button>
+    </div>
+  </header>
+
+  <main class="content events-max-width">
+    <div class="flex justify-between items-center mb-6">
+      <h1>Live ESAM Signal Monitor</h1>
+      <div class="flex gap-2 items-center">
+        <div class="connection-status" id="connectionStatus">
+          <span class="status-indicator" id="statusIndicator"></span>
+          <span id="statusText">Disconnected</span>
+        </div>
+        <button class="btn btn-primary" id="connectBtn">Connect</button>
+        <button class="btn" id="clearBtn">Clear</button>
+      </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+      <div class="stat-card">
+        <div class="stat-number" id="totalSignals">0</div>
+        <div class="stat-label">Total Signals</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="signalsPerMin">0</div>
+        <div class="stat-label">Signals/Min</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="activeChannels">0</div>
+        <div class="stat-label">Active Channels</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="uptime">00:00</div>
+        <div class="stat-label">Connection Uptime</div>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="panel mb-4">
+      <div class="card-header">
+        <div class="card-title">Filters</div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="filterChannel">Channel</label>
+          <select id="filterChannel">
+            <option value="">All Channels</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="filterCommand">Command Type</label>
+          <select id="filterCommand">
+            <option value="">All Types</option>
+            <option value="time_signal">Time Signal</option>
+            <option value="splice_insert">Splice Insert</option>
+            <option value="splice_null">Splice Null</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="autoScroll" checked>
+            Auto-scroll to new signals
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Signal Feed -->
+    <div class="panel">
+      <div class="card-header">
+        <div class="card-title">Live Signal Feed</div>
+        <div class="text-sm text-muted">Showing latest 100 signals</div>
+      </div>
+      <div id="signalFeed" class="signal-feed">
+        <div class="text-center p-8 text-muted">
+          Click "Connect" to start monitoring signals
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <style>
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 8px;
+    }
+
+    .status-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--text-secondary);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .status-indicator.connected {
+      background: var(--success);
+    }
+
+    .status-indicator.connecting {
+      background: var(--warning);
+    }
+
+    .status-indicator.error {
+      background: var(--error);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .signal-feed {
+      max-height: 600px;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    .signal-entry {
+      padding: 12px;
+      margin-bottom: 8px;
+      background: rgba(255,255,255,0.03);
+      border-left: 3px solid var(--primary);
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .signal-entry.time-signal {
+      border-left-color: var(--primary);
+    }
+
+    .signal-entry.splice-insert {
+      border-left-color: var(--warning);
+    }
+
+    .signal-entry.splice-null {
+      border-left-color: var(--text-secondary);
+    }
+
+    .signal-timestamp {
+      color: var(--text-secondary);
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+
+    .signal-channel {
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    .signal-command {
+      color: var(--warning);
+    }
+
+    .signal-details {
+      margin-top: 4px;
+      padding: 8px;
+      background: rgba(0,0,0,0.3);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+  </style>
+
+  <script>
+    // Wait for POIS_TOKEN to be available from header.js
+    class LiveMonitor {
+      constructor() {
+        this.ws = null;
+        this.isConnected = false;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+        this.reconnectDelay = 3000;
+        this.signals = [];
+        this.maxSignals = 100;
+        this.connectionStartTime = null;
+        this.uptimeInterval = null;
+        this.rateCalcInterval = null;
+        this.signalTimestamps = [];
+        this.channels = new Set();
+        this.initAttempts = 0;
+        this.maxInitAttempts = 50; // 5 seconds max
+        
+        this.init();
+      }
+
+      init() {
+        // Wait for POIS_TOKEN to be defined with timeout protection
+        if (typeof POIS_TOKEN === 'undefined') {
+          this.initAttempts++;
+          if (this.initAttempts >= this.maxInitAttempts) {
+            console.error('POIS_TOKEN never loaded - check that app.js is loading correctly');
+            this.updateStatus('error', 'Authentication system not loaded');
+            return;
+          }
+          setTimeout(() => this.init(), 100);
+          return;
+        }
+
+        console.log('POIS_TOKEN loaded successfully');
+        this.setupEventListeners();
+        this.loadChannels();
+      }
+
+      setupEventListeners() {
+        document.getElementById('connectBtn').addEventListener('click', () => {
+          if (this.isConnected) {
+            this.disconnect();
+          } else {
+            this.connect();
+          }
+        });
+
+        document.getElementById('clearBtn').addEventListener('click', () => {
+          this.clearSignals();
+        });
+
+        document.getElementById('filterChannel').addEventListener('change', () => {
+          this.applyFilters();
+        });
+
+        document.getElementById('filterCommand').addEventListener('change', () => {
+          this.applyFilters();
+        });
+
+        // Logout button
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) {
+          logoutBtn.addEventListener('click', () => {
+            if (confirm('Are you sure you want to logout?')) {
+              POIS_TOKEN.set('');
+              window.location.href = '/';
+            }
+          });
+        }
+      }
+
+      async loadChannels() {
+        try {
+          const token = POIS_TOKEN.get();
+          if (!token) {
+            console.warn('No authentication token available');
+            return;
+          }
+
+          const response = await fetch('/api/channels', {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+
+          if (response.ok) {
+            const channels = await response.json();
+            const select = document.getElementById('filterChannel');
+            select.innerHTML = '<option value="">All Channels</option>';
+            channels.forEach(ch => {
+              const option = document.createElement('option');
+              option.value = ch.id;
+              option.textContent = ch.name;
+              select.appendChild(option);
+            });
+          }
+        } catch (err) {
+          console.error('Failed to load channels:', err);
+        }
+      }
+
+      connect() {
+        const token = POIS_TOKEN.get();
+        if (!token) {
+          this.updateStatus('error', 'No authentication token');
+          alert('Please set your authentication token first');
+          return;
+        }
+
+        this.updateStatus('connecting', 'Connecting...');
+        
+        // Determine WebSocket protocol based on page protocol
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}/ws/monitor?token=${encodeURIComponent(token)}`;
+        
+        try {
+          this.ws = new WebSocket(wsUrl);
+          
+          this.ws.onopen = () => {
+            this.isConnected = true;
+            this.reconnectAttempts = 0;
+            this.connectionStartTime = Date.now();
+            this.updateStatus('connected', 'Connected');
+            document.getElementById('connectBtn').textContent = 'Disconnect';
+            document.getElementById('connectBtn').classList.remove('btn-primary');
+            document.getElementById('connectBtn').classList.add('btn-error');
+            
+            this.startUptimeCounter();
+            this.startRateCalculator();
+          };
+          
+          this.ws.onmessage = (event) => {
+            try {
+              const signal = JSON.parse(event.data);
+              this.handleSignal(signal);
+            } catch (err) {
+              console.error('Failed to parse signal:', err);
+            }
+          };
+          
+          this.ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            this.updateStatus('error', 'Connection error');
+          };
+          
+          this.ws.onclose = () => {
+            this.isConnected = false;
+            this.stopCounters();
+            this.updateStatus('error', 'Disconnected');
+            document.getElementById('connectBtn').textContent = 'Connect';
+            document.getElementById('connectBtn').classList.remove('btn-error');
+            document.getElementById('connectBtn').classList.add('btn-primary');
+            
+            // Attempt reconnect if not manually disconnected
+            if (this.reconnectAttempts < this.maxReconnectAttempts && this.ws !== null) {
+              this.reconnectAttempts++;
+              setTimeout(() => this.connect(), this.reconnectDelay);
+            }
+          };
+        } catch (err) {
+          console.error('Failed to create WebSocket:', err);
+          this.updateStatus('error', 'Connection failed');
+        }
+      }
+
+      disconnect() {
+        if (this.ws) {
+          this.ws.close();
+          this.ws = null;
+          this.reconnectAttempts = this.maxReconnectAttempts; // Prevent auto-reconnect
+        }
+      }
+
+      handleSignal(signal) {
+        // Add to signals array
+        this.signals.unshift(signal);
+        if (this.signals.length > this.maxSignals) {
+          this.signals.pop();
+        }
+
+        // Track for rate calculation
+        this.signalTimestamps.push(Date.now());
+        
+        // Track channels
+        if (signal.channel) {
+          this.channels.add(signal.channel);
+        }
+
+        // Update statistics
+        this.updateStatistics();
+
+        // Add to display
+        this.addSignalToFeed(signal);
+      }
+
+      addSignalToFeed(signal) {
+        const feed = document.getElementById('signalFeed');
+        
+        // Clear placeholder text if present
+        if (feed.children.length === 1 && feed.firstChild.classList.contains('text-center')) {
+          feed.innerHTML = '';
+        }
+
+        const entry = document.createElement('div');
+        entry.className = 'signal-entry';
+        
+        // Determine signal type for styling
+        if (signal.command_type) {
+          entry.classList.add(signal.command_type.replace('_', '-'));
+        }
+
+        const timestamp = new Date(signal.timestamp || Date.now()).toLocaleTimeString();
+        
+        entry.innerHTML = `
+          <div class="signal-timestamp">${timestamp}</div>
+          <div>
+            <span class="signal-channel">${signal.channel || 'unknown'}</span> • 
+            <span class="signal-command">${signal.command_type || 'unknown'}</span>
+            ${signal.event_id ? ` • Event ID: ${signal.event_id}` : ''}
+          </div>
+          ${signal.duration ? `<div>Duration: ${signal.duration}s</div>` : ''}
+          ${signal.segmentation_type ? `<div>Segmentation: ${signal.segmentation_type}</div>` : ''}
+          ${signal.details ? `<div class="signal-details">${JSON.stringify(signal.details, null, 2)}</div>` : ''}
+        `;
+
+        feed.insertBefore(entry, feed.firstChild);
+
+        // Auto-scroll if enabled
+        if (document.getElementById('autoScroll').checked) {
+          entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        // Limit displayed signals
+        while (feed.children.length > this.maxSignals) {
+          feed.removeChild(feed.lastChild);
+        }
+      }
+
+      updateStatistics() {
+        document.getElementById('totalSignals').textContent = this.signals.length;
+        document.getElementById('activeChannels').textContent = this.channels.size;
+      }
+
+      startUptimeCounter() {
+        this.uptimeInterval = setInterval(() => {
+          if (this.connectionStartTime) {
+            const uptime = Math.floor((Date.now() - this.connectionStartTime) / 1000);
+            const minutes = Math.floor(uptime / 60);
+            const seconds = uptime % 60;
+            document.getElementById('uptime').textContent = 
+              `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+          }
+        }, 1000);
+      }
+
+      startRateCalculator() {
+        this.rateCalcInterval = setInterval(() => {
+          // Calculate signals per minute based on last 60 seconds
+          const oneMinuteAgo = Date.now() - 60000;
+          this.signalTimestamps = this.signalTimestamps.filter(ts => ts > oneMinuteAgo);
+          document.getElementById('signalsPerMin').textContent = this.signalTimestamps.length;
+        }, 5000);
+      }
+
+      stopCounters() {
+        if (this.uptimeInterval) {
+          clearInterval(this.uptimeInterval);
+          this.uptimeInterval = null;
+        }
+        if (this.rateCalcInterval) {
+          clearInterval(this.rateCalcInterval);
+          this.rateCalcInterval = null;
+        }
+      }
+
+      clearSignals() {
+        this.signals = [];
+        this.signalTimestamps = [];
+        this.channels.clear();
+        const feed = document.getElementById('signalFeed');
+        feed.innerHTML = '<div class="text-center p-8 text-muted">Signal history cleared</div>';
+        this.updateStatistics();
+      }
+
+      applyFilters() {
+        const channelFilter = document.getElementById('filterChannel').value;
+        const commandFilter = document.getElementById('filterCommand').value;
+
+        const feed = document.getElementById('signalFeed');
+        const entries = feed.querySelectorAll('.signal-entry');
+
+        entries.forEach(entry => {
+          let show = true;
+          
+          if (channelFilter && !entry.textContent.includes(channelFilter)) {
+            show = false;
+          }
+          
+          if (commandFilter && !entry.classList.contains(commandFilter.replace('_', '-'))) {
+            show = false;
+          }
+
+          entry.style.display = show ? 'block' : 'none';
+        });
+      }
+
+      updateStatus(status, text) {
+        const indicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        
+        indicator.className = 'status-indicator ' + status;
+        statusText.textContent = text;
+      }
+    }
+
+    // Initialize when DOM is ready
+    document.addEventListener('DOMContentLoaded', () => {
+      window.liveMonitor = new LiveMonitor();
+    });
+  </script>
+</body>
+</html>

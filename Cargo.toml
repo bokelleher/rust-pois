@@ -5,9 +5,10 @@ edition = "2021"
 
 [dependencies]
 # web framework + runtime
-axum = "0.7.9"
+axum = { version = "0.8", features = ["ws", "macros"] }
 axum-server = { version = "0.6.0", features = ["tls-rustls"] }
 axum-extra = "0.9"
+futures = "0.3"
 tokio = { version = "1.40.0", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 
@@ -27,7 +28,13 @@ sqlx = { version = "0.7.4", features = ["runtime-tokio", "sqlite", "macros", "mi
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["fmt", "env-filter"] }
 
+# JWT authentication
+argon2 = { version = "0.5", features = ["std"] }
+sha2 = "0.10"
+hmac = "0.12"
+rand = "0.8"
+
 # misc utils
 uuid = { version = "1.10.0", features = ["v4", "serde"] }
-time = { version = "0.3.36", features = ["macros", "serde"] }
+time = { version = "0.3.36", features = ["macros", "serde", "formatting", "parsing"] }
 anyhow = "1.0.86"
