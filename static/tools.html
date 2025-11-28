@@ -2,73 +2,818 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>POIS Tools — SCTE-35 Builder</title>
+  <title>POIS Tools — SCTE-35 Toolkit</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/app.js" defer></script>
+  <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
+  <link rel="stylesheet" href="/static/app.css?v=4.1.0">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <a href="/">
-        <img src="https://esni.techexlab.com:3000/static/media/techex-logo.74b1230112edda6b3915.png" 
-             alt="TechExLab" class="logo">
-      </a>
-    </div>
-    <nav class="nav">
-      <a href="/static/admin.html">Channels & Rules</a>
-      <a href="/static/tools.html" class="active">SCTE-35 Builder</a>
-      <a href="/static/events.html">Event Monitor</a>
-    </nav>
-    <div class="spacer"></div>
-    <div class="right">
-      <input type="text" id="headerTokenInput" placeholder="Bearer token" 
-             style="width: 200px; height: 32px; padding: 6px 12px; font-size: 13px;"
-             oninput="localStorage.setItem('pois_token', this.value); document.getElementById('tokenDisplay').textContent = this.value ? '✓ set' : '⚠ not set'">
-      <span id="tokenDisplay" style="margin-left: 8px;">⚠ not set</span>
-      <script>
-        // Load token on page load
-        document.addEventListener('DOMContentLoaded', function() {
-          const token = localStorage.getItem('pois_token') || '';
-          document.getElementById('headerTokenInput').value = token;
-          document.getElementById('tokenDisplay').textContent = token ? '✓ set' : '⚠ not set';
-        });
-      </script>
-    </div>
-  </header>
+  <script src="/static/header.js?v=4.0.0"></script>
 
   <main class="content content-max-width">
-    <h1 class="grad-text">SCTE-35 Builder</h1>
+    <h1 class="grad-text">SCTE-35 Toolkit</h1>
     
-    <div class="panel">
-      <div class="card-header">
-        <div class="card-title">Build Configuration</div>
-      </div>
-      <div class="form-row">
+    <!-- Tab Navigation -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="builder">Builder</button>
+      <button class="tab-btn" data-tab="decoder">Decoder</button>
+      <button class="tab-btn" data-tab="validator">Validator</button>
+      <button class="tab-btn" data-tab="sender">Quick Test</button>
+    </div>
+
+    <!-- TAB: Builder (formerly Advanced Builder) -->
+    <div id="tab-builder" class="tab-content active">
+      <div class="panel">
+        <div class="card-header">
+          <div class="card-title">SCTE-35 Builder</div>
+          <div class="card-subtitle">Build signals with custom segmentation descriptors</div>
+        </div>
+        
+        <div class="form-row">
+          <div class="form-group">
+            <label for="cmd">Command Type</label>
+            <select id="cmd">
+              <option value="time_signal">Time Signal (Type 6)</option>
+              <option value="splice_insert_out">Splice Insert (Type 5)</option>
+            </select>
+          </div>
+          <div class="form-group" style="max-width: 200px;">
+            <label for="dur">Duration (s)</label>
+            <input id="dur" type="number" min="0" step="1" value="60">
+          </div>
+        </div>
+        
         <div class="form-group">
-          <label for="cmd">Command</label>
-          <select id="cmd">
-            <option value="time_signal_immediate">Time Signal (immediate)</option>
-            <option value="splice_insert_out">Splice Insert OUT (auto-return)</option>
+          <label for="segType">Segmentation Type</label>
+          <select id="segType">
+            <option value="">None</option>
+            <option value="0x10">0x10 - Program Start</option>
+            <option value="0x11">0x11 - Program End</option>
+            <option value="0x12">0x12 - Program Early Termination</option>
+            <option value="0x13">0x13 - Program Breakaway</option>
+            <option value="0x14">0x14 - Program Resumption</option>
+            <option value="0x15">0x15 - Program Runover Planned</option>
+            <option value="0x16">0x16 - Program Runover Unplanned</option>
+            <option value="0x17">0x17 - Program Overlap Start</option>
+            <option value="0x18">0x18 - Program Blackout Override</option>
+            <option value="0x20">0x20 - Chapter Start</option>
+            <option value="0x21">0x21 - Chapter End</option>
+            <option value="0x22">0x22 - Break Start</option>
+            <option value="0x23">0x23 - Break End</option>
+            <option value="0x30">0x30 - Provider Advertisement Start</option>
+            <option value="0x31">0x31 - Provider Advertisement End</option>
+            <option value="0x32">0x32 - Distributor Advertisement Start</option>
+            <option value="0x33">0x33 - Distributor Advertisement End</option>
+            <option value="0x34">0x34 - Provider Placement Opportunity Start</option>
+            <option value="0x35">0x35 - Provider Placement Opportunity End</option>
+            <option value="0x36">0x36 - Distributor Placement Opportunity Start</option>
+            <option value="0x37">0x37 - Distributor Placement Opportunity End</option>
+            <option value="0x38">0x38 - Provider Overlay Placement Opportunity Start</option>
+            <option value="0x39">0x39 - Provider Overlay Placement Opportunity End</option>
+            <option value="0x3A">0x3A - Distributor Overlay Placement Opportunity Start</option>
+            <option value="0x3B">0x3B - Distributor Overlay Placement Opportunity End</option>
+            <option value="0x40">0x40 - Unscheduled Event Start</option>
+            <option value="0x41">0x41 - Unscheduled Event End</option>
+            <option value="0x50">0x50 - Network Start</option>
+            <option value="0x51">0x51 - Network End</option>
           </select>
         </div>
-        <div class="form-group" style="max-width: 200px;">
-          <label for="dur">Duration (s)</label>
-          <input id="dur" type="number" min="0" step="1" value="60">
+        
+        <div class="form-group">
+          <label for="upidType">UPID Type</label>
+          <select id="upidType">
+            <option value="">None</option>
+            <option value="0x01">0x01 - User Defined (Deprecated)</option>
+            <option value="0x02">0x02 - ISCI</option>
+            <option value="0x03">0x03 - Ad-ID</option>
+            <option value="0x05">0x05 - ISAN (ISO 15706)</option>
+            <option value="0x06">0x06 - ISAN (ISO 15706-2)</option>
+            <option value="0x07">0x07 - TID (Tribune ID)</option>
+            <option value="0x08">0x08 - TI (Turner ID)</option>
+            <option value="0x09">0x09 - ADI (CableLabs)</option>
+            <option value="0x0A">0x0A - EIDR</option>
+            <option value="0x0B">0x0B - ATSC Content Identifier</option>
+            <option value="0x0C">0x0C - MPU (Managed Private UPID)</option>
+            <option value="0x0D">0x0D - MID (Multiple UPIDs)</option>
+            <option value="0x0E">0x0E - ADS Information</option>
+            <option value="0x0F">0x0F - URI</option>
+            <option value="0x10">0x10 - UUID</option>
+          </select>
         </div>
+        
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="upid">UPID Value</label>
+          <input id="upid" type="text" placeholder="e.g., ABCD1234">
+        </div>
+        
         <button id="buildBtn" class="btn-primary">Build SCTE-35</button>
-      </div>
-      
-      <div class="form-group mt-4">
-        <label for="b64">Generated Base64</label>
-        <div class="flex gap-2">
-          <input id="b64" type="text" readonly style="flex: 1; font-family: monospace;">
-          <button class="btn" id="copyB64">Copy</button>
+        
+        <div class="form-group" style="margin-top: 10px;">
+          <label for="b64">Generated Base64</label>
+          <div class="flex gap-2">
+            <input id="b64" type="text" readonly style="flex: 1; font-family: monospace;">
+            <button class="btn" id="copyB64">Copy</button>
+          </div>
         </div>
+        
+        <div id="buildStatus" class="text-sm mt-2 text-muted"></div>
       </div>
-      
-      <div id="status" style="margin-top: 16px;"></div>
     </div>
+
+    <!-- TAB: Decoder -->
+    <div id="tab-decoder" class="tab-content">
+      <div class="panel">
+        <div class="card-header">
+          <div class="card-title">SCTE-35 Decoder</div>
+          <div class="card-subtitle">Decode Base64 to human-readable format</div>
+        </div>
+        
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="decodeInput">SCTE-35 Base64</label>
+          <textarea id="decodeInput" rows="3" placeholder="Paste Base64 SCTE-35 string here..."></textarea>
+        </div>
+        
+        <button id="decodeBtn" class="btn-primary" style="margin-bottom: 24px;">Decode</button>
+        
+        <div id="decodeOutput" style="display: none;">
+          <h3 style="margin-top: 0;">Decoded Information</h3>
+          <div class="decode-grid">
+            <div class="decode-section">
+              <h4>Header</h4>
+              <table class="decode-table">
+                <tr><td>Table ID</td><td id="dec-table-id">-</td></tr>
+                <tr><td>Protocol Version</td><td id="dec-protocol">-</td></tr>
+                <tr><td>Encrypted</td><td id="dec-encrypted">-</td></tr>
+                <tr><td>PTS Adjustment</td><td id="dec-pts-adj">-</td></tr>
+              </table>
+            </div>
+            
+            <div class="decode-section">
+              <h4>Command</h4>
+              <table class="decode-table">
+                <tr><td>Type</td><td id="dec-cmd-type">-</td></tr>
+                <tr><td>Type ID</td><td id="dec-cmd-id">-</td></tr>
+              </table>
+              <!-- Fixed CSS to prevent overlap -->
+              <div id="dec-cmd-info" style="margin-top: 20px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.2); clear: both; position: relative; overflow: hidden;"></div>
+            </div>
+          </div>
+          
+          <div class="decode-section" id="dec-descriptors-section" style="margin-top: 10px;">
+            <h4>Segmentation Descriptors</h4>
+            <div id="dec-descriptors">
+              <span style="color: #888;">No descriptors found</span>
+            </div>
+          </div>
+          
+          <div class="decode-section" style="margin-top: 10px;">
+            <h4>Raw Data</h4>
+            <div id="dec-hex" class="hex-output"></div>
+          </div>
+        </div>
+        
+        <div id="decodeStatus" class="text-sm mt-2 text-muted"></div>
+      </div>
+    </div>
+
+    <!-- TAB: Validator -->
+    <div id="tab-validator" class="tab-content">
+      <div class="panel">
+        <div class="card-header">
+          <div class="card-title">SCTE-35 Validator</div>
+          <div class="card-subtitle">Validate SCTE-35 Base64 structure and CRC</div>
+        </div>
+        
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="validateInput">SCTE-35 Base64</label>
+          <textarea id="validateInput" rows="3" placeholder="Paste Base64 SCTE-35 string here..."></textarea>
+        </div>
+        
+        <button id="validateBtn" class="btn-primary">Validate</button>
+        
+        <div id="validateResult" style="margin-top: 10px; display: none;">
+          <div class="validation-result">
+            <div id="validateIcon" class="validation-icon"></div>
+            <div id="validateMessage" class="validation-message"></div>
+          </div>
+        </div>
+        
+        <div id="validateStatus" class="text-sm mt-2 text-muted"></div>
+      </div>
+    </div>
+
+    <!-- TAB: Quick Test Sender -->
+    <div id="tab-sender" class="tab-content">
+      <div class="panel">
+        <div class="card-header">
+          <div class="card-title">Quick Test Sender</div>
+          <div class="card-subtitle">Send test signals directly to your channels</div>
+        </div>
+        
+        <div class="form-group">
+          <label for="testChannel">Target Channel</label>
+          <select id="testChannel">
+            <option value="">Loading channels...</option>
+          </select>
+        </div>
+        
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="testSignal">SCTE-35 Base64</label>
+          <textarea id="testSignal" rows="3" placeholder="Paste or build SCTE-35 signal to send..."></textarea>
+        </div>
+        
+        <div class="flex gap-2">
+          <button id="testSendBtn" class="btn-primary">Send Test Signal</button>
+          <button id="useBuilderBtn" class="btn">Use Last Built Signal</button>
+        </div>
+        
+        <div id="testResult" style="margin-top: 10px; display: none;">
+          <div class="test-result">
+            <div id="testIcon" class="validation-icon"></div>
+            <div id="testMessage" class="validation-message"></div>
+          </div>
+        </div>
+        
+        <div id="testStatus" class="text-sm mt-2 text-muted"></div>
+      </div>
+    </div>
+
+    <p class="small text-muted" style="margin-top: 10px;">
+      API Endpoints: 
+      <code>POST /api/tools/scte35/build</code> |
+      <code>POST /api/tools/scte35/decode</code> |
+      <code>POST /api/tools/scte35/validate</code> |
+      <code>POST /api/tools/scte35/test-send</code>
+    </p>
   </main>
+
+  <style>
+    /* Tab Styles */
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+      border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+      padding-bottom: 0;
+    }
+    
+    .tab-btn {
+      background: none;
+      border: none;
+      padding: 12px 24px;
+      color: rgba(255, 255, 255, 0.7);
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      transition: all 0.2s;
+    }
+    
+    .tab-btn:hover {
+      color: rgba(255, 255, 255, 0.9);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+    
+    .tab-content {
+      display: none;
+    }
+    
+    .tab-content.active {
+      display: block;
+      animation: fadeIn 0.3s;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    /* Decoder Styles */
+    .decode-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+    }
+    
+    .decode-section {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    
+    .decode-section h4 {
+      margin: 0 0 12px 0;
+      color: var(--primary);
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    
+    .decode-table {
+      width: 100%;
+      font-size: 13px;
+    }
+    
+    .decode-table td {
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    .decode-table td:first-child {
+      color: rgba(255, 255, 255, 0.6);
+      width: 50%;
+    }
+    
+    .decode-table td:last-child {
+      color: rgba(255, 255, 255, 0.9);
+      font-family: monospace;
+      text-align: right;
+    }
+    
+    .hex-output {
+      font-family: monospace;
+      font-size: 12px;
+      line-height: 1.8;
+      word-break: break-all;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 12px;
+      border-radius: 4px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    
+    /* Validation Styles */
+    .validation-result {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 20px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 2px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .validation-icon {
+      font-size: 48px;
+      line-height: 1;
+    }
+    
+    .validation-message {
+      flex: 1;
+      font-size: 16px;
+      line-height: 1.5;
+    }
+    
+    .validation-result.success {
+      border-color: var(--success);
+      background: rgba(0, 255, 0, 0.05);
+    }
+    
+    .validation-result.error {
+      border-color: var(--error);
+      background: rgba(255, 0, 0, 0.05);
+    }
+    
+    .test-result {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 20px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 2px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .test-result.success {
+      border-color: var(--success);
+      background: rgba(0, 255, 0, 0.05);
+    }
+    
+    .test-result.error {
+      border-color: var(--error);
+      background: rgba(255, 0, 0, 0.05);
+    }
+    
+    /* Tighter spacing for Builder stacked fields */
+    #tab-builder .form-group + .form-group {
+      margin-top: 16px;
+    }
+  </style>
+
+  <script>
+    // State management
+    let lastBuiltSignal = '';
+    let userChannels = [];
+    
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetTab = btn.dataset.tab;
+        
+        // Update buttons
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        
+        // Update content
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById(`tab-${targetTab}`).classList.add('active');
+      });
+    });
+    
+    // Helper functions
+    function getToken() {
+      return localStorage.getItem('pois_token') || '';
+    }
+    
+    function setStatus(elementId, message, type = 'muted') {
+      const el = document.getElementById(elementId);
+      el.textContent = message;
+      el.className = `text-sm mt-2 text-${type}`;
+    }
+
+    // Duration field management
+    function updateDurationState(cmdSelect, durInput) {
+      const isTimeSignal = cmdSelect.value === 'time_signal_immediate' || cmdSelect.value === 'time_signal';
+      durInput.disabled = isTimeSignal;
+      durInput.style.opacity = isTimeSignal ? '0.5' : '1';
+      durInput.style.cursor = isTimeSignal ? 'not-allowed' : 'text';
+    }
+
+    // UPID field management
+    function updateUpidState() {
+      const upidType = document.getElementById('upidType');
+      const upid = document.getElementById('upid');
+      const hasUpidType = upidType.value !== '';
+      upid.disabled = !hasUpidType;
+      upid.style.opacity = hasUpidType ? '1' : '0.5';
+      upid.style.cursor = hasUpidType ? 'text' : 'not-allowed';
+    }
+    
+    // ========================================================================
+    // BUILDER
+    // ========================================================================
+    
+    const cmdSelect = document.getElementById('cmd');
+    const durInput = document.getElementById('dur');
+    const upidType = document.getElementById('upidType');
+    
+    cmdSelect.addEventListener('change', () => updateDurationState(cmdSelect, durInput));
+    updateDurationState(cmdSelect, durInput);
+    
+    upidType.addEventListener('change', updateUpidState);
+    updateUpidState();
+
+    document.getElementById('buildBtn').addEventListener('click', async () => {
+      const cmd = document.getElementById('cmd').value;
+      const dur = parseInt(document.getElementById('dur').value, 10);
+      const segType = document.getElementById('segType').value;
+      const upidTypeVal = document.getElementById('upidType').value;
+      const upid = document.getElementById('upid').value.trim();
+      const token = getToken();
+      
+      if (!token) {
+        alert('Please log in first');
+        return;
+      }
+      
+      setStatus('buildStatus', 'Building SCTE-35...', 'muted');
+      
+      const payload = {
+        command: cmd,
+        duration_seconds: cmd === 'splice_insert_out' ? dur : undefined,
+        segmentation_type_id: segType || undefined,
+        segmentation_upid_type: upidTypeVal || undefined,
+        segmentation_upid: upid || undefined
+      };
+      
+      try {
+        const res = await fetch('/api/tools/scte35/build', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        });
+        
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status}: ${text}`);
+        }
+        
+        const data = await res.json();
+        document.getElementById('b64').value = data.base64 || '';
+        lastBuiltSignal = data.base64 || '';
+        setStatus('buildStatus', 'SCTE-35 built successfully!', 'success');
+        
+        setTimeout(() => setStatus('buildStatus', '', 'muted'), 3000);
+      } catch (e) {
+        setStatus('buildStatus', `Error: ${e.message}`, 'error');
+      }
+    });
+    
+    document.getElementById('copyB64').addEventListener('click', () => {
+      const input = document.getElementById('b64');
+      input.select();
+      document.execCommand('copy');
+      const btn = document.getElementById('copyB64');
+      const orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      btn.className = 'btn btn-success';
+      setTimeout(() => {
+        btn.textContent = orig;
+        btn.className = 'btn';
+      }, 1500);
+    });
+    
+    // ========================================================================
+    // DECODER
+    // ========================================================================
+    
+    document.getElementById('decodeBtn').addEventListener('click', async () => {
+      const input = document.getElementById('decodeInput').value.trim();
+      const token = getToken();
+      
+      if (!input) {
+        alert('Please paste a Base64 SCTE-35 string');
+        return;
+      }
+      
+      if (!token) {
+        alert('Please log in first');
+        return;
+      }
+      
+      setStatus('decodeStatus', 'Decoding...', 'muted');
+      
+      try {
+        const res = await fetch('/api/tools/scte35/decode', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ base64: input })
+        });
+        
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
+        const data = await res.json();
+        
+        if (!data.valid) {
+          setStatus('decodeStatus', `Error: ${data.error}`, 'error');
+          document.getElementById('decodeOutput').style.display = 'none';
+          return;
+        }
+        
+        const d = data.decoded;
+        document.getElementById('dec-table-id').textContent = d.table_id;
+        document.getElementById('dec-protocol').textContent = d.protocol_version;
+        document.getElementById('dec-encrypted').textContent = d.encrypted_packet ? 'Yes' : 'No';
+        document.getElementById('dec-pts-adj').textContent = d.pts_adjustment;
+        document.getElementById('dec-cmd-type').textContent = d.command_type;
+        document.getElementById('dec-cmd-id').textContent = `0x${d.command_type_id.toString(16).toUpperCase().padStart(2, '0')}`;
+        
+        // Command info
+        const cmdInfoDiv = document.getElementById('dec-cmd-info');
+        cmdInfoDiv.innerHTML = `<pre style="margin:0; font-size:12px;">${JSON.stringify(d.command_info, null, 2)}</pre>`;
+        
+        // Descriptors - Clean display
+        const descDiv = document.getElementById('dec-descriptors');
+        if (d.descriptors && d.descriptors.length > 0) {
+          let descHTML = d.descriptors.map(desc => {
+            let content = `<div class="decode-section">`;
+            content += `<strong>${desc.tag_name}</strong>`;
+            
+            // Special formatting for segmentation descriptor
+            if (desc.tag === 2 && desc.data) {
+              const seg = desc.data;
+              content += '<table class="decode-table" style="margin-top:8px;">';
+              if (seg.segmentation_event_id !== undefined) {
+                content += `<tr><td>Event ID</td><td>${seg.segmentation_event_id}</td></tr>`;
+              }
+              if (seg.segmentation_type_id !== undefined) {
+                content += `<tr><td>Seg Type</td><td>${seg.segmentation_type_name || 'Unknown'}</td></tr>`;
+              }
+              if (seg.segmentation_duration_seconds !== undefined && seg.segmentation_duration_seconds !== null) {
+                content += `<tr><td>Duration</td><td>${seg.segmentation_duration_seconds}s</td></tr>`;
+              }
+              if (seg.upid_type !== undefined) {
+                content += `<tr><td>UPID Type</td><td>${seg.upid_type_name || 'Unknown'}</td></tr>`;
+              }
+              if (seg.upid_value) {
+                content += `<tr><td>UPID Value</td><td style="word-break:break-all;">${seg.upid_value}</td></tr>`;
+              }
+              if (seg.cancelled) {
+                content += `<tr><td colspan="2" style="color:var(--error);">Cancelled</td></tr>`;
+              }
+              content += '</table>';
+            } else {
+              // Other descriptors - simple display
+              content += `<div style="margin-top:8px; color: #888;">Length: ${desc.length} bytes</div>`;
+            }
+            
+            content += '</div>';
+            return content;
+          }).join('');
+          
+          descDiv.innerHTML = descHTML;
+        } else {
+          descDiv.innerHTML = '<span style="color: #888;">No descriptors found</span>';
+        }
+        
+        // Hex output
+        document.getElementById('dec-hex').textContent = d.raw_hex;
+        
+        document.getElementById('decodeOutput').style.display = 'block';
+        setStatus('decodeStatus', 'Decoded successfully!', 'success');
+        setTimeout(() => setStatus('decodeStatus', '', 'muted'), 3000);
+      } catch (e) {
+        setStatus('decodeStatus', `Error: ${e.message}`, 'error');
+        document.getElementById('decodeOutput').style.display = 'none';
+      }
+    });
+    
+    // ========================================================================
+    // VALIDATOR
+    // ========================================================================
+    
+    document.getElementById('validateBtn').addEventListener('click', async () => {
+      const input = document.getElementById('validateInput').value.trim();
+      const token = getToken();
+      
+      if (!input) {
+        alert('Please paste a Base64 SCTE-35 string');
+        return;
+      }
+      
+      if (!token) {
+        alert('Please log in first');
+        return;
+      }
+      
+      setStatus('validateStatus', 'Validating...', 'muted');
+      
+      try {
+        const res = await fetch('/api/tools/scte35/validate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ base64: input })
+        });
+        
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
+        const data = await res.json();
+        const resultDiv = document.getElementById('validateResult');
+        const iconDiv = document.getElementById('validateIcon');
+        const msgDiv = document.getElementById('validateMessage');
+        const resultContainer = resultDiv.querySelector('.validation-result');
+        
+        if (data.valid) {
+          iconDiv.textContent = '✅';
+          msgDiv.innerHTML = `<strong>Valid SCTE-35</strong><br>${data.info}`;
+          resultContainer.className = 'validation-result success';
+          setStatus('validateStatus', '', 'muted');
+        } else {
+          iconDiv.textContent = '❌';
+          msgDiv.innerHTML = `<strong>Invalid SCTE-35</strong><br>${data.error}`;
+          resultContainer.className = 'validation-result error';
+          setStatus('validateStatus', '', 'muted');
+        }
+        
+        resultDiv.style.display = 'block';
+      } catch (e) {
+        setStatus('validateStatus', `Error: ${e.message}`, 'error');
+        document.getElementById('validateResult').style.display = 'none';
+      }
+    });
+    
+    // ========================================================================
+    // QUICK TEST SENDER
+    // ========================================================================
+    
+    // Load channels on page load
+    async function loadChannels() {
+      const token = getToken();
+      if (!token) return;
+      
+      try {
+        const res = await fetch('/api/channels', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (!res.ok) return;
+        
+        const channels = await res.json();
+        userChannels = channels;
+        
+        const select = document.getElementById('testChannel');
+        select.innerHTML = channels.map(ch => 
+          `<option value="${ch.id}">${ch.name}</option>`
+        ).join('');
+        
+        if (channels.length === 0) {
+          select.innerHTML = '<option value="">No channels available</option>';
+        }
+      } catch (e) {
+        console.error('Failed to load channels:', e);
+      }
+    }
+    
+    document.getElementById('useBuilderBtn').addEventListener('click', () => {
+      if (lastBuiltSignal) {
+        document.getElementById('testSignal').value = lastBuiltSignal;
+        setStatus('testStatus', 'Loaded last built signal', 'success');
+        setTimeout(() => setStatus('testStatus', '', 'muted'), 2000);
+      } else {
+        alert('No signal built yet. Use the Builder tab first.');
+      }
+    });
+    
+    document.getElementById('testSendBtn').addEventListener('click', async () => {
+      const channelId = document.getElementById('testChannel').value;
+      const signal = document.getElementById('testSignal').value.trim();
+      const token = getToken();
+      
+      if (!channelId) {
+        alert('Please select a channel');
+        return;
+      }
+      
+      if (!signal) {
+        alert('Please provide a SCTE-35 signal');
+        return;
+      }
+      
+      if (!token) {
+        alert('Please log in first');
+        return;
+      }
+      
+      setStatus('testStatus', 'Sending test signal...', 'muted');
+      
+      try {
+        const res = await fetch('/api/tools/scte35/test-send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            channel_id: parseInt(channelId, 10),
+            base64: signal
+          })
+        });
+        
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        
+        const data = await res.json();
+        const resultDiv = document.getElementById('testResult');
+        const iconDiv = document.getElementById('testIcon');
+        const msgDiv = document.getElementById('testMessage');
+        const resultContainer = resultDiv.querySelector('.test-result');
+        
+        if (data.success) {
+          iconDiv.textContent = '✅';
+          msgDiv.innerHTML = `<strong>Success!</strong><br>${data.message}`;
+          resultContainer.className = 'test-result success';
+        } else {
+          iconDiv.textContent = '⚠️';
+          msgDiv.innerHTML = `<strong>Partial Success</strong><br>${data.message}`;
+          resultContainer.className = 'test-result success';
+        }
+        
+        resultDiv.style.display = 'block';
+        setStatus('testStatus', '', 'muted');
+      } catch (e) {
+        const resultDiv = document.getElementById('testResult');
+        const iconDiv = document.getElementById('testIcon');
+        const msgDiv = document.getElementById('testMessage');
+        const resultContainer = resultDiv.querySelector('.test-result');
+        
+        iconDiv.textContent = '❌';
+        msgDiv.innerHTML = `<strong>Error</strong><br>${e.message}`;
+        resultContainer.className = 'test-result error';
+        resultDiv.style.display = 'block';
+        setStatus('testStatus', '', 'muted');
+      }
+    });
+    
+    // Initialize
+    loadChannels();
+  </script>
 </body>
 </html>
