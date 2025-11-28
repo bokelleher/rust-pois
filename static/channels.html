@@ -1,0 +1,508 @@
+<!doctype html>
+<!--
+  channels.html - POIS Admin Panel (formerly admin.html)
+  Version: 3.0.21
+  Last updated: 2024-11-19
+  Changes: Replaced inline Header component with header.js, added favicon
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>POIS Admin</title>
+  <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module">
+    import { h, render } from "https://esm.sh/preact@10.24.3";
+    import htm from "https://esm.sh/htm@3.1.1";
+    import * as hooks from "https://esm.sh/preact@10.24.3/hooks";
+    
+    const html = htm.bind(h);
+    
+    const API = {
+      async get(p) { return req("GET", p) },
+      async post(p, b) { return req("POST", p, b) },
+      async put(p, b) { return req("PUT", p, b) },
+      async del(p) { return req("DELETE", p) }
+    };
+    
+    async function req(method, path, body) {
+      const token = localStorage.getItem("pois_token") || "";
+      const res = await fetch(`/api${path}`, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.status === 204 ? null : res.json();
+    }
+    
+
+    
+    function Channels({ onSelect, selected }) {
+      const [data, setData] = hooks.useState(null);
+      const [err, setErr] = hooks.useState(null);
+      
+      hooks.useEffect(() => {
+        (async () => {
+          try {
+            setData(await API.get("/channels"));
+          } catch (e) {
+            setErr(String(e));
+          }
+        })();
+      }, []);
+      
+      if (err) return html`<div class="p-4 text-error">${err}</div>`;
+      if (!data) return html`<div class="p-4 text-muted">Loading…</div>`;
+      
+      const add = async () => {
+        const name = prompt("Channel name?") || "";
+        if (!name) return;
+        await API.post("/channels", { name });
+        location.reload();
+      };
+      
+      const toggle = async (ch) => {
+        await API.put(`/channels/${ch.id}`, {
+          name: ch.name,
+          enabled: !ch.enabled,
+          timezone: ch.timezone
+        });
+        location.reload();
+      };
+      
+      const deleteChannel = async (ch) => {
+        if (!confirm(`Delete channel "${ch.name}"? This will also delete all associated rules.`)) return;
+        try {
+          await API.del(`/channels/${ch.id}`);
+          location.reload();
+        } catch (e) {
+          alert(`Failed to delete channel: ${e.message}`);
+        }
+      };
+      
+      return html`
+        <div class="p-4">
+          <div class="flex items-center justify-between mb-4">
+            <div class="font-semibold text-sm text-muted" style="text-transform: uppercase; letter-spacing: 0.5px;">Channels</div>
+            <button class="btn btn-primary btn-small" onClick=${add}>+ Add</button>
+          </div>
+          <div class="channel-list">
+            ${data.map(ch => html`
+              <div class="channel-item ${selected?.id === ch.id ? 'active' : ''}" onClick=${() => onSelect(ch)}>
+                <div class="flex-col">
+                  <div class="font-medium">${ch.name}</div>
+                  <div class="text-xs text-muted">${ch.enabled ? 'Enabled' : 'Disabled'}</div>
+                </div>
+                <div class="flex gap-2">
+                  <button class="btn btn-small" onClick=${(e) => { e.stopPropagation(); toggle(ch); }}>
+                    ${ch.enabled ? 'Disable' : 'Enable'}
+                  </button>
+                  <button class="btn btn-small text-error" onClick=${(e) => { e.stopPropagation(); deleteChannel(ch); }}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            `)}
+          </div>
+        </div>
+      `;
+    }
+    
+    function Rules({ channel }) {
+      const [rules, setRules] = hooks.useState(null);
+      const [err, setErr] = hooks.useState(null);
+      const [editingId, setEditingId] = hooks.useState(null);
+      const [draft, setDraft] = hooks.useState(null);
+      const [saving, setSaving] = hooks.useState(false);
+
+      const fetchRules = hooks.useCallback(async () => {
+        try {
+          setErr(null);
+          console.log('Fetching rules for channel:', channel.id);
+          const data = await API.get(`/channels/${channel.id}/rules`);
+          console.log('Rules data received:', data);
+          
+          // Clean up any rules with "null" strings
+          const cleanedData = data.map(rule => ({
+            ...rule,
+            match_json: rule.match_json === "null" ? "{}" : rule.match_json,
+            params_json: rule.params_json === "null" ? "{}" : rule.params_json
+          }));
+          
+          setRules(cleanedData);
+        } catch (e) {
+          console.error('Error fetching rules:', e);
+          setErr(String(e));
+        }
+      }, [channel.id]);
+
+      hooks.useEffect(() => {
+        setRules(null);
+        setEditingId(null);
+        setDraft(null);
+        fetchRules();
+      }, [fetchRules]);
+
+      if (err) return html`<div class="p-4 text-error">${err}</div>`;
+      if (!rules) return html`<div class="p-4 text-muted">Loading rules…</div>`;
+
+      const addRule = async () => {
+        const name = prompt("Rule name?") || "";
+        if (!name) return;
+        try {
+          await API.post(`/channels/${channel.id}/rules`, {
+            name,
+            priority: 100,
+            enabled: true,
+            match_json: {},
+            action: "noop",
+            params_json: {}
+          });
+          await fetchRules();
+        } catch (e) {
+          alert(`Failed to add rule: ${e.message}`);
+        }
+      };
+
+      const deleteRule = async (ruleId) => {
+        if (!confirm("Delete this rule?")) return;
+        try {
+          await API.del(`/rules/${ruleId}`);
+          await fetchRules();
+        } catch (e) {
+          alert(`Failed to delete rule: ${e.message}`);
+        }
+      };
+
+      const toggleRule = async (rule) => {
+        try {
+          await API.put(`/rules/${rule.id}`, {
+            name: rule.name,
+            priority: rule.priority,
+            enabled: rule.enabled === 0,
+            match_json: JSON.parse(rule.match_json),
+            action: rule.action,
+            params_json: JSON.parse(rule.params_json)
+          });
+          await fetchRules();
+        } catch (e) {
+          alert(`Failed to update rule: ${e.message}`);
+        }
+      };
+
+      const startEdit = (rule) => {
+        setEditingId(rule.id);
+        setSaving(false);
+        let formattedMatch = rule.match_json === "null" ? "{}" : rule.match_json;
+        let formattedParams = rule.params_json === "null" ? "{}" : rule.params_json;
+        
+        try {
+          formattedMatch = JSON.stringify(JSON.parse(formattedMatch), null, 2);
+        } catch (e) {
+          formattedMatch = "{}";
+        }
+        try {
+          formattedParams = JSON.stringify(JSON.parse(formattedParams), null, 2);
+        } catch (e) {
+          formattedParams = "{}";
+        }
+        
+        setDraft({
+          name: rule.name,
+          priority: String(rule.priority),
+          match_json: formattedMatch,
+          action: rule.action,
+          params_json: formattedParams
+        });
+      };
+
+      const cancelEdit = () => {
+        setEditingId(null);
+        setDraft(null);
+        setSaving(false);
+      };
+
+      const saveEdit = async (rule) => {
+        if (!draft) return;
+        
+        const trimmedName = (draft.name || "").trim();
+        if (!trimmedName) {
+          alert("Rule name is required.");
+          return;
+        }
+        
+        const priority = Number.parseInt(draft.priority, 10);
+        if (!Number.isFinite(priority)) {
+          alert("Priority must be a number.");
+          return;
+        }
+        
+        let matchObj, paramsObj;
+        try {
+          matchObj = JSON.parse(draft.match_json || "{}");
+        } catch (e) {
+          alert(`Invalid match JSON: ${e.message}`);
+          return;
+        }
+        try {
+          paramsObj = JSON.parse(draft.params_json || "{}");
+        } catch (e) {
+          alert(`Invalid params JSON: ${e.message}`);
+          return;
+        }
+        
+        setSaving(true);
+        try {
+          await API.put(`/rules/${rule.id}`, {
+            name: trimmedName,
+            priority,
+            enabled: rule.enabled !== 0,
+            match_json: matchObj,
+            action: draft.action,
+            params_json: paramsObj
+          });
+          await fetchRules();
+          setEditingId(null);
+          setDraft(null);
+        } catch (e) {
+          alert(`Failed to save rule: ${e.message}`);
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      return html`
+        <div class="p-4">
+          <div class="flex items-center justify-between mb-4">
+            <div class="font-semibold text-sm text-muted" style="text-transform: uppercase; letter-spacing: 0.5px;">
+              Rules for ${channel.name}
+            </div>
+            <button class="btn btn-primary btn-small" onClick=${addRule}>+ Add Rule</button>
+          </div>
+          ${rules.length === 0 ? html`
+            <div class="empty-state" style="padding: 40px 20px; text-align: center;">
+              <div class="empty-state-text">No rules yet. Click "+ Add Rule" to create one.</div>
+            </div>
+          ` : html`
+            <div class="rules-list">
+              ${rules.map(rule => {
+                const isEditing = editingId === rule.id;
+                
+                // Prettify JSON outside the template
+                let prettyMatch = '{}';
+                let prettyParams = '{}';
+                try {
+                  const matchParsed = typeof rule.match_json === 'string' ? JSON.parse(rule.match_json) : rule.match_json;
+                  prettyMatch = JSON.stringify(matchParsed, null, 2);
+                } catch (e) {
+                  prettyMatch = rule.match_json || '{}';
+                }
+                try {
+                  const paramsParsed = typeof rule.params_json === 'string' ? JSON.parse(rule.params_json) : rule.params_json;
+                  prettyParams = JSON.stringify(paramsParsed, null, 2);
+                } catch (e) {
+                  prettyParams = rule.params_json || '{}';
+                }
+                
+                return html`
+                  <div class="panel" key=${rule.id} style="padding: 20px; margin-bottom: 16px;">
+                    ${isEditing ? html`
+                      <div class="rule-edit-form">
+                        <div class="form-row">
+                          <div class="form-group" style="flex: 2;">
+                            <label>Name</label>
+                            <input 
+                              value=${draft.name} 
+                              onInput=${e => setDraft({...draft, name: e.target.value})}
+                            />
+                          </div>
+                          <div class="form-group" style="flex: 0 0 100px;">
+                            <label>Priority</label>
+                            <input 
+                              type="number" 
+                              value=${draft.priority} 
+                              onInput=${e => setDraft({...draft, priority: e.target.value})}
+                            />
+                          </div>
+                          <div class="form-group" style="flex: 1;">
+                            <label>Action</label>
+                            <select 
+                              value=${draft.action} 
+                              onChange=${e => setDraft({...draft, action: e.target.value})}
+                            >
+                              <option value="noop">noop (passthrough)</option>
+                              <option value="replace">replace</option>
+                              <option value="delete">delete</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div class="form-row">
+                          <div class="form-group" style="flex: 1;">
+                            <label>Match JSON</label>
+                            <textarea 
+                              value=${draft.match_json}
+                              onInput=${e => setDraft({...draft, match_json: e.target.value})}
+                              style="font-family: monospace; min-height: 100px;"
+                            ></textarea>
+                          </div>
+                          <div class="form-group" style="flex: 1;">
+                            <label>Params JSON</label>
+                            <textarea 
+                              value=${draft.params_json}
+                              onInput=${e => setDraft({...draft, params_json: e.target.value})}
+                              style="font-family: monospace; min-height: 100px;"
+                            ></textarea>
+                          </div>
+                        </div>
+                        <div class="flex gap-2 justify-end" style="margin-top: 12px;">
+                          <button class="btn" onClick=${cancelEdit} disabled=${saving}>Cancel</button>
+                          <button class="btn btn-primary" onClick=${() => saveEdit(rule)} disabled=${saving}>
+                            ${saving ? 'Saving...' : 'Save'}
+                          </button>
+                        </div>
+                      </div>
+                    ` : html`
+                      <div class="rule-display">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
+                          <h3 style="font-size: 18px; font-weight: 600; color: var(--text-primary); margin: 0;">${rule.name}</h3>
+                          <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-small" onClick=${() => toggleRule(rule)}>
+                              ${rule.enabled !== 0 ? 'Disable' : 'Enable'}
+                            </button>
+                            <button class="btn btn-small" onClick=${() => startEdit(rule)}>Edit</button>
+                            <button class="btn btn-small text-error" onClick=${() => deleteRule(rule.id)}>Delete</button>
+                          </div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px;">
+                          <div>
+                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; letter-spacing: 0.5px;">Priority</div>
+                            <div style="color: var(--text-primary); font-size: 14px;">${rule.priority}</div>
+                          </div>
+                          <div>
+                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; letter-spacing: 0.5px;">Action</div>
+                            <span style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; ${
+                              rule.action === 'noop' ? 'background: rgba(139, 92, 246, 0.2); color: #c4b5fd;' :
+                              rule.action === 'delete' ? 'background: rgba(239, 68, 68, 0.2); color: #fca5a5;' :
+                              'background: rgba(16, 185, 129, 0.2); color: #6ee7b7;'
+                            }">${rule.action}</span>
+                          </div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                          <div>
+                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; letter-spacing: 0.5px;">Match JSON</div>
+                            <pre style="background: rgba(0, 0, 0, 0.3); padding: 12px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 12px; color: var(--text-primary); margin: 0; border: 1px solid rgba(139, 92, 246, 0.2);">${prettyMatch}</pre>
+                          </div>
+                          <div>
+                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; letter-spacing: 0.5px;">Params JSON</div>
+                            <pre style="background: rgba(0, 0, 0, 0.3); padding: 12px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 12px; color: var(--text-primary); margin: 0; border: 1px solid rgba(139, 92, 246, 0.2);">${prettyParams}</pre>
+                          </div>
+                        </div>
+                      </div>
+                    `}
+                  </div>
+                `;
+              })}
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    function TestPanel({ channel }) {
+      const [inputXml, setInputXml] = hooks.useState("");
+      const [result, setResult] = hooks.useState(null);
+      const [err, setErr] = hooks.useState(null);
+      const [testing, setTesting] = hooks.useState(false);
+
+      const testRules = async () => {
+        if (!inputXml.trim()) {
+          alert("Please enter ESAM XML to test.");
+          return;
+        }
+        
+        setTesting(true);
+        setResult(null);
+        setErr(null);
+        
+        try {
+          const data = await API.post(`/channels/${channel.id}/test`, {
+            esam_request_xml: inputXml
+          });
+          setResult(data);
+        } catch (e) {
+          setErr(String(e));
+        } finally {
+          setTesting(false);
+        }
+      };
+
+      return html`
+        <div class="panel">
+          <div class="card-header">
+            <div class="card-title">Test Rules for ${channel.name}</div>
+          </div>
+          <div class="form-group">
+            <label>ESAM Request XML</label>
+            <textarea
+              value=${inputXml}
+              onInput=${e => setInputXml(e.target.value)}
+              placeholder="<SignalProcessingEvent>...</SignalProcessingEvent>"
+              style="min-height: 150px; font-family: monospace;"
+            ></textarea>
+          </div>
+          <button class="btn btn-primary" onClick=${testRules} disabled=${testing}>
+            ${testing ? 'Testing...' : 'Test Rules'}
+          </button>
+          ${err && html`
+            <div class="text-error" style="margin-top: 16px;">${err}</div>
+          `}
+          ${result && html`
+            <div class="result-panel" style="margin-top: 24px;">
+              <div class="card-header">
+                <div class="card-title">Test Result</div>
+              </div>
+              <div style="font-family: monospace; font-size: 13px; color: var(--text-secondary);">
+                ${result.matched_rule_id ? `Matched Rule ID: ${result.matched_rule_id}` : 'No rules matched'} 
+                — ${result.note}
+              </div>
+            </div>
+          `}
+        </div>
+      `;
+    }
+    
+    function App() {
+      const [sel, setSel] = hooks.useState(null);
+      
+      return html`
+        <div class="min-h-screen">
+          <div class="grid grid-cols-12">
+            <div class="col-span-3 border-r admin-sidebar">
+              <${Channels} onSelect=${setSel} selected=${sel} />
+            </div>
+            <div class="col-span-9">
+              ${sel ? html`<${Rules} channel=${sel} />` : html`
+                <div class="empty-state" style="padding: 80px 20px;">
+                  <div class="empty-state-title">Select a channel</div>
+                  <div class="empty-state-text">Choose or add a channel to manage its rules.</div>
+                </div>
+              `}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+    
+    render(html`<${App} />`, document.body);
+  </script>
+  <script src="/static/app.js"></script>
+</head>
+<body>
+  <script src="/static/header.js"></script>
+</body>
+</html>

@@ -1,7 +1,29 @@
+// src/esam.rs
+// Version: 2.2.0
+// Updated: 2024-11-24
+//
+// Changelog:
+// v2.2.1 (2024-11-24): Fixed parse_splice_insert_pts missing final fields
+// v2.2.0 (2024-11-24): Applied critical fixes from tools_api.rs v4.0.6
+//   - CRITICAL FIX: Removed v2.1.0 skip logic that was causing wrong bitpos (v4.0.6 fix)
+//   - CRITICAL FIX: Masked descriptor_loop_length to 10 bits (6 reserved bits) (v4.0.5 fix)
+//   - Command parsers already consume correct bytes; descriptor_loop_length immediately follows
+//   - Now Event Monitor will show segmentation descriptors correctly!
+// v2.1.0 (2024-11-24): Fixed SCTE-35 decoder command byte skipping
+//   - CRITICAL FIX: time_signal now properly tracks bits read before skipping
+//   - CRITICAL FIX: splice_insert skip logic now correctly positioned
+//   - CRITICAL FIX: delivery_not_restricted always skips 5 bits (was missing when true)
+//   - Added handling for splice_command_length=0xFFF (unspecified)
+//   - NOTE: v2.1.0 skip logic introduced a bug that was fixed in v2.2.0
+//   - NOTE: v2.2.0 fixed descriptor_loop_length masking but parse_splice_insert_pts
+//           was still missing final fields, causing bitpos to be 72 bits short. Fixed in v2.2.1
+// v2.0.0: Enhanced UPID/Type ID decoding with comprehensive type support
+
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use quick_xml::{events::Event, Reader};
 use serde_json::json;
+use tracing::{debug, warn, error, info};
 
 /// Extract minimal facts from an ESAM SignalProcessingEvent XML with enhanced UPID/Type ID decoding
 pub fn extract_facts(esam_xml: &str) -> Result<serde_json::Value, String> {
@@ -36,8 +58,11 @@ pub fn extract_facts(esam_xml: &str) -> Result<serde_json::Value, String> {
                     }
                 }
                 if local.ends_with("BinaryData") {
+                    debug!("extract_facts: Found BinaryData element");
                     if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                        scte35_b64 = Some(t.unescape().map_err(|e| e.to_string())?.to_string());
+                        let text = t.unescape().map_err(|e| e.to_string())?.to_string();
+                        debug!("extract_facts: Read BinaryData text (length={})", text.len());
+                        scte35_b64 = Some(text);
                     }
                 }
             }
@@ -61,23 +86,49 @@ pub fn extract_facts(esam_xml: &str) -> Result<serde_json::Value, String> {
     let mut pts_time = None;
     
     if let Some(ref b64) = scte35_b64 {
-        if let Ok(info) = decode_scte35_details(b64) {
-            scte35_cmd = info.command;
-            
-            if let Some(type_id) = info.segmentation_type_id {
-                seg_type_id_hex = Some(format!("0x{type_id:02X}"));
-                seg_type_name = Some(decode_segmentation_type_name(type_id));
+        debug!("extract_facts: Found SCTE-35 base64 (length={}), calling decode_scte35_details", b64.len());
+        match decode_scte35_details(b64) {
+            Ok(info) => {
+                scte35_cmd = info.command.clone();
+                if let Some(ref cmd) = scte35_cmd {
+                    debug!("extract_facts: ✅ SCTE-35 decoded successfully, command={}", cmd);
+                } else {
+                    warn!("extract_facts: SCTE-35 decoded but command is None (will become 'unknown')");
+                }
+                
+                if let Some(type_id) = info.segmentation_type_id {
+                    seg_type_id_hex = Some(format!("0x{type_id:02X}"));
+                    seg_type_name = Some(decode_segmentation_type_name(type_id));
+                    debug!("extract_facts: Extracted segmentation_type_id={}", seg_type_id_hex.as_ref().unwrap());
+                }
+                
+                if let Some((upid_type, upid_bytes)) = info.segmentation_upid_with_type {
+                    upid_type_name = Some(decode_upid_type_name(upid_type));
+                    seg_upid_repr = Some(decode_upid_data(upid_type, &upid_bytes));
+                    debug!("extract_facts: Extracted UPID type={}, repr={}", 
+                           upid_type_name.as_ref().unwrap(), seg_upid_repr.as_ref().unwrap());
+                }
+                
+                pts_time = info.pts_time;
+                if let Some(pts) = pts_time {
+                    debug!("extract_facts: Extracted PTS time={}", pts);
+                }
             }
-            
-            if let Some((upid_type, upid_bytes)) = info.segmentation_upid_with_type {
-                upid_type_name = Some(decode_upid_type_name(upid_type));
-                seg_upid_repr = Some(decode_upid_data(upid_type, &upid_bytes));
+            Err(e) => {
+                error!("extract_facts: ❌ SCTE-35 decoding FAILED: {}", e);
+                error!("extract_facts: Failed base64 was: {}", b64);
+                // scte35_cmd stays None, will become "unknown"
             }
-            
-            pts_time = info.pts_time;
         }
     }
-    let scte35_cmd_str = scte35_cmd.unwrap_or_else(|| "unknown".into());
+    let scte35_cmd_str = scte35_cmd.unwrap_or_else(|| {
+        if scte35_b64.is_some() {
+            warn!("extract_facts: SCTE-35 present but command is None/unknown");
+        }
+        "unknown".into()
+    });
+    
+    debug!("extract_facts: Final SCTE-35 command string: '{}'", scte35_cmd_str);
 
     let mut out = json!({
         "acquisitionSignalID": acquisition_signal_id,
@@ -334,11 +385,11 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 #[derive(Default)]
-struct Scte35Info {
-    command: Option<String>,
-    segmentation_type_id: Option<u8>,
-    segmentation_upid_with_type: Option<(u8, Vec<u8>)>, // (type, data)
-    pts_time: Option<u64>,
+pub struct Scte35Info {
+    pub command: Option<String>,
+    pub segmentation_type_id: Option<u8>,
+    pub segmentation_upid_with_type: Option<(u8, Vec<u8>)>, // (type, data)
+    pub pts_time: Option<u64>,
 }
 
 /// Minimal bit reader for SCTE-35 parsing.
@@ -378,32 +429,99 @@ impl<'a> BitReader<'a> {
 }
 
 /// Return command + optional segmentation details + PTS from SCTE-35
-fn decode_scte35_details(b64: &str) -> Result<Scte35Info, String> {
-    let bytes = B64.decode(b64).map_err(|e| format!("base64 error: {e}"))?;
+/// v2.2.1: Fixed parse_splice_insert_pts to include missing final fields
+/// v2.2.0: Fixed descriptor_loop_length parsing with proper bit masking
+pub fn decode_scte35_details(b64: &str) -> Result<Scte35Info, String> {
+    debug!("decode_scte35_details: Starting decode, base64 length={}", b64.len());
+    
+    let bytes = B64.decode(b64).map_err(|e| {
+        let err_msg = format!("base64 decode error: {e}");
+        error!("SCTE-35 DECODE FAILED: {}", err_msg);
+        err_msg
+    })?;
+    
+    debug!("decode_scte35_details: Decoded {} bytes total, first 4 bytes: {:02X?}", 
+           bytes.len(), &bytes[..4.min(bytes.len())]);
+    
     if bytes.first() != Some(&0xFC) {
+        warn!("SCTE-35: Invalid first byte (expected 0xFC, got {:02X?}) - returning default", bytes.first());
         return Ok(Scte35Info::default());
     }
+    
     let mut br = BitReader::new(&bytes);
-    let table_id = br.read_u8(8)?;
-    if table_id != 0xFC { return Ok(Scte35Info::default()); }
+    
+    let table_id = br.read_u8(8).map_err(|e| {
+        let err_msg = format!("Failed to read table_id: {e}");
+        error!("SCTE-35 DECODE FAILED: {}", err_msg);
+        err_msg
+    })?;
+    
+    debug!("decode_scte35_details: table_id=0x{:02x}", table_id);
+    
+    if table_id != 0xFC { 
+        warn!("SCTE-35: table_id mismatch (expected 0xFC, got 0x{:02x}) - returning default", table_id);
+        return Ok(Scte35Info::default()); 
+    }
 
+    debug!("decode_scte35_details: Skipping section header (16 bits)...");
     // section_syntax_indicator, private_indicator, reserved(2), section_length(12)
-    br.skip_bits(1 + 1 + 2 + 12)?;
+    br.skip_bits(1 + 1 + 2 + 12).map_err(|e| {
+        let err_msg = format!("Failed to skip section header: {e} at bitpos {}", br.bitpos);
+        error!("SCTE-35 DECODE FAILED: {}", err_msg);
+        err_msg
+    })?;
+    
+    debug!("decode_scte35_details: After section header, bitpos={}", br.bitpos);
+    
+    debug!("decode_scte35_details: Skipping SCTE-35 header fields (68 bits)...");
     // protocol_version(8), encrypted(1), encryption_algorithm(6), pts_adjustment(33), cw_index(8), tier(12)
-    br.skip_bits(8 + 1 + 6 + 33 + 8 + 12)?;
+    br.skip_bits(8 + 1 + 6 + 33 + 8 + 12).map_err(|e| {
+        let err_msg = format!("Failed to skip SCTE-35 header: {e} at bitpos {} (byte {})", 
+                             br.bitpos, br.bitpos / 8);
+        error!("SCTE-35 DECODE FAILED: {}", err_msg);
+        err_msg
+    })?;
+    
+    debug!("decode_scte35_details: After header fields, bitpos={} (byte {})", 
+           br.bitpos, br.bitpos / 8);
 
-    let splice_command_length = br.read_u16(12)? as usize;
-    let splice_command_type = br.read_u8(8)?;
+    debug!("decode_scte35_details: Reading splice_command_length (12 bits)...");
+    let splice_command_length = br.read_u16(12).map_err(|e| {
+        let err_msg = format!("Failed to read splice_command_length: {e} at bitpos {} (byte {})", 
+                             br.bitpos, br.bitpos / 8);
+        error!("SCTE-35 DECODE FAILED: {}", err_msg);
+        err_msg
+    })? as usize;
+    
+    debug!("decode_scte35_details: Reading splice_command_type (8 bits)...");
+    let splice_command_type = br.read_u8(8).map_err(|e| {
+        let err_msg = format!("Failed to read splice_command_type: {e} at bitpos {} (byte {})", 
+                             br.bitpos, br.bitpos / 8);
+        error!("SCTE-35 DECODE FAILED: {}", err_msg);
+        err_msg
+    })?;
+    
+    debug!("decode_scte35_details: splice_command_length={}, splice_command_type=0x{:02x}", 
+           splice_command_length, splice_command_type);
+    
+    let command_name = match splice_command_type {
+        0x00 => "splice_null",
+        0x04 => "splice_schedule", 
+        0x05 => "splice_insert",
+        0x06 => "time_signal",
+        0x07 => "bandwidth_reservation",
+        0xFF => "private_command",
+        _ => {
+            warn!("SCTE-35: Unrecognized splice_command_type 0x{:02x}, treating as 'unknown'", 
+                  splice_command_type);
+            "unknown"
+        }
+    };
+    
+    debug!("decode_scte35_details: ✅ Successfully decoded command: {}", command_name);
+    
     let mut info = Scte35Info {
-        command: Some(match splice_command_type {
-            0x00 => "splice_null",
-            0x04 => "splice_schedule", 
-            0x05 => "splice_insert",
-            0x06 => "time_signal",
-            0x07 => "bandwidth_reservation",
-            0xFF => "private_command",
-            _ => "unknown",
-        }.into()),
+        command: Some(command_name.into()),
         segmentation_type_id: None,
         segmentation_upid_with_type: None,
         pts_time: None,
@@ -412,43 +530,46 @@ fn decode_scte35_details(b64: &str) -> Result<Scte35Info, String> {
     // Parse command-specific data to extract PTS times
     match splice_command_type {
         0x05 => {
+            debug!("decode_scte35_details: Parsing splice_insert for PTS...");
             // splice_insert() command - parse for PTS time
-            if splice_command_length > 0 {
-                if let Ok(pts) = parse_splice_insert_pts(&mut br) {
-                    info.pts_time = pts;
-                }
-                // Skip any remaining command bytes
-                let current_pos = br.bitpos;
-                let expected_end = current_pos + (splice_command_length * 8);
-                if br.bitpos < expected_end {
-                    let remaining_bits = expected_end - br.bitpos;
-                    if remaining_bits > 0 {
-                        br.skip_bits(remaining_bits as u32).ok();
-                    }
-                }
+            if let Ok(pts) = parse_splice_insert_pts(&mut br) {
+                info.pts_time = pts;
+                debug!("decode_scte35_details: Extracted PTS: {:?}", pts);
             }
         },
         0x06 => {
+            debug!("decode_scte35_details: Parsing time_signal for PTS...");
             // time_signal() command - parse splice_time()
-            if splice_command_length > 0 {
-                if let Ok(pts) = parse_splice_time(&mut br) {
-                    info.pts_time = pts;
-                }
-                // Skip any remaining command bytes
-                let remaining_bits = (splice_command_length * 8).saturating_sub(5);
-                if remaining_bits > 0 {
-                    br.skip_bits(remaining_bits as u32).ok();
-                }
+            if let Ok(pts) = parse_splice_time(&mut br) {
+                info.pts_time = pts;
+                debug!("decode_scte35_details: Extracted PTS: {:?}", pts);
             }
         },
         _ => {
-            // Skip command bytes for other command types
-            br.skip_bits((splice_command_length * 8) as u32)?;
+            debug!("decode_scte35_details: Command type 0x{:02x} - no PTS extraction needed", splice_command_type);
         }
     }
 
-    // descriptor_loop_length
-    let descriptor_loop_length = br.read_u16(16)? as usize;
+    // v2.2.1 FIX: parse_splice_insert_pts now includes all final fields (break_duration, unique_program_id, avail_num, avails_expected)
+    // v2.2.0 FIX: REMOVED the v2.1.0 skip logic - it was causing wrong bitpos!
+    // The command parsers already consume the correct number of bytes.
+    // descriptor_loop_length immediately follows the command data.
+
+    info!("decode_scte35_details: After command, bitpos={} (byte {})", br.bitpos, br.bitpos / 8);
+
+    // v2.2.0 FIX: descriptor_loop_length is 10 bits with 6 reserved bits
+    debug!("decode_scte35_details: Reading descriptor_loop_length (16 bits with masking)...");
+    let descriptor_word = br.read_u16(16).map_err(|e| {
+        let err_msg = format!("Failed to read descriptor_loop_length: {e} at bitpos {} (byte {})", 
+                             br.bitpos, br.bitpos / 8);
+        warn!("SCTE-35 WARNING: {}", err_msg);
+        err_msg
+    })?;
+    let descriptor_loop_length = (descriptor_word & 0x03FF) as usize;  // Mask to get lower 10 bits
+    
+    info!("decode_scte35_details: descriptor_loop_word=0x{:04X}, masked_length={} bytes", 
+          descriptor_word, descriptor_loop_length);
+    
     let loop_end = br.bitpos + descriptor_loop_length * 8;
     while br.bitpos + 16 <= loop_end {
         let tag = br.read_u8(8)?;
@@ -456,6 +577,7 @@ fn decode_scte35_details(b64: &str) -> Result<Scte35Info, String> {
         let desc_end = br.bitpos + len * 8;
 
         if tag == 0x02 {
+            debug!("decode_scte35_details: Found segmentation_descriptor (tag=0x02, length={})", len);
             // segmentation_descriptor
             let _cuei = br.read_u32(32)?;
             let _event_id = br.read_u32(32)?;
@@ -465,7 +587,10 @@ fn decode_scte35_details(b64: &str) -> Result<Scte35Info, String> {
                 let program_flag = br.read_u8(1)? == 1;
                 let duration_flag = br.read_u8(1)? == 1;
                 let delivery_not_restricted = br.read_u8(1)? == 1;
-                if !delivery_not_restricted { br.skip_bits(5)?; }
+                
+                // v2.1.0 FIX: Always skip 5 bits (either reserved or restriction flags)
+                br.skip_bits(5)?;
+                
                 if !program_flag {
                     let count = br.read_u8(8)? as usize;
                     for _ in 0..count {
@@ -481,14 +606,22 @@ fn decode_scte35_details(b64: &str) -> Result<Scte35Info, String> {
                     let mut upid = Vec::with_capacity(upid_len);
                     for _ in 0..upid_len { upid.push(br.read_u8(8)?); }
                     info.segmentation_upid_with_type = Some((upid_type, upid));
+                    debug!("decode_scte35_details: Extracted UPID (type=0x{:02x}, {} bytes)", 
+                           upid_type, upid_len);
                 }
                 
                 if br.bitpos + 24 <= desc_end {
                     let seg_type_id = br.read_u8(8)?;
                     info.segmentation_type_id = Some(seg_type_id);
+                    info!("decode_scte35_details: Extracted segmentation_type_id=0x{:02x}", seg_type_id);
                     br.skip_bits(16)?; // segment_num + segments_expected
                 }
+                
+                // Log delivery_not_restricted for debugging
+                debug!("decode_scte35_details: delivery_not_restricted={}", delivery_not_restricted);
             }
+        } else {
+            debug!("decode_scte35_details: Skipping descriptor tag=0x{:02x}, length={}", tag, len);
         }
 
         if br.bitpos < desc_end {
@@ -496,6 +629,9 @@ fn decode_scte35_details(b64: &str) -> Result<Scte35Info, String> {
         }
     }
 
+    info!("decode_scte35_details: ✅ DECODE COMPLETE - command={}, type_id={:?}, has_upid={}", 
+           command_name, info.segmentation_type_id, info.segmentation_upid_with_type.is_some());
+    
     Ok(info)
 }
 
@@ -523,13 +659,15 @@ fn parse_splice_insert_pts(br: &mut BitReader) -> Result<Option<u64>, String> {
     if !splice_event_cancel_indicator {
         let _out_of_network_indicator = br.read_u8(1)?;
         let program_splice_flag = br.read_u8(1)? == 1;
-        let _duration_flag = br.read_u8(1)?;
+        let duration_flag = br.read_u8(1)? == 1;
         let splice_immediate_flag = br.read_u8(1)? == 1;
         br.skip_bits(4)?; // reserved
         
+        let mut pts_result = None;
+        
         if program_splice_flag && !splice_immediate_flag {
             // Parse splice_time() for program splice
-            return parse_splice_time(br);
+            pts_result = parse_splice_time(br)?;
         } else if !program_splice_flag {
             let component_count = br.read_u8(8)? as usize;
             for _ in 0..component_count {
@@ -537,12 +675,31 @@ fn parse_splice_insert_pts(br: &mut BitReader) -> Result<Option<u64>, String> {
                 if !splice_immediate_flag {
                     // Each component has a splice_time()
                     if let Ok(Some(pts)) = parse_splice_time(br) {
-                        // Return the first PTS time found
-                        return Ok(Some(pts));
+                        if pts_result.is_none() {
+                            pts_result = Some(pts);
+                        }
                     }
                 }
             }
         }
+        
+        // v2.2.1 CRITICAL FIX: Parse remaining splice_insert fields
+        // These fields must be consumed to advance bitpos correctly for descriptor_loop_length
+        // Without this, bitpos stops at byte 20 instead of byte 29 (72 bits short)
+        
+        // Parse break_duration if duration_flag is set (40 bits)
+        if duration_flag {
+            let _auto_return = br.read_u8(1)?;
+            br.skip_bits(6)?; // reserved
+            let _duration_ticks = br.read_u64(33)?;
+        }
+        
+        // Always present at end of splice_insert: unique_program_id (16), avail_num (8), avails_expected (8)
+        let _unique_program_id = br.read_u16(16)?;
+        let _avail_num = br.read_u8(8)?;
+        let _avails_expected = br.read_u8(8)?;
+        
+        return Ok(pts_result);
     }
     
     Ok(None)

@@ -1,0 +1,1365 @@
+openapi: 3.0.3
+info:
+  title: POIS ESAM Server API
+  description: |
+    Placement Opportunity Information Service (POIS) and ESAM (Event Signaling and Management) server.
+    
+    A Rust-based middleware server for processing SCTE-35 signals in broadcast television ad insertion workflows.
+    Provides rule-based signal processing, multi-tenancy support, JWT authentication, and comprehensive event monitoring.
+    
+    **Features:**
+    - ESAM/SCTE-35 XML signal processing
+    - Multi-channel management with independent rule sets
+    - Rule-based transformations (match, modify, replace, delete)
+    - JWT authentication with API token support
+    - SCTE-35 toolkit (builder, decoder, validator, tester)
+    - Event logging and monitoring
+    - Backup/restore functionality
+    
+    **Authentication:**
+    Most endpoints require Bearer token authentication via JWT. Use `POST /api/auth/login` to obtain a token.
+    The ESAM processing endpoints (`/esam`) do not require authentication.
+  version: 3.1.5
+  contact:
+    name: Bo Kelleher
+    url: https://github.com/bokelleher/rust-pois
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://darwin.techexlab.com:8100
+    description: Production server
+  - url: http://localhost:8080
+    description: Development server
+
+tags:
+  - name: Authentication
+    description: JWT authentication and user management
+  - name: Channels
+    description: Channel management for multi-tenancy
+  - name: Rules
+    description: Signal processing rules
+  - name: Events
+    description: Signal processing event logs
+  - name: ESAM
+    description: ESAM signal processing endpoints
+  - name: SCTE-35 Tools
+    description: SCTE-35 signal builder, decoder, validator, and tester
+  - name: Backup
+    description: Backup and restore functionality
+  - name: System
+    description: Health checks and system status
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /api/auth/login
+
+  schemas:
+    # Authentication schemas
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: admin
+        password:
+          type: string
+          format: password
+          example: admin123
+
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT token for authentication
+        user:
+          $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+        enabled:
+          type: boolean
+        email:
+          type: string
+          format: email
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        last_login:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateUserRequest:
+      type: object
+      required: [username, password, role]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        role:
+          type: string
+          enum: [admin, user]
+        email:
+          type: string
+          format: email
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        password:
+          type: string
+          format: password
+        role:
+          type: string
+          enum: [admin, user]
+        enabled:
+          type: boolean
+        email:
+          type: string
+          format: email
+
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+          format: password
+        new_password:
+          type: string
+          format: password
+
+    CreateTokenRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Descriptive name for the API token
+        expires_in_days:
+          type: integer
+          format: int64
+          description: Number of days until expiration (null for never)
+          nullable: true
+
+    CreateTokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: The actual token string (only shown once)
+        token_info:
+          $ref: '#/components/schemas/ApiToken'
+
+    ApiToken:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        user_id:
+          type: integer
+          format: int64
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        last_used:
+          type: string
+          format: date-time
+          nullable: true
+        revoked:
+          type: boolean
+
+    # Channel schemas
+    Channel:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        enabled:
+          type: boolean
+        owner_id:
+          type: integer
+          format: int64
+        timezone:
+          type: string
+          default: UTC
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateChannelRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Unique channel name
+        enabled:
+          type: boolean
+          default: true
+        timezone:
+          type: string
+          default: UTC
+
+    UpdateChannelRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        timezone:
+          type: string
+
+    # Rule schemas
+    Rule:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        channel_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        match_json:
+          type: string
+          description: JSON string defining match conditions
+        action:
+          type: string
+          enum: [pass, modify, replace, delete]
+        params_json:
+          type: string
+          description: JSON string with action parameters
+        priority:
+          type: integer
+          format: int64
+          description: Higher priority rules execute first
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateRuleRequest:
+      type: object
+      required: [name, action]
+      properties:
+        name:
+          type: string
+        match_json:
+          type: string
+          description: JSON match conditions
+          default: '{"anyOf":[{}]}'
+        action:
+          type: string
+          enum: [pass, modify, replace, delete]
+        params_json:
+          type: string
+          description: JSON action parameters
+          default: '{}'
+        priority:
+          type: integer
+          format: int64
+          default: 100
+        enabled:
+          type: boolean
+          default: true
+
+    UpdateRuleRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        match_json:
+          type: string
+        action:
+          type: string
+          enum: [pass, modify, replace, delete]
+        params_json:
+          type: string
+        priority:
+          type: integer
+          format: int64
+        enabled:
+          type: boolean
+
+    ReorderRulesRequest:
+      type: object
+      required: [rule_ids]
+      properties:
+        rule_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+          description: Array of rule IDs in desired order
+
+    # Event schemas
+    Event:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        channel_id:
+          type: integer
+          format: int64
+        channel_name:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        source_ip:
+          type: string
+        acquisition_signal_id:
+          type: string
+        scte35_command:
+          type: string
+        action_taken:
+          type: string
+          enum: [pass, modify, replace, delete]
+        rule_id:
+          type: integer
+          format: int64
+          nullable: true
+        rule_name:
+          type: string
+          nullable: true
+        input_xml:
+          type: string
+        output_xml:
+          type: string
+          nullable: true
+
+    EventStats:
+      type: object
+      properties:
+        total_events:
+          type: integer
+          format: int64
+        events_by_channel:
+          type: object
+          additionalProperties:
+            type: integer
+        events_by_action:
+          type: object
+          additionalProperties:
+            type: integer
+
+    # SCTE-35 Tool schemas
+    BuildRequest:
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+          enum: [time_signal, time_signal_immediate, splice_insert_out]
+          description: SCTE-35 command type
+        duration_seconds:
+          type: integer
+          format: int32
+          description: Duration for splice_insert_out (default 60)
+        segmentation_type_id:
+          type: string
+          description: Optional hex segmentation type ID (e.g., "0x34")
+        segmentation_upid_type:
+          type: string
+          description: Optional UPID type identifier (e.g., "0x03")
+        segmentation_upid:
+          type: string
+          description: Optional UPID value
+    DecodeRequest:
+      type: object
+      required: [base64]
+      properties:
+        base64:
+          type: string
+          description: Base64-encoded SCTE-35 signal
+
+    DecodeResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+        decoded:
+          $ref: '#/components/schemas/DecodedScte35'
+
+    DecodedScte35:
+      type: object
+      properties:
+        table_id:
+          type: string
+        protocol_version:
+          type: integer
+        encrypted_packet:
+          type: boolean
+        pts_adjustment:
+          type: integer
+          format: int64
+        command_type:
+          type: string
+        command_type_id:
+          type: integer
+        command_info:
+          type: object
+        descriptors:
+          type: array
+          items:
+            $ref: '#/components/schemas/DescriptorInfo'
+        raw_hex:
+          type: string
+
+    DescriptorInfo:
+      type: object
+      properties:
+        tag:
+          type: integer
+        tag_name:
+          type: string
+        length:
+          type: integer
+        data:
+          type: object
+
+    ValidateRequest:
+      type: object
+      required: [base64]
+      properties:
+        base64:
+          type: string
+
+    ValidateResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+        info:
+          type: string
+          nullable: true
+
+    TestSendRequest:
+      type: object
+      required: [channel_id, base64]
+      properties:
+        channel_id:
+          type: integer
+          format: int64
+        base64:
+          type: string
+
+    TestSendResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        event_id:
+          type: integer
+          format: int64
+          nullable: true
+
+    # Backup schemas
+    ChannelBackup:
+      type: object
+      properties:
+        name:
+          type: string
+        enabled:
+          type: boolean
+        timezone:
+          type: string
+
+    # Dry run schemas
+    DryRunRequest:
+      type: object
+      required: [channel_id, esam_xml]
+      properties:
+        channel_id:
+          type: integer
+          format: int64
+        esam_xml:
+          type: string
+          description: ESAM XML to test
+
+    DryRunResponse:
+      type: object
+      properties:
+        matched_rule_id:
+          type: integer
+          format: int64
+          nullable: true
+        matched_rule_name:
+          type: string
+          nullable: true
+        action:
+          type: string
+        output_xml:
+          type: string
+          nullable: true
+
+    # Error response
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+paths:
+  # ========== Authentication Endpoints ==========
+  /api/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Login and obtain JWT token
+      description: Authenticate with username/password and receive a JWT token
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/auth/me:
+    get:
+      tags: [Authentication]
+      summary: Get current user information
+      description: Retrieve information about the currently authenticated user
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/auth/change-password:
+    post:
+      tags: [Authentication]
+      summary: Change user password
+      description: Change the password for the currently authenticated user
+      operationId: changePassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: Password changed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '401':
+          description: Current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ========== User Management Endpoints ==========
+  /api/users:
+    get:
+      tags: [Authentication]
+      summary: List all users
+      description: List all users (admin only)
+      operationId: listUsers
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '403':
+          description: Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      tags: [Authentication]
+      summary: Create new user
+      description: Create a new user account (admin only)
+      operationId: createUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '403':
+          description: Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+
+    get:
+      tags: [Authentication]
+      summary: Get user by ID
+      description: Get user information by ID (admin only)
+      operationId: getUser
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      tags: [Authentication]
+      summary: Update user
+      description: Update user information (admin only)
+      operationId: updateUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '403':
+          description: Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      tags: [Authentication]
+      summary: Delete user
+      description: Delete user account (admin only, cannot delete admin user ID 1)
+      operationId: deleteUser
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: User deleted
+        '403':
+          description: Cannot delete admin user or insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ========== API Token Management ==========
+  /api/tokens:
+    get:
+      tags: [Authentication]
+      summary: List my API tokens
+      description: List all API tokens for the current user
+      operationId: listMyTokens
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of API tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApiToken'
+
+    post:
+      tags: [Authentication]
+      summary: Create new API token
+      description: Create a new long-lived API token
+      operationId: createApiToken
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTokenRequest'
+      responses:
+        '201':
+          description: Token created (token string only shown once)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateTokenResponse'
+
+  /api/tokens/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+
+    delete:
+      tags: [Authentication]
+      summary: Revoke API token
+      description: Revoke/delete an API token
+      operationId: revokeApiToken
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Token revoked
+        '404':
+          description: Token not found or not owned by user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ========== Channel Endpoints ==========
+  /api/channels:
+    get:
+      tags: [Channels]
+      summary: List all channels
+      description: List all channels accessible to the current user
+      operationId: listChannels
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Channel'
+
+    post:
+      tags: [Channels]
+      summary: Create new channel
+      description: Create a new channel
+      operationId: createChannel
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChannelRequest'
+      responses:
+        '201':
+          description: Channel created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '409':
+          description: Channel name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/channels/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+
+    put:
+      tags: [Channels]
+      summary: Update channel
+      description: Update channel settings
+      operationId: updateChannel
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateChannelRequest'
+      responses:
+        '200':
+          description: Channel updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      tags: [Channels]
+      summary: Delete channel
+      description: Delete a channel and all its rules
+      operationId: deleteChannel
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Channel deleted
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ========== Rule Endpoints ==========
+  /api/channels/{id}/rules:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+
+    get:
+      tags: [Rules]
+      summary: List channel rules
+      description: List all rules for a specific channel
+      operationId: listRules
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Rule'
+
+    post:
+      tags: [Rules]
+      summary: Create new rule
+      description: Create a new rule for a channel
+      operationId: createRule
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRuleRequest'
+      responses:
+        '201':
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+
+  /api/rules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+
+    put:
+      tags: [Rules]
+      summary: Update rule
+      description: Update an existing rule
+      operationId: updateRule
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRuleRequest'
+      responses:
+        '200':
+          description: Rule updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+        '404':
+          description: Rule not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      tags: [Rules]
+      summary: Delete rule
+      description: Delete a rule
+      operationId: deleteRule
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Rule deleted
+        '404':
+          description: Rule not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/rules/reorder:
+    post:
+      tags: [Rules]
+      summary: Reorder rules
+      description: Reorder rules by providing an array of rule IDs in the desired order
+      operationId: reorderRules
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderRulesRequest'
+      responses:
+        '200':
+          description: Rules reordered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+  # ========== Event Endpoints ==========
+  /api/events:
+    get:
+      tags: [Events]
+      summary: Query events
+      description: Query processed signal events with optional filters
+      operationId: listEvents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: channel_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: action
+          in: query
+          schema:
+            type: string
+            enum: [pass, modify, replace, delete]
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: List of events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Event'
+
+  /api/events/stats:
+    get:
+      tags: [Events]
+      summary: Get event statistics
+      description: Get aggregate statistics about processed events
+      operationId: getEventStats
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Event statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventStats'
+
+  /api/events/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+
+    get:
+      tags: [Events]
+      summary: Get event detail
+      description: Get detailed information about a specific event
+      operationId: getEventDetail
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Event detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '404':
+          description: Event not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ========== Dry Run Endpoint ==========
+  /api/dryrun:
+    post:
+      tags: [Rules]
+      summary: Dry run signal processing
+      description: Test how a signal would be processed without creating an event
+      operationId: dryRun
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DryRunRequest'
+      responses:
+        '200':
+          description: Dry run result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DryRunResponse'
+
+  # ========== ESAM Endpoints ==========
+  /esam:
+    post:
+      tags: [ESAM]
+      summary: Process ESAM signal (default channel)
+      description: Process an ESAM SignalProcessingEvent XML request using the default channel
+      operationId: handleEsam
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+              example: |
+                <?xml version="1.0"?>
+                <SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1">
+                  <AcquiredSignal acquisitionSignalID="test-001">
+                    <UTCPoint utcPoint="2025-11-05T20:00:00Z"/>
+                  </AcquiredSignal>
+                </SignalProcessingEvent>
+      responses:
+        '200':
+          description: ESAM response
+          content:
+            application/xml:
+              schema:
+                type: string
+        '400':
+          description: Invalid XML or signal format
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /esam/channel/{channel}:
+    parameters:
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Channel name
+
+    post:
+      tags: [ESAM]
+      summary: Process ESAM signal (specific channel)
+      description: Process an ESAM SignalProcessingEvent XML request for a specific channel
+      operationId: handleEsamWithPath
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: ESAM response
+          content:
+            application/xml:
+              schema:
+                type: string
+        '400':
+          description: Invalid XML or signal format
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  # ========== SCTE-35 Tools Endpoints ==========
+  /api/tools/scte35/build:
+    post:
+      tags: [SCTE-35 Tools]
+      summary: Build SCTE-35 signal with optional segmentation descriptors
+      description: Build SCTE-35 signals with optional custom segmentation descriptors. Supports both basic signals and advanced signals with segmentation types and UPIDs.
+      operationId: buildScte35
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuildRequest'
+      responses:
+        '200':
+          description: Base64-encoded SCTE-35 signal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildResponse'
+
+  /api/tools/scte35/decode:
+    post:
+      tags: [SCTE-35 Tools]
+      summary: Decode SCTE-35 signal
+      description: Decode and parse a Base64-encoded SCTE-35 signal
+      operationId: decodeScte35
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecodeRequest'
+      responses:
+        '200':
+          description: Decoded SCTE-35 information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecodeResponse'
+
+  /api/tools/scte35/validate:
+    post:
+      tags: [SCTE-35 Tools]
+      summary: Validate SCTE-35 signal
+      description: Validate a Base64-encoded SCTE-35 signal (CRC-32 check)
+      operationId: validateScte35
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateRequest'
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateResponse'
+
+  /api/tools/scte35/test-send:
+    post:
+      tags: [SCTE-35 Tools]
+      summary: Test send SCTE-35 signal
+      description: Send a test SCTE-35 signal through the channel processing pipeline
+      operationId: testSendScte35
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestSendRequest'
+      responses:
+        '200':
+          description: Test send result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestSendResponse'
+
+  # ========== Backup Endpoints ==========
+  /api/backup/export/channel/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+
+    post:
+      tags: [Backup]
+      summary: Export channel metadata
+      description: Export channel configuration (metadata only, no rules)
+      operationId: exportChannel
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Channel backup data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelBackup'
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ========== System Endpoints ==========
+  /healthz:
+    get:
+      tags: [System]
+      summary: Health check
+      description: Simple health check endpoint
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok

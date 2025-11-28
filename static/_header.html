@@ -1,16 +1,49 @@
-<!-- static/_header.html -->
 <header class="topbar">
   <div class="brand">
-    <a href="/"><span class="logo">POIS</span></a>
-    <a href="/static/admin.html" class="brand-sub">Admin</a>
+    <a href="/">
+      <img src="/static/images/txcue-white.svg" alt="TxCue" class="logo">
+    </a>
+    <a href="/admin" class="brand-sub">POIS</a>
   </div>
   <nav class="nav">
-    <a href="/static/admin.html">Channels &amp; Rules</a>
-    <a href="/static/tools.html">SCTE‑35 Builder</a>
+    <a href="/admin" class="nav-link">Channels & Rules</a>
+    <a href="/tools" class="nav-link">SCTE-35 Builder</a>
+    <a href="/events" class="nav-link">Event Monitor</a>
+    <a href="/docs" class="nav-link">API Docs</a>
+    <a href="/users" class="nav-link">Users</a>
+    <a href="/tokens" class="nav-link">Tokens</a>
   </nav>
   <div class="spacer"></div>
-  <div class="right row">
+  <div class="right">
     <span id="tokenDisplay">token: unset</span>
     <button class="btn" id="logoutBtn">Logout</button>
   </div>
 </header>
+<script>
+// Update token display on page load
+document.addEventListener('DOMContentLoaded', function() {
+  const token = localStorage.getItem('pois_token');
+  const tokenDisplay = document.getElementById('tokenDisplay');
+  if (tokenDisplay) {
+    tokenDisplay.textContent = token ? 'token: set' : 'token: unset';
+  }
+  
+  // Logout handler
+  const logoutBtn = document.getElementById('logoutBtn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', function() {
+      localStorage.removeItem('pois_token');
+      window.location.href = '/login';
+    });
+  }
+
+  // Set active nav link based on current path
+  const currentPath = window.location.pathname;
+  document.querySelectorAll('.nav-link').forEach(link => {
+    const href = link.getAttribute('href');
+    if (currentPath === href || currentPath === href + '.html') {
+      link.classList.add('active');
+    }
+  });
+});
+</script>

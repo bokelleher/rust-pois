@@ -1,10 +1,11 @@
 // src/event_logging.rs
+use crate::esam::decode_scte35_details;
 use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct EsamEvent {
@@ -96,6 +97,33 @@ impl EventLogger {
         };
         
         let action = matched_rule.map(|(_, action)| action).unwrap_or("noop");
+        // Decode SCTE-35 if present in BinaryData
+        let (scte35_command, scte35_type_id, scte35_upid) = if let Some(binary_data) = facts
+            .get("scte35_b64")
+            
+            .and_then(|v| v.as_str()) 
+        {
+            match decode_scte35_details(binary_data) {
+                Ok(info) => {
+                    debug!("Successfully decoded SCTE-35: command={:?}", info.command);
+                    let upid_hex = info.segmentation_upid_with_type.as_ref().map(|(upid_type, data)| {
+                        format!("0x{:02X}:{}", upid_type, data.iter().map(|b| format!("{:02X}", b)).collect::<String>())
+                    });
+                    (
+                        info.command,
+                        info.segmentation_type_id.map(|id| id.to_string()),
+                        upid_hex
+                    )
+                },
+                Err(e) => {
+                    debug!("Failed to decode SCTE-35 in event logging: {}", e);
+                    (None, None, None)
+                }
+            }
+        } else {
+            (None, None, None)
+        };
+        
         
         let event_id = sqlx::query_scalar::<_, i64>(
             r#"
@@ -114,9 +142,9 @@ impl EventLogger {
         .bind(facts.get("utcPoint").and_then(|v| v.as_str()).unwrap_or(""))
         .bind(client_info.source_ip)
         .bind(client_info.user_agent)
-        .bind(facts.get("scte35.command").and_then(|v| v.as_str()))
-        .bind(facts.get("scte35.segmentation_type_id").and_then(|v| v.as_str()))
-        .bind(facts.get("scte35.segmentation_upid").and_then(|v| v.as_str()))
+        .bind(scte35_command.as_deref())
+        .bind(scte35_type_id.as_deref())
+        .bind(scte35_upid.as_deref())
         .bind(matched_rule_id)
         .bind(matched_rule_name)
         .bind(action)
@@ -137,6 +165,8 @@ impl EventLogger {
             processing_ms = metrics.processing_time_ms,
             "ESAM event logged"
         );
+
+        // ← NEW: Broadcast to WebSocket clients if registry provided
 
         Ok(event_id)
     }

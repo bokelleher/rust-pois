@@ -1,107 +1,123 @@
 <!doctype html>
+<!--
+  events.html - Event Monitor
+  Version: 3.2.4
+  Last updated: 2025-11-24
+  Changes: Fixed LAST 24H field name (last_24h_events instead of events_last_24h)
+  Base: 3.2.3
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>POIS Event Monitor</title>
+  <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
   <link rel="stylesheet" href="/static/app.css">
   <style>
-    /* Modal styles - guaranteed to work */
-    .modal-backdrop {
-      position: fixed !important;
-      top: 0 !important;
-      left: 0 !important;
-      right: 0 !important;
-      bottom: 0 !important;
-      background: rgba(0, 0, 0, 0.85) !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      z-index: 9999 !important;
-      padding: 20px !important;
+    /* SCTE-35 Display Styles */
+    .scte35-section {
+      margin-top: 20px;
+      padding: 20px;
+      background: rgba(139, 92, 246, 0.1);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 12px;
     }
-
-    .modal-backdrop.hidden {
-      display: none !important;
+    
+    .scte35-title {
+      color: #8b5cf6;
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0 0 16px 0;
     }
-
-    .modal {
-      background: #1a1a2e !important;
-      border: 1px solid rgba(139, 92, 246, 0.3) !important;
-      border-radius: 16px !important;
-      max-width: 900px !important;
-      width: 100% !important;
-      max-height: 90vh !important;
-      overflow-y: auto !important;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7) !important;
-      display: flex !important;
-      flex-direction: column !important;
+    
+    .scte35-boxes {
+      display: flex;
+      gap: 20px;
     }
-
-    .modal-header {
-      padding: 24px !important;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
-      display: flex !important;
-      justify-content: space-between !important;
-      align-items: center !important;
-      background: linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(59, 130, 246, 0.2) 100%) !important;
-      flex-shrink: 0 !important;
+    
+    .scte35-box {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 16px;
     }
-
-    .modal-title {
-      font-size: 24px !important;
-      font-weight: 700 !important;
-      margin: 0 !important;
-      color: #ffffff !important;
+    
+    .scte35-box-title {
+      color: #8b5cf6;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 0 0 12px 0;
     }
-
-    .modal-content {
-      padding: 24px !important;
-      color: #ffffff !important;
-      overflow-y: auto !important;
-      flex: 1 !important;
+    
+    .scte35-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 14px;
     }
-
-    .modal-content strong {
-      color: #8b5cf6 !important;
-      font-weight: 600 !important;
+    
+    .scte35-label {
+      color: #999;
     }
-
-    .modal-content div {
-      color: rgba(255, 255, 255, 0.9) !important;
-      line-height: 1.6 !important;
+    
+    .scte35-value {
+      color: #fff;
+      font-family: 'SF Mono', Monaco, monospace;
     }
-
-    .modal-content pre {
-      background: rgba(0, 0, 0, 0.4) !important;
-      border: 1px solid rgba(139, 92, 246, 0.3) !important;
-      border-radius: 8px !important;
-      padding: 16px !important;
-      overflow-x: auto !important;
-      max-height: 400px !important;
-      color: #e0e0e0 !important;
-      font-size: 13px !important;
-      line-height: 1.5 !important;
+    
+    .scte35-json {
+      margin-top: 12px;
+      padding: 12px;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 6px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 12px;
+      color: #9CA3FF;
+      white-space: pre-wrap;
+    }
+    
+    .raw-hex-section {
+      margin-top: 16px;
+    }
+    
+    .raw-hex-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      color: #8b5cf6;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    
+    .raw-hex-toggle:hover {
+      color: #a78bfa;
+    }
+    
+    .raw-hex-content {
+      margin-top: 12px;
+      padding: 16px;
+      background: rgba(234, 179, 8, 0.1);
+      border: 1px solid rgba(234, 179, 8, 0.3);
+      border-radius: 8px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 13px;
+      color: #fbbf24;
+      word-break: break-all;
+    }
+    
+    .segmentation-section {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
     }
   </style>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <a href="/">
-        <img src="https://esni.techexlab.com:3000/static/media/techex-logo.74b1230112edda6b3915.png" alt="TechExLab" class="logo">
-      </a>
-    </div>
-    <nav class="nav">
-      <a href="/static/admin.html">Channels & Rules</a>
-      <a href="/static/tools.html">SCTE-35 Builder</a>
-      <a href="/static/events.html" class="active">Event Monitor</a>
-    </nav>
-    <div class="spacer"></div>
-    <div class="right">
-      <span id="tokenDisplay">token: unset</span>
-    </div>
-  </header>
+  <!-- Header will be injected by header.js -->
 
   <main class="content events-max-width">
     <div class="flex justify-between items-center mb-6">
@@ -130,94 +146,90 @@
         <div class="stat-label">Avg Time (ms)</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Actions (24h)</div>
-        <div id="actionBreakdown" class="text-sm mt-2">--</div>
+        <div class="stat-number" id="actionBreakdown">--</div>
+        <div class="stat-label">Action Breakdown</div>
       </div>
     </div>
 
     <!-- Filters -->
-    <div class="filter-bar">
-      <div class="form-group">
-        <label>Channel</label>
-        <select id="channelFilter">
-          <option value="">All Channels</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Action</label>
-        <select id="actionFilter">
-          <option value="">All Actions</option>
-          <option value="noop">noop</option>
-          <option value="delete">delete</option>
-          <option value="replace">replace</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Since</label>
-        <select id="sinceFilter">
-          <option value="">All Time</option>
-          <option value="1h">Last Hour</option>
-          <option value="24h">Last 24 Hours</option>
-          <option value="7d">Last 7 Days</option>
-          <option value="30d">Last 30 Days</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Search</label>
-        <input type="text" id="searchInput" placeholder="Signal ID, IP, or Rule...">
+    <div class="filters-panel">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="filterChannel">Channel</label>
+          <select id="filterChannel">
+            <option value="">All Channels</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="filterAction">Action</label>
+          <select id="filterAction">
+            <option value="">All Actions</option>
+            <option value="noop">noop</option>
+            <option value="replace">replace</option>
+            <option value="delete">delete</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="filterSince">Since</label>
+          <input type="datetime-local" id="filterSince">
+        </div>
+        <div class="form-group">
+          <label for="filterSearch">Search</label>
+          <input type="text" id="filterSearch" placeholder="Signal ID, IP...">
+        </div>
+        <button class="btn btn-primary" id="applyFiltersBtn" style="margin-top: 24px;">Apply Filters</button>
+        <button class="btn" id="clearFiltersBtn" style="margin-top: 24px;">Clear</button>
       </div>
     </div>
 
     <!-- Events Table -->
-    <div class="panel" style="padding: 0;">
-      <table>
-        <thead>
-          <tr>
-            <th class="sortable-header" data-sort="timestamp">
-              Timestamp<span class="sort-indicator">↕</span>
-            </th>
-            <th class="sortable-header" data-sort="channel_name">
-              Channel<span class="sort-indicator">↕</span>
-            </th>
-            <th>Signal ID</th>
-            <th>Source IP</th>
-            <th>SCTE-35 Cmd</th>
-            <th>Type ID</th>
-            <th>Matched Rule</th>
-            <th class="sortable-header" data-sort="action">
-              Action<span class="sort-indicator">↕</span>
-            </th>
-            <th class="text-right sortable-header" data-sort="processing_time_ms">
-              Time (ms)<span class="sort-indicator">↕</span>
-            </th>
-            <th class="text-right">Status</th>
-            <th>Details</th>
-          </tr>
-        </thead>
-        <tbody id="eventsTableBody">
-          <tr>
-            <td colspan="11" class="text-center p-8 text-muted">Loading events...</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Pagination -->
-    <div class="pagination">
-      <div class="pagination-info">
-        Showing <span id="showingStart">0</span>-<span id="showingEnd">0</span> | 
-        <span id="eventCount">0 events</span>
+    <div class="panel">
+      <div class="card-header">
+        <div class="card-title">Recent Events</div>
       </div>
-      <div class="pagination-controls">
-        <button id="prevPage" class="btn">← Previous</button>
-        <span class="text-muted">Page <span id="currentPage">1</span></span>
-        <button id="nextPage" class="btn">Next →</button>
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Timestamp</th>
+              <th>Channel</th>
+              <th>Signal ID</th>
+              <th>Action</th>
+              <th>Rule</th>
+              <th>Status</th>
+              <th>Time (ms)</th>
+              <th>Command</th>
+              <th>Source IP</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="eventsTableBody">
+            <tr>
+              <td colspan="11" style="text-align: center; padding: 40px;">
+                Loading events...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div class="pagination">
+        <div class="pagination-info">
+          Showing <span id="showingStart">0</span> to <span id="showingEnd">0</span> of <span id="totalCount">0</span>
+        </div>
+        <div class="pagination-controls">
+          <button class="btn btn-small" id="prevPageBtn" disabled>Previous</button>
+          <span style="color: var(--text-secondary);">Page <span id="currentPageNum">1</span></span>
+          <button class="btn btn-small" id="nextPageBtn">Next</button>
+        </div>
       </div>
     </div>
   </main>
 
-  <!-- Event Detail Modal - FIXED SCROLLING -->
-  <div id="eventDetailModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.9); z-index: 999999; padding: 20px; overflow-y: auto;" onclick="if(event.target === this) eventMonitor.closeEventDetail()">
+  <!-- Event Detail Modal -->
+  <div id="eventDetailModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.8); z-index: 999999; padding: 20px; overflow-y: auto;" onclick="if(event.target === this) eventMonitor.closeEventDetail()">
     <div style="position: relative; background: #1a1a2e; border: 2px solid #8b5cf6; border-radius: 16px; max-width: 900px; width: 100%; margin: 40px auto; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7); display: flex; flex-direction: column; max-height: calc(100vh - 80px);" onclick="event.stopPropagation()">
       <div style="padding: 24px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: space-between; align-items: center; background: linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(59, 130, 246, 0.2) 100%); flex-shrink: 0;">
         <h2 style="font-size: 24px; font-weight: 700; margin: 0; color: #ffffff;">Event Details</h2>
@@ -229,18 +241,11 @@
     </div>
   </div>
 
-  <script src="/static/app.js"></script>
-  <script>
-  </div>
-
-  <script src="/static/app.js"></script>
   <script>
     class EventMonitor {
       constructor() {
         this.currentPage = 1;
-        this.pageSize = 50;
-        this.sortBy = 'timestamp';
-        this.sortOrder = 'desc';
+        this.pageSize = 20;
         this.filters = {
           channel: '',
           action: '',
@@ -253,16 +258,47 @@
 
       init() {
         this.setupEventListeners();
-        this.loadEvents();
         this.loadChannels();
         this.loadStatistics();
+        this.loadEvents();
         this.startAutoRefresh();
       }
 
       setupEventListeners() {
         document.getElementById('refreshBtn').addEventListener('click', () => {
-          this.loadEvents();
           this.loadStatistics();
+          this.loadEvents();
+        });
+
+        document.getElementById('applyFiltersBtn').addEventListener('click', () => {
+          this.currentPage = 1;
+          this.filters.channel = document.getElementById('filterChannel').value;
+          this.filters.action = document.getElementById('filterAction').value;
+          this.filters.since = document.getElementById('filterSince').value;
+          this.filters.search = document.getElementById('filterSearch').value;
+          this.loadEvents();
+        });
+
+        document.getElementById('clearFiltersBtn').addEventListener('click', () => {
+          document.getElementById('filterChannel').value = '';
+          document.getElementById('filterAction').value = '';
+          document.getElementById('filterSince').value = '';
+          document.getElementById('filterSearch').value = '';
+          this.filters = { channel: '', action: '', since: '', search: '' };
+          this.currentPage = 1;
+          this.loadEvents();
+        });
+
+        document.getElementById('prevPageBtn').addEventListener('click', () => {
+          if (this.currentPage > 1) {
+            this.currentPage--;
+            this.loadEvents();
+          }
+        });
+
+        document.getElementById('nextPageBtn').addEventListener('click', () => {
+          this.currentPage++;
+          this.loadEvents();
         });
 
         document.getElementById('autoRefresh').addEventListener('change', (e) => {
@@ -272,70 +308,13 @@
             this.stopAutoRefresh();
           }
         });
-
-        document.getElementById('channelFilter').addEventListener('change', (e) => {
-          this.filters.channel = e.target.value;
-          this.currentPage = 1;
-          this.loadEvents();
-        });
-
-        document.getElementById('actionFilter').addEventListener('change', (e) => {
-          this.filters.action = e.target.value;
-          this.currentPage = 1;
-          this.loadEvents();
-        });
-
-        document.getElementById('sinceFilter').addEventListener('change', (e) => {
-          this.filters.since = e.target.value;
-          this.currentPage = 1;
-          this.loadEvents();
-        });
-
-        document.getElementById('searchInput').addEventListener('input', (e) => {
-          this.filters.search = e.target.value;
-          this.currentPage = 1;
-          this.loadEvents();
-        });
-
-        document.getElementById('prevPage').addEventListener('click', () => {
-          if (this.currentPage > 1) {
-            this.currentPage--;
-            this.loadEvents();
-          }
-        });
-
-        document.getElementById('nextPage').addEventListener('click', () => {
-          this.currentPage++;
-          this.loadEvents();
-        });
-
-        document.querySelectorAll('.sortable-header').forEach(header => {
-          header.addEventListener('click', () => {
-            const sortBy = header.dataset.sort;
-            if (this.sortBy === sortBy) {
-              this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
-            } else {
-              this.sortBy = sortBy;
-              this.sortOrder = 'desc';
-            }
-            this.updateSortIndicators();
-            this.loadEvents();
-          });
-        });
-
-        // ESC key closes modal
-        document.addEventListener('keydown', (e) => {
-          if (e.key === 'Escape') {
-            this.closeEventDetail();
-          }
-        });
       }
 
       startAutoRefresh() {
         this.stopAutoRefresh();
         this.autoRefreshInterval = setInterval(() => {
-          this.loadEvents();
           this.loadStatistics();
+          this.loadEvents();
         }, 30000);
       }
 
@@ -349,11 +328,11 @@
       async loadChannels() {
         try {
           const response = await fetch('/api/channels', {
-            headers: { 'Authorization': `Bearer ${POIS_TOKEN.get()}` }
+            headers: { 'Authorization': `Bearer ${POIS_AUTH.getToken()}` }
           });
           const channels = await response.json();
           
-          const select = document.getElementById('channelFilter');
+          const select = document.getElementById('filterChannel');
           channels.forEach(ch => {
             const option = document.createElement('option');
             option.value = ch.name;
@@ -368,17 +347,17 @@
       async loadStatistics() {
         try {
           const response = await fetch('/api/events/stats', {
-            headers: { 'Authorization': `Bearer ${POIS_TOKEN.get()}` }
+            headers: { 'Authorization': `Bearer ${POIS_AUTH.getToken()}` }
           });
           const stats = await response.json();
           
           document.getElementById('totalEvents').textContent = stats.total_events || 0;
-          document.getElementById('last24hEvents').textContent = stats.events_last_24h || 0;
+          document.getElementById('last24hEvents').textContent = stats.last_24h_events || 0;
           document.getElementById('avgProcessingTime').textContent = 
             stats.avg_processing_time_ms ? stats.avg_processing_time_ms.toFixed(1) : '--';
           
-          if (stats.by_action) {
-            const breakdown = Object.entries(stats.by_action)
+          if (stats.action_counts) {
+            const breakdown = Object.entries(stats.action_counts)
               .map(([action, count]) => `${action}: ${count}`)
               .join('<br>');
             document.getElementById('actionBreakdown').innerHTML = breakdown;
@@ -401,7 +380,7 @@
           if (this.filters.search) params.append('search', this.filters.search);
 
           const response = await fetch(`/api/events?${params}`, {
-            headers: { 'Authorization': `Bearer ${POIS_TOKEN.get()}` }
+            headers: { 'Authorization': `Bearer ${POIS_AUTH.getToken()}` }
           });
           const events = await response.json();
           
@@ -411,7 +390,7 @@
         } catch (error) {
           console.error('Failed to load events:', error);
           document.getElementById('eventsTableBody').innerHTML = 
-            '<tr><td colspan="11" class="text-center p-8 text-error">Failed to load events</td></tr>';
+            '<tr><td colspan="11" class="text-center p-8">Failed to load events</td></tr>';
         }
       }
 
@@ -419,91 +398,311 @@
         const tbody = document.getElementById('eventsTableBody');
         
         if (events.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="11" class="text-center p-8 text-muted">No events found</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="11" style="text-align: center; padding: 40px;">No events found</td></tr>';
           return;
         }
 
         tbody.innerHTML = events.map(event => `
-          <tr class="cursor-pointer" onclick="eventMonitor.showEventDetail(${event.id})">
-            <td class="p-3 text-sm">${this.formatTimestamp(event.timestamp)}</td>
-            <td class="p-3 text-sm font-medium">${this.escapeHtml(event.channel_name)}</td>
-            <td class="p-3 text-sm font-mono">${this.escapeHtml(event.acquisition_signal_id)}</td>
-            <td class="p-3 text-sm">${event.source_ip || '--'}</td>
-            <td class="p-3 text-sm">${event.scte35_command || '--'}</td>
-            <td class="p-3 text-sm font-mono">${event.scte35_type_id || '--'}</td>
-            <td class="p-3 text-sm">${event.matched_rule_name || '<span class="text-muted">no match</span>'}</td>
-            <td class="p-3">
-              <span class="action-${event.action}">${event.action}</span>
-            </td>
-            <td class="p-3 text-sm text-right">${event.processing_time_ms || '--'}</td>
-            <td class="p-3 text-right">
-              <span class="status-${event.response_status}">${event.response_status}</span>
-            </td>
-            <td class="p-3 text-center">
-              <button class="btn btn-small" onclick="event.stopPropagation(); eventMonitor.showEventDetail(${event.id})">View</button>
+          <tr>
+            <td>${event.id}</td>
+            <td>${this.formatTimestamp(event.timestamp)}</td>
+            <td>${event.channel_name}</td>
+            <td>${event.acquisition_signal_id}</td>
+            <td><span class="badge badge-${this.getActionClass(event.action)}">${event.action}</span></td>
+            <td>${event.matched_rule_name || '-'}</td>
+            <td><span class="badge badge-${this.getStatusClass(event.response_status)}">${event.response_status}</span></td>
+            <td>${event.processing_time_ms}</td>
+            <td>${event.scte35_command || '-'}</td>
+            <td>${event.source_ip || '-'}</td>
+            <td style="white-space: nowrap;">
+              <button class="btn btn-small" onclick="eventMonitor.showEventDetail(${event.id})">View</button>
             </td>
           </tr>
         `).join('');
       }
 
+      formatTimestamp(timestamp) {
+        return new Date(timestamp).toLocaleString();
+      }
+
+      formatPtsTime(pts) {
+        if (!pts) return '--';
+        const seconds = pts / 90000;
+        return `${seconds.toFixed(3)}s (${pts})`;
+      }
+
+      getActionClass(action) {
+        const map = {
+          'noop': 'muted',
+          'delete': 'error',
+          'replace': 'warning',
+          'inject_segdesc': 'primary',
+          'replace_pts': 'warning',
+          'filter': 'error'
+        };
+        return map[action] || 'muted';
+      }
+
+      getStatusClass(status) {
+        return status >= 200 && status < 300 ? 'success' : 'error';
+      }
+
+      getCommandTypeId(command) {
+        const commandTypes = {
+          'splice_null': '0x00',
+          'splice_schedule': '0x04',
+          'splice_insert': '0x05',
+          'time_signal': '0x06',
+          'bandwidth_reservation': '0x07',
+          'private_command': '0xFF'
+        };
+        return commandTypes[command] || '0x??';
+      }
+
+      getSegmentationTypeName(typeId) {
+        const types = {
+          0x00: 'Not Indicated',
+          0x01: 'Content Identification',
+          0x10: 'Program Start',
+          0x11: 'Program End',
+          0x12: 'Program Early Termination',
+          0x13: 'Program Breakaway',
+          0x14: 'Program Resumption',
+          0x15: 'Program Runover Planned',
+          0x16: 'Program Runover Unplanned',
+          0x17: 'Program Overlap Start',
+          0x18: 'Program Blackout Override',
+          0x19: 'Program Start – In Progress',
+          0x20: 'Chapter Start',
+          0x21: 'Chapter End',
+          0x22: 'Break Start',
+          0x23: 'Break End',
+          0x24: 'Opening Credit Start',
+          0x25: 'Opening Credit End',
+          0x26: 'Closing Credit Start',
+          0x27: 'Closing Credit End',
+          0x30: 'Provider Advertisement Start',
+          0x31: 'Provider Advertisement End',
+          0x32: 'Distributor Advertisement Start',
+          0x33: 'Distributor Advertisement End',
+          0x34: 'Provider Placement Opportunity Start',
+          0x35: 'Provider Placement Opportunity End',
+          0x36: 'Distributor Placement Opportunity Start',
+          0x37: 'Distributor Placement Opportunity End',
+          0x38: 'Provider Overlay Placement Opportunity Start',
+          0x39: 'Provider Overlay Placement Opportunity End',
+          0x3A: 'Distributor Overlay Placement Opportunity Start',
+          0x3B: 'Distributor Overlay Placement Opportunity End',
+          0x40: 'Unscheduled Event Start',
+          0x41: 'Unscheduled Event End',
+          0x50: 'Network Start',
+          0x51: 'Network End'
+        };
+        return types[typeId] || `Unknown (0x${typeId.toString(16).toUpperCase().padStart(2, '0')})`;
+      }
+
+      decodeUpid(upidStr) {
+        if (!upidStr) return null;
+        
+        // Format: "0x01:746563686578313233334" or "0x0B:746563686578313233334"
+        const match = upidStr.match(/^0x([0-9A-Fa-f]+):([0-9A-Fa-f]+)$/);
+        if (!match) return upidStr;
+        
+        const upidType = parseInt(match[1], 16);
+        const hexData = match[2];
+        
+        // UPID types that are ASCII strings
+        const asciiTypes = [0x01, 0x0B];
+        
+        if (asciiTypes.includes(upidType)) {
+          // Decode hex to ASCII
+          let ascii = '';
+          for (let i = 0; i < hexData.length; i += 2) {
+            const byte = parseInt(hexData.substr(i, 2), 16);
+            if (byte >= 32 && byte <= 126) {
+              ascii += String.fromCharCode(byte);
+            } else {
+              ascii += '.';
+            }
+          }
+          
+          const typeNames = {
+            0x01: 'ISAN (Deprecated)',
+            0x0B: 'ATSC Content ID'
+          };
+          
+          return `"${ascii}" (${typeNames[upidType] || 'Type 0x' + upidType.toString(16)})`;
+        }
+        
+        // For non-ASCII types, return formatted hex
+        return `0x${hexData} (Type 0x${upidType.toString(16).toUpperCase().padStart(2, '0')})`;
+      }
+
+      escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      toggleRawData() {
+        const content = document.getElementById('rawHexContent');
+        const toggle = document.getElementById('rawHexToggle');
+        if (content && toggle) {
+          if (content.style.display === 'none') {
+            content.style.display = 'block';
+            toggle.innerHTML = '▼ SCTE-35 BASE64';
+          } else {
+            content.style.display = 'none';
+            toggle.innerHTML = '▶ SCTE-35 BASE64';
+          }
+        }
+      }
+
       async showEventDetail(eventId) {
-        console.log('Loading event detail for ID:', eventId);
-        
-        const modal = document.getElementById('eventDetailModal');
-        const content = document.getElementById('eventDetailContent');
-        
-        // Show modal with loading state
-        content.innerHTML = '<p style="color: #999; font-size: 16px;">Loading event details...</p>';
-        modal.style.display = "block";
-        
         try {
+          const modal = document.getElementById('eventDetailModal');
+          const content = document.getElementById('eventDetailContent');
+          
+          // Show modal immediately with loading state
+          content.innerHTML = '<p style="color: #999; font-size: 16px;">Loading event details...</p>';
+          modal.style.display = 'block';
+          
           const response = await fetch(`/api/events/${eventId}`, {
-            headers: { 'Authorization': `Bearer ${POIS_TOKEN.get()}` }
+            headers: { 'Authorization': `Bearer ${POIS_AUTH.getToken()}` }
           });
-          
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-          }
-          
           const event = await response.json();
-          console.log('Event data loaded:', event);
           
-          // Build HTML content
-          let html = '<div style="display: flex; flex-direction: column; gap: 14px;">';
+          // Build basic info section
+          let html = `
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+              <div style="color: #fff; font-size: 14px;"><strong>Event ID:</strong> ${event.id}</div>
+              <div style="color: #fff; font-size: 14px;"><strong>Timestamp:</strong> ${this.formatTimestamp(event.timestamp)}</div>
+              <div style="color: #fff; font-size: 14px;"><strong>Channel:</strong> ${event.channel_name}</div>
+              <div style="color: #fff; font-size: 14px;"><strong>Acquisition Signal ID:</strong> ${event.acquisition_signal_id}</div>
+              <div style="color: #fff; font-size: 14px;"><strong>UTC Point:</strong> ${event.utc_point || 'N/A'}</div>
+              <div style="color: #fff; font-size: 14px;"><strong>Source IP:</strong> ${event.source_ip || 'N/A'}</div>
+              <div style="color: #fff; font-size: 14px;"><strong>Action:</strong> <span class="badge badge-${this.getActionClass(event.action)}">${event.action}</span></div>
+              <div style="color: #fff; font-size: 14px;"><strong>Processing Time:</strong> ${event.processing_time_ms || '--'} ms</div>
+              <div style="color: #fff; font-size: 14px;"><strong>Response Status:</strong> ${event.response_status}</div>
+              <div style="color: #fff; font-size: 14px;"><strong>Request Size:</strong> ${event.request_size || '--'} bytes</div>
+              ${event.matched_rule_name ? `<div style="color: #fff; font-size: 14px;"><strong>Matched Rule:</strong> ${event.matched_rule_name} (ID: ${event.matched_rule_id})</div>` : ''}
+              ${event.error_message ? `<div style="color: #ff6b6b; font-size: 14px;"><strong>Error:</strong> ${this.escapeHtml(event.error_message)}</div>` : ''}
+          `;
           
-          html += `<div style="color: #fff; font-size: 14px;"><strong>Event ID:</strong> ${event.id}</div>`;
-          html += `<div style="color: #fff; font-size: 14px;"><strong>Timestamp:</strong> ${this.formatTimestamp(event.timestamp)}</div>`;
-          html += `<div style="color: #fff; font-size: 14px;"><strong>Channel:</strong> ${this.escapeHtml(event.channel_name)}</div>`;
-          html += `<div style="color: #fff; font-size: 14px;"><strong>Acquisition Signal ID:</strong> ${this.escapeHtml(event.acquisition_signal_id)}</div>`;
-          html += `<div style="color: #fff; font-size: 14px;"><strong>UTC Point:</strong> ${event.utc_point || 'N/A'}</div>`;
-          html += `<div style="color: #fff; font-size: 14px;"><strong>Source IP:</strong> ${event.source_ip || 'N/A'}</div>`;
-          
-          if (event.user_agent) {
-            html += `<div style="color: #fff; font-size: 14px;"><strong>User Agent:</strong> ${this.escapeHtml(event.user_agent)}</div>`;
+          // Extract base64 from raw_esam_request if not parsed by backend
+          let scte35Base64 = null;
+          if (event.raw_esam_request) {
+            const b64Match = event.raw_esam_request.match(/signalType="SCTE35"[^>]*>([A-Za-z0-9+/=]+)</);
+            if (b64Match) {
+              scte35Base64 = b64Match[1];
+            }
           }
           
-          html += `<div style="color: #fff; font-size: 14px;"><strong>Action:</strong> <span class="action-${event.action}">${event.action}</span></div>`;
-          html += `<div style="color: #fff; font-size: 14px;"><strong>Processing Time:</strong> ${event.processing_time_ms || '--'} ms</div>`;
-          html += `<div style="color: #fff; font-size: 14px;"><strong>Response Status:</strong> ${event.response_status}</div>`;
-          html += `<div style="color: #fff; font-size: 14px;"><strong>Request Size:</strong> ${event.request_size || '--'} bytes</div>`;
-          
-          if (event.matched_rule_name) {
-            html += `<div style="color: #fff; font-size: 14px;"><strong>Matched Rule:</strong> ${this.escapeHtml(event.matched_rule_name)} (ID: ${event.matched_rule_id})</div>`;
+          // Enhanced SCTE-35 Section with HEADER/COMMAND boxes
+          const scte35Command = event.scte35_command || event['scte35.command'];
+          if (scte35Command || scte35Base64) {
+            const ptsTime = event.scte35_pts_time || event['scte35.pts_time'];
+            const eventIdVal = event.scte35_event_id || event['scte35.event_id'];
+            
+            html += `
+              <div class="scte35-section">
+                <h3 class="scte35-title">Decoded SCTE-35 Signal</h3>
+                <div class="scte35-boxes">
+                  <div class="scte35-box">
+                    <h4 class="scte35-box-title">HEADER</h4>
+                    <div class="scte35-row">
+                      <span class="scte35-label">Table ID:</span>
+                      <span class="scte35-value">0xFC</span>
+                    </div>
+                    <div class="scte35-row">
+                      <span class="scte35-label">Protocol:</span>
+                      <span class="scte35-value">0</span>
+                    </div>
+                    <div class="scte35-row">
+                      <span class="scte35-label">Encrypted:</span>
+                      <span class="scte35-value">No</span>
+                    </div>
+                    <div class="scte35-row">
+                      <span class="scte35-label">PTS Adjust:</span>
+                      <span class="scte35-value">0</span>
+                    </div>
+                  </div>
+                  <div class="scte35-box">
+                    <h4 class="scte35-box-title">COMMAND</h4>
+                    <div class="scte35-row">
+                      <span class="scte35-label">Type:</span>
+                      <span class="scte35-value">${scte35Command || '<span style="color: #f59e0b;">Not parsed</span>'}</span>
+                    </div>
+                    <div class="scte35-row">
+                      <span class="scte35-label">Type ID:</span>
+                      <span class="scte35-value">${scte35Command ? this.getCommandTypeId(scte35Command) : '--'}</span>
+                    </div>
+                    ${ptsTime ? `
+                    <div class="scte35-row">
+                      <span class="scte35-label">PTS Time:</span>
+                      <span class="scte35-value">${this.formatPtsTime(ptsTime)}</span>
+                    </div>
+                    ` : ''}
+                    ${scte35Command ? `<div class="scte35-json">{
+  "command": "${scte35Command}"${eventIdVal ? `,
+  "event_id": ${eventIdVal}` : ''}
+}</div>` : `<div class="scte35-json" style="color: #f59e0b;">Backend did not decode SCTE-35 data.
+Check raw_esam_request for base64.</div>`}
+                  </div>
+                </div>
+            `;
+            
+            // Segmentation Descriptor Section
+            const segTypeId = event.scte35_type_id || event['scte35.segmentation_type_id'];
+            const segTypeName = event['scte35.segmentation_type_name'];
+            const segUpid = event.scte35_upid || event['scte35.segmentation_upid'];
+            const upidTypeName = event['scte35.upid_type_name'];
+            
+            // Always show segmentation section - either with data or "not parsed" message
+            html += `
+              <div class="segmentation-section">
+                <h4 class="scte35-box-title">SEGMENTATION DESCRIPTOR</h4>
+            `;
+            
+            if (segTypeId || segUpid) {
+              html += `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                  ${segTypeId ? `
+                  <div>
+                    <div style="color: #999; font-size: 14px; margin-bottom: 4px;">Type ID:</div>
+                    <div style="color: #fff; font-family: 'SF Mono', Monaco, monospace; font-size: 14px;">${segTypeId} - ${this.getSegmentationTypeName(segTypeId)}</div>
+                  </div>
+                  ` : ''}
+                  ${segUpid ? `
+                  <div>
+                    <div style="color: #999; font-size: 14px; margin-bottom: 4px;">UPID:</div>
+                    <div style="color: #fff; font-family: 'SF Mono', Monaco, monospace; font-size: 14px;">${this.decodeUpid(segUpid)}</div>
+                  </div>
+                  ` : ''}
+                </div>
+              `;
+            } else {
+              html += `<p style="color: #f59e0b; margin: 0; font-size: 14px;">No descriptors parsed by backend</p>`;
+            }
+            
+            html += `</div>`;
+            
+            // RAW DATA Section - use extracted base64 if backend didn't parse it
+            const rawData = event.scte35_b64 || event['scte35.raw_hex'] || scte35Base64;
+            if (rawData) {
+              html += `
+                <div class="raw-hex-section">
+                  <div class="raw-hex-toggle" id="rawHexToggle" onclick="eventMonitor.toggleRawData()">▶ SCTE-35 BASE64</div>
+                  <div class="raw-hex-content" id="rawHexContent" style="display: none;">${this.escapeHtml(rawData)}</div>
+                </div>
+              `;
+            }
+            
+            html += '</div>'; // close scte35-section
           }
           
-          if (event.error_message) {
-            html += `<div style="color: #ff6b6b; font-size: 14px;"><strong>Error:</strong> ${this.escapeHtml(event.error_message)}</div>`;
-          }
-          
-          // SCTE-35 Details
-          if (event.scte35_command || event.scte35_type_id || event.scte35_upid) {
-            html += '<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);"><strong style="color: #8b5cf6; font-size: 16px;">SCTE-35 Details</strong></div>';
-            if (event.scte35_command) html += `<div style="color: #fff; font-size: 14px;">Command: ${event.scte35_command}</div>`;
-            if (event.scte35_type_id) html += `<div style="color: #fff; font-size: 14px;">Segmentation Type ID: ${event.scte35_type_id}</div>`;
-            if (event.scte35_upid) html += `<div style="color: #fff; font-size: 14px;">UPID: ${this.escapeHtml(event.scte35_upid)}</div>`;
-          }
-          
-          // Raw XML
+          // ESAM Request XML
           if (event.raw_esam_request) {
             html += `
               <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
@@ -513,6 +712,7 @@
             `;
           }
           
+          // ESAM Response XML
           if (event.raw_esam_response) {
             html += `
               <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
@@ -522,20 +722,17 @@
             `;
           }
           
-          html += '</div>';
+          html += '</div>'; // close main container
           content.innerHTML = html;
-          console.log('Modal content updated');
           
         } catch (error) {
           console.error('Failed to load event details:', error);
-          content.innerHTML = `<div style="color: #ff6b6b; font-size: 16px; padding: 20px;">Failed to load event details: ${error.message}</div>`;
+          alert('Failed to load event details');
         }
       }
 
       closeEventDetail() {
-        const modal = document.getElementById('eventDetailModal');
-        modal.style.display = "none";
-        console.log('Modal closed');
+        document.getElementById('eventDetailModal').style.display = 'none';
       }
 
       updatePagination(eventCount) {
@@ -543,40 +740,22 @@
         const end = start + eventCount - 1;
         
         document.getElementById('showingStart').textContent = eventCount > 0 ? start : 0;
-        document.getElementById('showingEnd').textContent = eventCount > 0 ? end : 0;
-        document.getElementById('currentPage').textContent = this.currentPage;
+        document.getElementById('showingEnd').textContent = end;
+        document.getElementById('currentPageNum').textContent = this.currentPage;
         
-        document.getElementById('prevPage').disabled = this.currentPage <= 1;
-        document.getElementById('nextPage').disabled = eventCount < this.pageSize;
-        
-        document.getElementById('eventCount').textContent = `${eventCount} events on this page`;
-      }
-
-      updateSortIndicators() {
-        document.querySelectorAll('.sort-indicator').forEach(indicator => {
-          indicator.textContent = '↕';
-        });
-        
-        const activeHeader = document.querySelector(`[data-sort="${this.sortBy}"] .sort-indicator`);
-        if (activeHeader) {
-          activeHeader.textContent = this.sortOrder === 'asc' ? '↑' : '↓';
-        }
-      }
-
-      formatTimestamp(ts) {
-        if (!ts) return '--';
-        return new Date(ts).toLocaleString();
-      }
-
-      escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        document.getElementById('prevPageBtn').disabled = this.currentPage === 1;
+        document.getElementById('nextPageBtn').disabled = eventCount < this.pageSize;
       }
     }
 
-    const eventMonitor = new EventMonitor();
+    // Initialize after header.js loads
+    window.addEventListener('load', function() {
+      if (POIS_AUTH && POIS_AUTH.requireAuth()) {
+        window.eventMonitor = new EventMonitor();
+      }
+    });
   </script>
+  
+  <script src="/static/header.js"></script>
 </body>
 </html>
