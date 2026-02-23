@@ -38,6 +38,23 @@ read -rp "Enter port for POIS to listen on [${DEFAULT_PORT}]: " PORT
 PORT=${PORT:-$DEFAULT_PORT}
 echo "Using port: ${PORT}"
 
+# --- Prompt for admin credentials ---
+DEFAULT_ADMIN_USER="admin"
+read -rp "Enter admin username [${DEFAULT_ADMIN_USER}]: " ADMIN_USER
+ADMIN_USER=${ADMIN_USER:-$DEFAULT_ADMIN_USER}
+
+while true; do
+  read -rsp "Enter admin password: " ADMIN_PASS
+  echo
+  read -rsp "Confirm admin password: " ADMIN_PASS2
+  echo
+  if [[ "${ADMIN_PASS}" == "${ADMIN_PASS2}" ]]; then
+    break
+  fi
+  echo "Passwords do not match. Please try again."
+done
+echo "Admin user: ${ADMIN_USER}"
+
 echo
 echo "1) Installing system dependencies..."
 apt update
@@ -135,6 +152,8 @@ Environment=POIS_PORT=${PORT}
 Environment=RUST_LOG=info
 Environment=POIS_JWT_SECRET=${JWT_SECRET}
 Environment=POIS_DB=sqlite://${INSTALL_DIR}/pois.db
+Environment=POIS_SEED_ADMIN_USER=${ADMIN_USER}
+Environment=POIS_SEED_ADMIN_PASS=${ADMIN_PASS}
 Restart=on-failure
 RestartSec=5
 User=${SERVICE_USER}
@@ -156,7 +175,15 @@ systemctl enable "${SERVICE_NAME}"
 systemctl restart "${SERVICE_NAME}"
 
 echo
-echo "12) Opening firewall port ${PORT} (if ufw is active)..."
+echo "12) Waiting for service to seed admin user..."
+sleep 3
+# Remove seed credentials from service file for security (seeding is done)
+sed -i "/POIS_SEED_ADMIN_USER/d;/POIS_SEED_ADMIN_PASS/d" /etc/systemd/system/${SERVICE_NAME}.service
+systemctl daemon-reload
+echo "   Seed credentials removed from service file."
+
+echo
+echo "13) Opening firewall port ${PORT} (if ufw is active)..."
 if command -v ufw >/dev/null 2>&1; then
   ufw allow "${PORT}"/tcp || true
 fi

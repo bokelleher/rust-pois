@@ -2,6 +2,7 @@ mod models;
 mod rules;
 mod esam;
 mod scte35; // NEW: builder module
+mod jwt_auth;
 
 use axum::{
     extract::{Path, Query, State},
@@ -74,6 +75,33 @@ async fn main() -> anyhow::Result<()> {
         .connect_with(conn_opts)
         .await?;
     sqlx::migrate!().run(&db).await?;
+
+    // Seed admin user on first install if env vars are set
+    if let (Ok(seed_user), Ok(seed_pass)) = (
+        std::env::var("POIS_SEED_ADMIN_USER"),
+        std::env::var("POIS_SEED_ADMIN_PASS"),
+    ) {
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+            .fetch_one(&db)
+            .await?;
+        if count.0 == 0 {
+            match crate::jwt_auth::PasswordService::hash_password(&seed_pass) {
+                Ok(hash) => {
+                    sqlx::query(
+                        "INSERT INTO users(username, password_hash, role, enabled) VALUES(?, ?, 'admin', 1)"
+                    )
+                    .bind(&seed_user)
+                    .bind(&hash)
+                    .execute(&db)
+                    .await?;
+                    info!("Seeded admin user '{}'", seed_user);
+                }
+                Err(e) => {
+                    error!("Failed to hash seed password: {}", e);
+                }
+            }
+        }
+    }
 
     let state = Arc::new(AppState { db, admin_token });
 
