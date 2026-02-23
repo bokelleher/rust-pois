@@ -81,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/healthz", get(|| async { "ok" }))
         .route("/esam", post(handle_esam))
         .nest_service("/static", ServeDir::new("static"))
-        .route("/", get(|| async { axum::response::Redirect::temporary("/static/admin.html") }))
+        .route("/", get(|| async { axum::response::Redirect::temporary("/static/login.html") }))
         .route("/tools.html", get(|| async { axum::response::Redirect::temporary("/static/tools.html") }))
         .nest("/api", {
             let api = api_router().with_state(state.clone())
