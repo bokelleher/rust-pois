@@ -39,9 +39,10 @@ sudo apt update
 sudo apt install git -y
 git clone https://github.com/bokelleher/rust-pois.git
 cd rust-pois
-chmod +x install.sh
 sudo ./install.sh
 ```
+
+> The installer will automatically install Rust and build the binary from source. Allow 2-3 minutes for the build to complete.
 
 Follow prompts for:
 - service user (default `pois`)
