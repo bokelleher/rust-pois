@@ -129,7 +129,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=/usr/local/bin/${BINARY_NAME} --port ${PORT}
+ExecStart=/usr/local/bin/${BINARY_NAME}
+Environment=POIS_PORT=${PORT}
 Environment=RUST_LOG=info
 Environment=POIS_JWT_SECRET=${JWT_SECRET}
 Environment=POIS_DB=sqlite://${INSTALL_DIR}/pois.db
