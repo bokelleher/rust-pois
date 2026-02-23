@@ -30,3 +30,4 @@ files.zip
 # Local tokens or secrets
 dev_token
 .env
+pois.db

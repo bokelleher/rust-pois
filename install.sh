@@ -51,7 +51,6 @@ fi
 echo
 echo "2) Installing Rust toolchain (if needed)..."
 if ! command -v cargo >/dev/null 2>&1; then
-  # Install rustup non-interactively for root
   curl https://sh.rustup.rs -sSf | sh -s -- -y
 fi
 
@@ -66,7 +65,6 @@ echo "3) Cloning or updating repository at ${INSTALL_DIR}..."
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
   echo "   Repo already exists at ${INSTALL_DIR}, pulling latest..."
   git -C "${INSTALL_DIR}" fetch --all
-  # Try main, then master as fallback
   if git -C "${INSTALL_DIR}" rev-parse origin/main >/dev/null 2>&1; then
     git -C "${INSTALL_DIR}" reset --hard origin/main
   elif git -C "${INSTALL_DIR}" rev-parse origin/master >/dev/null 2>&1; then
@@ -101,28 +99,18 @@ chmod 755 "/usr/local/bin/${BINARY_NAME}"
 
 echo
 echo "6) Initializing database (pois.db)..."
-if [[ -f "pois.db" ]]; then
+if [[ -f "${INSTALL_DIR}/pois.db" ]]; then
   echo "   pois.db already exists; NOT overwriting."
 else
-  if [[ -f "migrations/0001_init.sql" ]]; then
-    echo "   Applying migrations/0001_init.sql..."
-    sqlite3 pois.db < migrations/0001_init.sql
-  else
-    echo "   WARNING: migrations/0001_init.sql not found."
-  fi
-
-  if [[ -f "migrations/0002_event_logging.sql" ]]; then
-    echo "   Applying migrations/0002_event_logging.sql..."
-    sqlite3 pois.db < migrations/0002_event_logging.sql
-  else
-    echo "   WARNING: migrations/0002_event_logging.sql not found."
-  fi
-
+  for migration in $(ls "${INSTALL_DIR}/migrations/"*.sql 2>/dev/null | sort); do
+    echo "   Applying ${migration}..."
+    sqlite3 "${INSTALL_DIR}/pois.db" < "${migration}"
+  done
   echo "   Database initialization complete."
 fi
 
 echo "   Current tables/views in pois.db:"
-sqlite3 pois.db "SELECT name, type FROM sqlite_master WHERE type IN ('table','view');" || true
+sqlite3 "${INSTALL_DIR}/pois.db" "SELECT name, type FROM sqlite_master WHERE type IN ('table','view');" || true
 
 echo
 echo "7) Creating service user '${SERVICE_USER}' (if needed)..."
@@ -138,7 +126,12 @@ echo "8) Setting ownership of ${INSTALL_DIR} to ${SERVICE_USER}:${SERVICE_USER}.
 chown -R "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}"
 
 echo
-echo "9) Creating systemd service /etc/systemd/system/${SERVICE_NAME}.service..."
+echo "9) Generating JWT secret..."
+JWT_SECRET=$(openssl rand -base64 32)
+echo "   JWT secret generated."
+
+echo
+echo "10) Creating systemd service /etc/systemd/system/${SERVICE_NAME}.service..."
 
 cat >/etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
@@ -150,27 +143,30 @@ Type=simple
 WorkingDirectory=${INSTALL_DIR}
 ExecStart=/usr/local/bin/${BINARY_NAME} --port ${PORT}
 Environment=RUST_LOG=info
+Environment=POIS_JWT_SECRET=${JWT_SECRET}
+Environment=POIS_DB=sqlite://${INSTALL_DIR}/pois.db
 Restart=on-failure
 RestartSec=5
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
 NoNewPrivileges=true
-ProtectSystem=full
+ProtectSystem=false
 ProtectHome=true
 PrivateTmp=true
+ReadWritePaths=${INSTALL_DIR}
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 echo
-echo "10) Reloading systemd and starting service..."
+echo "11) Reloading systemd and starting service..."
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}"
 systemctl restart "${SERVICE_NAME}"
 
 echo
-echo "11) Opening firewall port ${PORT} (if ufw is active)..."
+echo "12) Opening firewall port ${PORT} (if ufw is active)..."
 if command -v ufw >/dev/null 2>&1; then
   ufw allow "${PORT}"/tcp || true
 fi
