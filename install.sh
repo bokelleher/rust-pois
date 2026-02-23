@@ -98,19 +98,7 @@ cp "${BUILT_BIN}" "/usr/local/bin/${BINARY_NAME}"
 chmod 755 "/usr/local/bin/${BINARY_NAME}"
 
 echo
-echo "6) Initializing database (pois.db)..."
-if [[ -f "${INSTALL_DIR}/pois.db" ]]; then
-  echo "   pois.db already exists; NOT overwriting."
-else
-  for migration in $(ls "${INSTALL_DIR}/migrations/"*.sql 2>/dev/null | sort); do
-    echo "   Applying ${migration}..."
-    sqlite3 "${INSTALL_DIR}/pois.db" < "${migration}"
-  done
-  echo "   Database initialization complete."
-fi
-
-echo "   Current tables/views in pois.db:"
-sqlite3 "${INSTALL_DIR}/pois.db" "SELECT name, type FROM sqlite_master WHERE type IN ('table','view');" || true
+echo "6) Database will be initialized automatically by the server on first start..."
 
 echo
 echo "7) Creating service user '${SERVICE_USER}' (if needed)..."
