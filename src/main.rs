@@ -109,9 +109,9 @@ async fn main() -> anyhow::Result<()> {
 fn api_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/channels", get(list_channels).post(create_channel))
-        .route("/channels/:id", put(update_channel).delete(delete_channel))
-        .route("/channels/:id/rules", get(list_rules).post(create_rule))
-        .route("/rules/:id", put(update_rule).delete(delete_rule))
+        .route("/channels/{id}", put(update_channel).delete(delete_channel))
+        .route("/channels/{id}/rules", get(list_rules).post(create_rule))
+        .route("/rules/{id}", put(update_rule).delete(delete_rule))
         .route("/rules/reorder", post(reorder_rules))
         .route("/dryrun", post(dryrun))
         // NEW: builder endpoint
