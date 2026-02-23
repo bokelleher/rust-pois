@@ -98,7 +98,8 @@ cp "${BUILT_BIN}" "/usr/local/bin/${BINARY_NAME}"
 chmod 755 "/usr/local/bin/${BINARY_NAME}"
 
 echo
-echo "6) Database will be initialized automatically by the server on first start..."
+echo "6) Creating database file for sqlx migrations..."
+touch "${INSTALL_DIR}/pois.db"
 
 echo
 echo "7) Creating service user '${SERVICE_USER}' (if needed)..."
