@@ -1,10 +1,10 @@
 // src/main.rs
-// Version: 3.2.4
+// Version: 3.4.1
 // Last Modified: 2026-03-12
 // Changes:
-//   - Added /esam/channel={channel} route for upstream compatibility (= vs / separator)
-//   - Added ?channel= query string support to /esam endpoint via EsamQuery extractor
-//   - Fixed all compiler warnings (unused variables, dead code suppressions)
+//   - Fixed seed_default_channel_and_rule to handle soft-deleted default channel
+//   - On startup, hard-deletes any soft-deleted 'default' row before re-seeding
+//   - Prevents UNIQUE constraint error blocking default channel re-creation after upgrade
 //   - CRITICAL: Fixed multi-tenancy security - non-admin users now properly filtered
 //   - Fixed event logging API calls (log_event → log_esam_event)
 //   - Fixed build_notification calls (3 params → 4 params: acq_id, utc_point, action, params)
@@ -1119,10 +1119,18 @@ async fn get_event_detail(
 // ------------------------ DB seeding helper ------------------------
 
 async fn seed_default_channel_and_rule(db: &Pool<Sqlite>) -> anyhow::Result<()> {
-    // Check if any channels exist
-    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM channels")
-        .fetch_one(db)
+    // Hard-delete any soft-deleted 'default' channel so the unique constraint
+    // doesn't block re-creation after an upgrade or accidental deletion
+    sqlx::query("DELETE FROM channels WHERE name='default' AND deleted_at IS NOT NULL")
+        .execute(db)
         .await?;
+
+    // Check if a live 'default' channel exists
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM channels WHERE name='default' AND deleted_at IS NULL"
+    )
+    .fetch_one(db)
+    .await?;
 
     if count == 0 {
         // Insert a default channel (owner_user_id = NULL for system channel)
@@ -1135,20 +1143,31 @@ async fn seed_default_channel_and_rule(db: &Pool<Sqlite>) -> anyhow::Result<()> 
         .fetch_one(db)
         .await?;
 
-        // Insert a default noop rule for that channel (owner_user_id = NULL for system rule)
-        sqlx::query(
-            "INSERT INTO rules(channel_id,name,priority,enabled,match_json,action,params_json,owner_user_id) \
-             VALUES(?,?,?,?,?,?,?,NULL)",
+        // Insert a default noop rule only if no rules exist for this channel
+        let (rule_count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM rules WHERE channel_id=? AND deleted_at IS NULL"
         )
         .bind(default_channel.id)
-        .bind("Default noop")
-        .bind(0_i64)
-        .bind(1_i64)
-        .bind("{}") // empty match_json
-        .bind("noop")
-        .bind("{}") // empty params_json
-        .execute(db)
+        .fetch_one(db)
         .await?;
+
+        if rule_count == 0 {
+            sqlx::query(
+                "INSERT INTO rules(channel_id,name,priority,enabled,match_json,action,params_json,owner_user_id) \
+                 VALUES(?,?,?,?,?,?,?,NULL)",
+            )
+            .bind(default_channel.id)
+            .bind("Default noop")
+            .bind(0_i64)
+            .bind(1_i64)
+            .bind("{}")
+            .bind("noop")
+            .bind("{}")
+            .execute(db)
+            .await?;
+        }
+
+        info!("Seeded default channel and noop rule");
     }
 
     Ok(())
