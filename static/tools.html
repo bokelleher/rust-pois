@@ -19,186 +19,33 @@
       <button class="tab-btn" data-tab="decoder">Decoder</button>
       <button class="tab-btn" data-tab="validator">Validator</button>
       <button class="tab-btn" data-tab="sender">Quick Test</button>
-      <button class="tab-btn" data-tab="advanced">Advanced Builder</button>
     </div>
 
-    <!-- TAB: Basic Builder -->
+    <!-- TAB: Builder (formerly Advanced Builder) -->
     <div id="tab-builder" class="tab-content active">
       <div class="panel">
         <div class="card-header">
-          <div class="card-title">Basic SCTE-35 Builder</div>
-          <div class="card-subtitle">Generate common SCTE-35 signals</div>
+          <div class="card-title">SCTE-35 Builder</div>
+          <div class="card-subtitle">Build signals with custom segmentation descriptors</div>
         </div>
+        
         <div class="form-row">
           <div class="form-group">
             <label for="cmd">Command Type</label>
             <select id="cmd">
-              <option value="time_signal_immediate">Time Signal (immediate)</option>
-              <option value="splice_insert_out">Splice Insert OUT (auto-return)</option>
+              <option value="time_signal">Time Signal (Type 6)</option>
+              <option value="splice_insert_out">Splice Insert (Type 5)</option>
             </select>
           </div>
           <div class="form-group" style="max-width: 200px;">
             <label for="dur">Duration (s)</label>
             <input id="dur" type="number" min="0" step="1" value="60">
           </div>
-          <button id="buildBtn" class="btn-primary">Build SCTE-35</button>
-        </div>
-        
-        <div class="form-group mt-4">
-          <label for="b64">Generated Base64</label>
-          <div class="flex gap-2">
-            <input id="b64" type="text" readonly style="flex: 1; font-family: monospace;">
-            <button class="btn" id="copyB64">Copy</button>
-          </div>
-        </div>
-        
-        <div id="buildStatus" class="text-sm mt-2 text-muted"></div>
-      </div>
-    </div>
-
-    <!-- TAB: Decoder -->
-    <div id="tab-decoder" class="tab-content">
-      <div class="panel">
-        <div class="card-header">
-          <div class="card-title">SCTE-35 Decoder</div>
-          <div class="card-subtitle">Decode Base64 to human-readable format</div>
         </div>
         
         <div class="form-group">
-          <label for="decodeInput">SCTE-35 Base64</label>
-          <textarea id="decodeInput" rows="3" placeholder="Paste Base64 SCTE-35 string here..."></textarea>
-        </div>
-        
-        <button id="decodeBtn" class="btn-primary">Decode</button>
-        
-        <div id="decodeOutput" class="mt-4" style="display: none;">
-          <h3 style="margin-top: 0;">Decoded Information</h3>
-          <div class="decode-grid">
-            <div class="decode-section">
-              <h4>Header</h4>
-              <table class="decode-table">
-                <tr><td>Table ID</td><td id="dec-table-id">-</td></tr>
-                <tr><td>Protocol Version</td><td id="dec-protocol">-</td></tr>
-                <tr><td>Encrypted</td><td id="dec-encrypted">-</td></tr>
-                <tr><td>PTS Adjustment</td><td id="dec-pts-adj">-</td></tr>
-              </table>
-            </div>
-            
-            <div class="decode-section">
-              <h4>Command</h4>
-              <table class="decode-table">
-                <tr><td>Type</td><td id="dec-cmd-type">-</td></tr>
-                <tr><td>Type ID</td><td id="dec-cmd-id">-</td></tr>
-              </table>
-              <!-- Fixed CSS to prevent overlap -->
-              <div id="dec-cmd-info" style="margin-top: 20px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.2); clear: both; position: relative; overflow: hidden;"></div>
-            </div>
-          </div>
-          
-          <div class="decode-section mt-3" id="dec-descriptors-section">
-            <h4>Segmentation Descriptors</h4>
-            <div id="dec-descriptors">
-              <span style="color: #888;">No descriptors found</span>
-            </div>
-          </div>
-          
-          <div class="decode-section mt-3">
-            <h4>Raw Data</h4>
-            <div id="dec-hex" class="hex-output"></div>
-          </div>
-        </div>
-        
-        <div id="decodeStatus" class="text-sm mt-2 text-muted"></div>
-      </div>
-    </div>
-
-    <!-- TAB: Validator -->
-    <div id="tab-validator" class="tab-content">
-      <div class="panel">
-        <div class="card-header">
-          <div class="card-title">SCTE-35 Validator</div>
-          <div class="card-subtitle">Validate SCTE-35 Base64 structure and CRC</div>
-        </div>
-        
-        <div class="form-group">
-          <label for="validateInput">SCTE-35 Base64</label>
-          <textarea id="validateInput" rows="3" placeholder="Paste Base64 SCTE-35 string here..."></textarea>
-        </div>
-        
-        <button id="validateBtn" class="btn-primary">Validate</button>
-        
-        <div id="validateResult" class="mt-4" style="display: none;">
-          <div class="validation-result">
-            <div id="validateIcon" class="validation-icon"></div>
-            <div id="validateMessage" class="validation-message"></div>
-          </div>
-        </div>
-        
-        <div id="validateStatus" class="text-sm mt-2 text-muted"></div>
-      </div>
-    </div>
-
-    <!-- TAB: Quick Test Sender -->
-    <div id="tab-sender" class="tab-content">
-      <div class="panel">
-        <div class="card-header">
-          <div class="card-title">Quick Test Sender</div>
-          <div class="card-subtitle">Send test signals directly to your channels</div>
-        </div>
-        
-        <div class="form-group">
-          <label for="testChannel">Target Channel</label>
-          <select id="testChannel">
-            <option value="">Loading channels...</option>
-          </select>
-        </div>
-        
-        <div class="form-group">
-          <label for="testSignal">SCTE-35 Base64</label>
-          <textarea id="testSignal" rows="3" placeholder="Paste or build SCTE-35 signal to send..."></textarea>
-        </div>
-        
-        <div class="flex gap-2">
-          <button id="testSendBtn" class="btn-primary">Send Test Signal</button>
-          <button id="useBuilderBtn" class="btn">Use Last Built Signal</button>
-        </div>
-        
-        <div id="testResult" class="mt-4" style="display: none;">
-          <div class="test-result">
-            <div id="testIcon" class="validation-icon"></div>
-            <div id="testMessage" class="validation-message"></div>
-          </div>
-        </div>
-        
-        <div id="testStatus" class="text-sm mt-2 text-muted"></div>
-      </div>
-    </div>
-
-    <!-- TAB: Advanced Builder -->
-    <div id="tab-advanced" class="tab-content">
-      <div class="panel">
-        <div class="card-header">
-          <div class="card-title">Advanced SCTE-35 Builder</div>
-          <div class="card-subtitle">Build signals with custom segmentation descriptors</div>
-        </div>
-        
-        <div class="form-row">
-          <div class="form-group">
-            <label for="advCmd">Command Type</label>
-            <select id="advCmd">
-              <option value="time_signal">Time Signal (immediate)</option>
-              <option value="splice_insert_out">Splice Insert OUT</option>
-            </select>
-          </div>
-          <div class="form-group" style="max-width: 200px;">
-            <label for="advDur">Duration (s)</label>
-            <input id="advDur" type="number" min="0" step="1" value="60">
-          </div>
-        </div>
-        
-        <div class="form-group">
-          <label for="advSegType">Segmentation Type</label>
-          <select id="advSegType">
+          <label for="segType">Segmentation Type</label>
+          <select id="segType">
             <option value="">None</option>
             <option value="0x10">0x10 - Program Start</option>
             <option value="0x11">0x11 - Program End</option>
@@ -233,8 +80,8 @@
         </div>
         
         <div class="form-group">
-          <label for="advUpidType">UPID Type</label>
-          <select id="advUpidType">
+          <label for="upidType">UPID Type</label>
+          <select id="upidType">
             <option value="">None</option>
             <option value="0x01">0x01 - User Defined (Deprecated)</option>
             <option value="0x02">0x02 - ISCI</option>
@@ -254,37 +101,149 @@
           </select>
         </div>
         
-        <div class="form-group">
-          <label for="advUpid">UPID Value</label>
-          <input id="advUpid" type="text" placeholder="e.g., ABCD1234">
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="upid">UPID Value</label>
+          <input id="upid" type="text" placeholder="e.g., ABCD1234">
         </div>
         
-        <button id="advBuildBtn" class="btn-primary">Build Advanced Signal</button>
+        <button id="buildBtn" class="btn-primary">Build SCTE-35</button>
         
-        <div class="form-group mt-4">
-          <label for="advB64">Generated Base64</label>
+        <div class="form-group" style="margin-top: 10px;">
+          <label for="b64">Generated Base64</label>
           <div class="flex gap-2">
-            <input id="advB64" type="text" readonly style="flex: 1; font-family: monospace;">
-            <button class="btn" id="copyAdvB64">Copy</button>
+            <input id="b64" type="text" readonly style="flex: 1; font-family: monospace;">
+            <button class="btn" id="copyB64">Copy</button>
           </div>
         </div>
         
-        <div id="advStatus" class="text-sm mt-2 text-muted"></div>
-        
-        <div class="alert alert-success mt-4">
-          <strong>✓ Feature Complete:</strong> Full segmentation descriptor support is now active! 
-          Build SCTE-35 signals with custom segmentation types, UPID types, and values for your specific DAI workflows.
-        </div>
+        <div id="buildStatus" class="text-sm mt-2 text-muted"></div>
       </div>
     </div>
 
-    <p class="small text-muted mt-4">
+    <!-- TAB: Decoder -->
+    <div id="tab-decoder" class="tab-content">
+      <div class="panel">
+        <div class="card-header">
+          <div class="card-title">SCTE-35 Decoder</div>
+          <div class="card-subtitle">Decode Base64 to human-readable format</div>
+        </div>
+        
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="decodeInput">SCTE-35 Base64</label>
+          <textarea id="decodeInput" rows="3" placeholder="Paste Base64 SCTE-35 string here..."></textarea>
+        </div>
+        
+        <button id="decodeBtn" class="btn-primary" style="margin-bottom: 24px;">Decode</button>
+        
+        <div id="decodeOutput" style="display: none;">
+          <h3 style="margin-top: 0;">Decoded Information</h3>
+          <div class="decode-grid">
+            <div class="decode-section">
+              <h4>Header</h4>
+              <table class="decode-table">
+                <tr><td>Table ID</td><td id="dec-table-id">-</td></tr>
+                <tr><td>Protocol Version</td><td id="dec-protocol">-</td></tr>
+                <tr><td>Encrypted</td><td id="dec-encrypted">-</td></tr>
+                <tr><td>PTS Adjustment</td><td id="dec-pts-adj">-</td></tr>
+              </table>
+            </div>
+            
+            <div class="decode-section">
+              <h4>Command</h4>
+              <table class="decode-table">
+                <tr><td>Type</td><td id="dec-cmd-type">-</td></tr>
+                <tr><td>Type ID</td><td id="dec-cmd-id">-</td></tr>
+              </table>
+              <!-- Fixed CSS to prevent overlap -->
+              <div id="dec-cmd-info" style="margin-top: 20px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.2); clear: both; position: relative; overflow: hidden;"></div>
+            </div>
+          </div>
+          
+          <div class="decode-section" id="dec-descriptors-section" style="margin-top: 10px;">
+            <h4>Segmentation Descriptors</h4>
+            <div id="dec-descriptors">
+              <span style="color: #888;">No descriptors found</span>
+            </div>
+          </div>
+          
+          <div class="decode-section" style="margin-top: 10px;">
+            <h4>Raw Data</h4>
+            <div id="dec-hex" class="hex-output"></div>
+          </div>
+        </div>
+        
+        <div id="decodeStatus" class="text-sm mt-2 text-muted"></div>
+      </div>
+    </div>
+
+    <!-- TAB: Validator -->
+    <div id="tab-validator" class="tab-content">
+      <div class="panel">
+        <div class="card-header">
+          <div class="card-title">SCTE-35 Validator</div>
+          <div class="card-subtitle">Validate SCTE-35 Base64 structure and CRC</div>
+        </div>
+        
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="validateInput">SCTE-35 Base64</label>
+          <textarea id="validateInput" rows="3" placeholder="Paste Base64 SCTE-35 string here..."></textarea>
+        </div>
+        
+        <button id="validateBtn" class="btn-primary">Validate</button>
+        
+        <div id="validateResult" style="margin-top: 10px; display: none;">
+          <div class="validation-result">
+            <div id="validateIcon" class="validation-icon"></div>
+            <div id="validateMessage" class="validation-message"></div>
+          </div>
+        </div>
+        
+        <div id="validateStatus" class="text-sm mt-2 text-muted"></div>
+      </div>
+    </div>
+
+    <!-- TAB: Quick Test Sender -->
+    <div id="tab-sender" class="tab-content">
+      <div class="panel">
+        <div class="card-header">
+          <div class="card-title">Quick Test Sender</div>
+          <div class="card-subtitle">Send test signals directly to your channels</div>
+        </div>
+        
+        <div class="form-group">
+          <label for="testChannel">Target Channel</label>
+          <select id="testChannel">
+            <option value="">Loading channels...</option>
+          </select>
+        </div>
+        
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="testSignal">SCTE-35 Base64</label>
+          <textarea id="testSignal" rows="3" placeholder="Paste or build SCTE-35 signal to send..."></textarea>
+        </div>
+        
+        <div class="flex gap-2">
+          <button id="testSendBtn" class="btn-primary">Send Test Signal</button>
+          <button id="useBuilderBtn" class="btn">Use Last Built Signal</button>
+        </div>
+        
+        <div id="testResult" style="margin-top: 10px; display: none;">
+          <div class="test-result">
+            <div id="testIcon" class="validation-icon"></div>
+            <div id="testMessage" class="validation-message"></div>
+          </div>
+        </div>
+        
+        <div id="testStatus" class="text-sm mt-2 text-muted"></div>
+      </div>
+    </div>
+
+    <p class="small text-muted" style="margin-top: 10px;">
       API Endpoints: 
       <code>POST /api/tools/scte35/build</code> |
       <code>POST /api/tools/scte35/decode</code> |
       <code>POST /api/tools/scte35/validate</code> |
-      <code>POST /api/tools/scte35/test-send</code> |
-      <code>POST /api/tools/scte35/build-advanced</code>
+      <code>POST /api/tools/scte35/test-send</code>
     </p>
   </main>
 
@@ -442,24 +401,8 @@
       background: rgba(255, 0, 0, 0.05);
     }
     
-    .alert {
-      padding: 12px 16px;
-      border-radius: 6px;
-      border-left: 4px solid;
-      background: rgba(255, 255, 255, 0.03);
-    }
-    
-    .alert-success {
-      border-color: var(--success);
-      color: rgba(255, 255, 255, 0.8);
-    }
-    
-    .alert strong {
-      color: var(--success);
-    }
-    
-    /* Tighter spacing for Advanced Builder stacked fields */
-    #tab-advanced .form-group + .form-group {
+    /* Tighter spacing for Builder stacked fields */
+    #tab-builder .form-group + .form-group {
       margin-top: 16px;
     }
   </style>
@@ -505,26 +448,34 @@
 
     // UPID field management
     function updateUpidState() {
-      const advUpidType = document.getElementById('advUpidType');
-      const advUpid = document.getElementById('advUpid');
-      const hasUpidType = advUpidType.value !== '';
-      advUpid.disabled = !hasUpidType;
-      advUpid.style.opacity = hasUpidType ? '1' : '0.5';
-      advUpid.style.cursor = hasUpidType ? 'text' : 'not-allowed';
+      const upidType = document.getElementById('upidType');
+      const upid = document.getElementById('upid');
+      const hasUpidType = upidType.value !== '';
+      upid.disabled = !hasUpidType;
+      upid.style.opacity = hasUpidType ? '1' : '0.5';
+      upid.style.cursor = hasUpidType ? 'text' : 'not-allowed';
     }
     
     // ========================================================================
-    // BASIC BUILDER
+    // BUILDER
     // ========================================================================
     
     const cmdSelect = document.getElementById('cmd');
     const durInput = document.getElementById('dur');
+    const upidType = document.getElementById('upidType');
+    
     cmdSelect.addEventListener('change', () => updateDurationState(cmdSelect, durInput));
     updateDurationState(cmdSelect, durInput);
+    
+    upidType.addEventListener('change', updateUpidState);
+    updateUpidState();
 
     document.getElementById('buildBtn').addEventListener('click', async () => {
       const cmd = document.getElementById('cmd').value;
       const dur = parseInt(document.getElementById('dur').value, 10);
+      const segType = document.getElementById('segType').value;
+      const upidTypeVal = document.getElementById('upidType').value;
+      const upid = document.getElementById('upid').value.trim();
       const token = getToken();
       
       if (!token) {
@@ -534,6 +485,14 @@
       
       setStatus('buildStatus', 'Building SCTE-35...', 'muted');
       
+      const payload = {
+        command: cmd,
+        duration_seconds: cmd === 'splice_insert_out' ? dur : undefined,
+        segmentation_type_id: segType || undefined,
+        segmentation_upid_type: upidTypeVal || undefined,
+        segmentation_upid: upid || undefined
+      };
+      
       try {
         const res = await fetch('/api/tools/scte35/build', {
           method: 'POST',
@@ -541,13 +500,13 @@
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
           },
-          body: JSON.stringify({
-            command: cmd,
-            duration_seconds: dur
-          })
+          body: JSON.stringify(payload)
         });
         
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status}: ${text}`);
+        }
         
         const data = await res.json();
         document.getElementById('b64').value = data.base64 || '';
@@ -851,82 +810,6 @@
         resultDiv.style.display = 'block';
         setStatus('testStatus', '', 'muted');
       }
-    });
-    
-    // ========================================================================
-    // ADVANCED BUILDER
-    // ========================================================================
-
-    const advCmdSelect = document.getElementById('advCmd');
-    const advDurInput = document.getElementById('advDur');
-    const advUpidType = document.getElementById('advUpidType');
-    
-    advCmdSelect.addEventListener('change', () => updateDurationState(advCmdSelect, advDurInput));
-    updateDurationState(advCmdSelect, advDurInput);
-    
-    advUpidType.addEventListener('change', updateUpidState);
-    updateUpidState();
-    
-    document.getElementById('advBuildBtn').addEventListener('click', async () => {
-      const cmd = document.getElementById('advCmd').value;
-      const dur = parseInt(document.getElementById('advDur').value, 10);
-      const segType = document.getElementById('advSegType').value;
-      const upidType = document.getElementById('advUpidType').value;
-      const upid = document.getElementById('advUpid').value.trim();
-      const token = getToken();
-      
-      if (!token) {
-        alert('Please log in first');
-        return;
-      }
-      
-      setStatus('advStatus', 'Building advanced SCTE-35...', 'muted');
-      
-      const payload = {
-        command: cmd,
-        duration_seconds: cmd === 'splice_insert_out' ? dur : undefined,
-        segmentation_type_id: segType || undefined,
-        segmentation_upid_type: upidType || undefined,
-        segmentation_upid: upid || undefined
-      };
-      
-      try {
-        const res = await fetch('/api/tools/scte35/build-advanced', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify(payload)
-        });
-        
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(`HTTP ${res.status}: ${text}`);
-        }
-        
-        const data = await res.json();
-        document.getElementById('advB64').value = data.base64 || '';
-        lastBuiltSignal = data.base64 || '';
-        setStatus('advStatus', 'Advanced signal built successfully!', 'success');
-        setTimeout(() => setStatus('advStatus', '', 'muted'), 3000);
-      } catch (e) {
-        setStatus('advStatus', `Error: ${e.message}`, 'error');
-      }
-    });
-    
-    document.getElementById('copyAdvB64').addEventListener('click', () => {
-      const input = document.getElementById('advB64');
-      input.select();
-      document.execCommand('copy');
-      const btn = document.getElementById('copyAdvB64');
-      const orig = btn.textContent;
-      btn.textContent = 'Copied!';
-      btn.className = 'btn btn-success';
-      setTimeout(() => {
-        btn.textContent = orig;
-        btn.className = 'btn';
-      }, 1500);
     });
     
     // Initialize
