@@ -1,10 +1,10 @@
 // src/main.rs
-// Version: 3.4.1
+// Version: 3.4.2
 // Last Modified: 2026-03-12
 // Changes:
-//   - Fixed seed_default_channel_and_rule to handle soft-deleted default channel
-//   - On startup, hard-deletes any soft-deleted 'default' row before re-seeding
-//   - Prevents UNIQUE constraint error blocking default channel re-creation after upgrade
+//   - CRITICAL FIX: noop action now passes through original SCTE-35 BinaryData payload
+//   - Fixed both matched-rule noop and fallback noop paths
+//   - scte35_b64 from request facts is injected into params before build_notification
 //   - CRITICAL: Fixed multi-tenancy security - non-admin users now properly filtered
 //   - Fixed event logging API calls (log_event → log_esam_event)
 //   - Fixed build_notification calls (3 params → 4 params: acq_id, utc_point, action, params)
@@ -463,8 +463,15 @@ async fn handle_esam_impl(
 
     if let Some(r) = matched_rule {
         let params: serde_json::Value = serde_json::from_str(&r.params_json).unwrap_or_default();
-        let final_params = maybe_build_scte35(params);
-        
+        let mut final_params = maybe_build_scte35(params);
+
+        // For noop, pass through the original SCTE-35 payload from the request
+        if r.action.eq_ignore_ascii_case("noop") {
+            if let Some(b64) = facts.get("scte35_b64").and_then(|v| v.as_str()) {
+                final_params["scte35_b64"] = serde_json::json!(b64);
+            }
+        }
+
         let acq_id = facts.get("acquisitionSignalID").and_then(|v| v.as_str()).unwrap_or("");
         let utc_point = facts.get("utcPoint").and_then(|v| v.as_str()).unwrap_or("");
         let resp_xml = build_notification(acq_id, utc_point, &r.action, &final_params);
@@ -499,7 +506,13 @@ async fn handle_esam_impl(
         
         let acq_id = facts.get("acquisitionSignalID").and_then(|v| v.as_str()).unwrap_or("");
         let utc_point = facts.get("utcPoint").and_then(|v| v.as_str()).unwrap_or("");
-        let resp_xml = build_notification(acq_id, utc_point, "noop", &serde_json::json!({}));
+
+        // Pass through original SCTE-35 payload on fallback noop
+        let noop_params = match facts.get("scte35_b64").and_then(|v| v.as_str()) {
+            Some(b64) => serde_json::json!({ "scte35_b64": b64 }),
+            None => serde_json::json!({}),
+        };
+        let resp_xml = build_notification(acq_id, utc_point, "noop", &noop_params);
         
         let _ = st
             .event_logger
