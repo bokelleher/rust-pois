@@ -1,8 +1,13 @@
 // src/esam.rs
-// Version: 2.2.0
-// Updated: 2024-11-24
+// Version: 2.3.0
+// Updated: 2026-03-12
 //
 // Changelog:
+// v2.3.0 (2026-03-12):
+//   - extract_facts now extracts acquisitionPointIdentity from AcquiredSignal
+//   - build_notification: added acq_point param; echoes inbound acquisitionPointIdentity
+//   - build_notification: UTCPoint now echoes inbound value (falls back to now+4s if absent)
+//   - build_notification: response now includes <?xml?> declaration
 // v2.2.1 (2024-11-24): Fixed parse_splice_insert_pts missing final fields
 // v2.2.0 (2024-11-24): Applied critical fixes from tools_api.rs v4.0.6
 //   - CRITICAL FIX: Removed v2.1.0 skip logic that was causing wrong bitpos (v4.0.6 fix)
@@ -32,6 +37,7 @@ pub fn extract_facts(esam_xml: &str) -> Result<serde_json::Value, String> {
     let mut buf = Vec::new();
 
     let mut acquisition_signal_id = String::new();
+    let mut acq_point_identity = String::new();
     let mut utc_point: Option<String> = None;
     let mut scte35_b64: Option<String> = None;
 
@@ -45,6 +51,8 @@ pub fn extract_facts(esam_xml: &str) -> Result<serde_json::Value, String> {
                         let v = a.unescape_value().map_err(|e| e.to_string())?.to_string();
                         if k.ends_with("acquisitionSignalID") {
                             acquisition_signal_id = v;
+                        } else if k.ends_with("acquisitionPointIdentity") {
+                            acq_point_identity = v;
                         }
                     }
                 }
@@ -132,6 +140,7 @@ pub fn extract_facts(esam_xml: &str) -> Result<serde_json::Value, String> {
 
     let mut out = json!({
         "acquisitionSignalID": acquisition_signal_id,
+        "acquisitionPointIdentity": acq_point_identity,
         "utcPoint": utc_point.unwrap_or_else(|| "1970-01-01T00:00:00Z".into()),
         "scte35.command": scte35_cmd_str,
     });
@@ -147,7 +156,7 @@ pub fn extract_facts(esam_xml: &str) -> Result<serde_json::Value, String> {
 }
 
 /// Build a minimal ESAM SignalProcessingNotification response.
-pub fn build_notification(acq_id: &str, _utc: &str, action: &str, params: &serde_json::Value) -> String {
+pub fn build_notification(acq_id: &str, utc: &str, acq_point: &str, action: &str, params: &serde_json::Value) -> String {
     let mut extra = String::new();
     // CRITICAL FIX: Handle both "replace" AND "noop" actions to pass through SCTE-35 payload
     if action.eq_ignore_ascii_case("replace") || action.eq_ignore_ascii_case("noop") {
@@ -155,12 +164,19 @@ pub fn build_notification(acq_id: &str, _utc: &str, action: &str, params: &serde
             extra = format!(r#"<sig:BinaryData signalType="SCTE35">{}</sig:BinaryData>"#, xml_escape(b64));
         }
     }
-    
-    // Use current UTC time plus 4 seconds instead of original UTC point
-    let response_utc = chrono::Utc::now() + chrono::Duration::seconds(4);
-    let utc_str = response_utc.to_rfc3339();
-    
-    format!(r#"
+
+    // Echo inbound UTCPoint; fall back to now+4s only if absent/empty
+    let utc_str = if utc.is_empty() || utc == "1970-01-01T00:00:00Z" {
+        let t = chrono::Utc::now() + chrono::Duration::seconds(4);
+        t.to_rfc3339()
+    } else {
+        utc.to_string()
+    };
+
+    // Echo inbound acquisitionPointIdentity; fall back to default only if absent
+    let acq_point_str = if acq_point.is_empty() { "pois-techexlab" } else { acq_point };
+
+    format!(r#"<?xml version="1.0" encoding="UTF-8"?>
 <SignalProcessingNotification
   xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"
   xmlns:sig="urn:cablelabs:md:xsd:signaling:3.0"
@@ -169,18 +185,18 @@ pub fn build_notification(acq_id: &str, _utc: &str, action: &str, params: &serde
   <common:StatusCode classCode="0">
     <core:Note>{note}</core:Note>
   </common:StatusCode>
-  <ResponseSignal action="{action}" acquisitionSignalID="{acq}" acquisitionPointIdentity="pois-techexlab">
+  <ResponseSignal action="{action}" acquisitionSignalID="{acq}" acquisitionPointIdentity="{acq_point}">
     <sig:UTCPoint utcPoint="{utc}"/>
     {extra}
   </ResponseSignal>
-</SignalProcessingNotification>
-"#,
+</SignalProcessingNotification>"#,
         note = if action == "delete" { "filtered signal" } else if action == "replace" { "replaced signal" } else { "pass-through" },
         action = xml_escape(action),
         acq = xml_escape(acq_id),
+        acq_point = xml_escape(acq_point_str),
         utc = xml_escape(&utc_str),
         extra = extra
-    ).trim().to_string()
+    ).trim_start_matches('\n').to_string()
 }
 
 /// Decode segmentation type ID to human-readable name
