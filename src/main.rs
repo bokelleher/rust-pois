@@ -1,7 +1,12 @@
 // src/main.rs
-// Version: 3.4.2
+// Version: 3.4.3
 // Last Modified: 2026-03-12
 // Changes:
+//   - Issue 1: Channel routing now uses acquisitionPointIdentity from XML body as fallback
+//   - Issue 2: acquisitionPointIdentity echoed from inbound request (no longer hardcoded)
+//   - Issue 3: UTCPoint now echoes inbound value (falls back to now+4s only if absent)
+//   - Issue 4: ESAM responses now include <?xml?> declaration
+//   - Issue 5: warn! logged when replace action has no scte35_b64 in rule params
 //   - CRITICAL FIX: noop action now passes through original SCTE-35 BinaryData payload
 //   - Fixed both matched-rule noop and fallback noop paths
 //   - scte35_b64 from request facts is injected into params before build_notification
@@ -375,12 +380,12 @@ async fn handle_esam_impl(
 
     let obj = facts.as_object().cloned().unwrap_or_default();
 
-    // Determine channel name
+    // Determine channel name: URL path takes priority, then acquisitionPointIdentity from XML body
     let channel_name = path_channel
         .or_else(|| {
-            obj.get("ChannelName")
-                .or_else(|| obj.get("channelName"))
+            obj.get("acquisitionPointIdentity")
                 .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
                 .map(|s| s.to_string())
         })
         .unwrap_or_else(|| "default".into());
@@ -472,9 +477,18 @@ async fn handle_esam_impl(
             }
         }
 
+        // Issue 5: warn when replace has no payload configured
+        if r.action.eq_ignore_ascii_case("replace") && final_params.get("scte35_b64").is_none() {
+            tracing::warn!(
+                "handle_esam: replace action on channel '{}' rule '{}' has no scte35_b64 — BinaryData will be absent from response",
+                channel_name, r.name
+            );
+        }
+
         let acq_id = facts.get("acquisitionSignalID").and_then(|v| v.as_str()).unwrap_or("");
         let utc_point = facts.get("utcPoint").and_then(|v| v.as_str()).unwrap_or("");
-        let resp_xml = build_notification(acq_id, utc_point, &r.action, &final_params);
+        let acq_point = facts.get("acquisitionPointIdentity").and_then(|v| v.as_str()).unwrap_or("");
+        let resp_xml = build_notification(acq_id, utc_point, acq_point, &r.action, &final_params);
 
         let duration = start.elapsed();
         let _ = st
@@ -506,13 +520,14 @@ async fn handle_esam_impl(
         
         let acq_id = facts.get("acquisitionSignalID").and_then(|v| v.as_str()).unwrap_or("");
         let utc_point = facts.get("utcPoint").and_then(|v| v.as_str()).unwrap_or("");
+        let acq_point = facts.get("acquisitionPointIdentity").and_then(|v| v.as_str()).unwrap_or("");
 
         // Pass through original SCTE-35 payload on fallback noop
         let noop_params = match facts.get("scte35_b64").and_then(|v| v.as_str()) {
             Some(b64) => serde_json::json!({ "scte35_b64": b64 }),
             None => serde_json::json!({}),
         };
-        let resp_xml = build_notification(acq_id, utc_point, "noop", &noop_params);
+        let resp_xml = build_notification(acq_id, utc_point, acq_point, "noop", &noop_params);
         
         let _ = st
             .event_logger
