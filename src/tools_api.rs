@@ -367,10 +367,10 @@ pub async fn test_send(
     // Build response based on matched rule or noop
     let (action, resp_xml) = if let Some(ref r) = matched_rule {
         let params: serde_json::Value = serde_json::from_str(&r.params_json).unwrap_or_default();
-        let resp = build_notification(&test_signal_id, &utc_point, &r.action, &params);
+        let resp = build_notification(&test_signal_id, &utc_point, "", &r.action, &params);
         (r.action.clone(), resp)
     } else {
-        let resp = build_notification(&test_signal_id, &utc_point, "noop", &serde_json::json!({}));
+        let resp = build_notification(&test_signal_id, &utc_point, "", "noop", &serde_json::json!({}));
         ("noop".to_string(), resp)
     };
     
