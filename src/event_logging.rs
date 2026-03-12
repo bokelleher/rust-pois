@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use tracing::{debug, info, instrument};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct EsamEvent {
     pub id: i64,
@@ -338,6 +339,7 @@ pub struct ClientInfo {
 }
 
 impl ClientInfo {
+    #[allow(dead_code)]
     pub fn from_headers_and_addr(headers: &HeaderMap, addr: Option<SocketAddr>) -> Self {
         let source_ip = headers
             .get("x-forwarded-for")

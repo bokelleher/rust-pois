@@ -17,6 +17,7 @@ pub fn build_splice_insert_out_b64(duration_s: u32) -> String {
 }
 
 /// NEW: Advanced builder with custom segmentation descriptor
+#[allow(dead_code)]
 pub fn build_splice_insert_out_advanced_b64(
     duration_s: u32,
     seg_type_id: Option<u8>,
@@ -28,6 +29,7 @@ pub fn build_splice_insert_out_advanced_b64(
 }
 
 /// NEW: Time signal with segmentation descriptor
+#[allow(dead_code)]
 pub fn build_time_signal_advanced_b64(
     seg_type_id: Option<u8>,
     upid_type: Option<u8>,
@@ -37,11 +39,13 @@ pub fn build_time_signal_advanced_b64(
     B64.encode(sec)
 }
 
+#[allow(dead_code)]
 pub fn build_splice_insert_in_b64() -> String {
     let sec = build_splice_insert_in_section();
     B64.encode(sec)
 }
 
+#[allow(dead_code)]
 pub fn build_splice_insert_in_with_pts_b64(pts_time: u64) -> String {
     let sec = build_splice_insert_in_with_pts_section(pts_time);
     B64.encode(sec)
@@ -270,6 +274,7 @@ fn parse_uuid(s: &str) -> Option<Vec<u8>> {
     hex_decode(&s)
 }
 
+#[allow(dead_code)]
 fn build_splice_insert_in_section() -> Vec<u8> {
     let mut w = BitWriter::new();
     w.u8(0xFC);
@@ -314,6 +319,7 @@ fn build_splice_insert_in_section() -> Vec<u8> {
     finalize_with_crc32(&mut w, section_length_pos)
 }
 
+#[allow(dead_code)]
 fn build_splice_insert_in_with_pts_section(pts_time: u64) -> Vec<u8> {
     let mut w = BitWriter::new();
     w.u8(0xFC);

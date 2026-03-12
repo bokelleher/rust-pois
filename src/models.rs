@@ -70,6 +70,7 @@ pub struct DryRunResult {
 
 // === BACKUP/EXPORT MODELS ===
 
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
 pub struct ExportedRule {
     pub name: String,
@@ -84,6 +85,7 @@ pub struct ExportedRule {
     pub params_json: Value,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
 pub struct ExportedChannel {
     pub name: String,
@@ -92,6 +94,7 @@ pub struct ExportedChannel {
     pub rules: Vec<ExportedRule>,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
 pub struct RulesBackup {
     pub version: u32,

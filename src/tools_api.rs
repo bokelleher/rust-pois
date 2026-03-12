@@ -127,6 +127,7 @@ pub struct ValidateResponse {
     pub info: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct AdvancedBuildRequest {
     pub command: String,
@@ -224,6 +225,7 @@ pub async fn validate_scte35(
 }
 
 /// POST /api/tools/scte35/build-advanced - Advanced builder with segmentation
+#[allow(dead_code)]
 pub async fn build_advanced_scte35(
     State(_st): State<std::sync::Arc<AppState>>,
     Extension(_claims): Extension<jwt_auth::Claims>,
@@ -493,7 +495,7 @@ fn decode_scte35_internal(b64: &str) -> Result<DecodedScte35, String> {
     };
     
     // Record position before parsing command (after command_type byte)
-    let command_start_pos = br.bitpos;
+    let _command_start_pos = br.bitpos;
     
     // Parse command-specific data
     let command_info = parse_command_info(&mut br, command_type)?;
@@ -999,11 +1001,13 @@ fn validate_scte35_internal(b64: &str) -> Result<String, String> {
     ))
 }
 
+#[allow(dead_code)]
 fn parse_hex_u8(s: &str) -> Option<u8> {
     let s = s.trim().trim_start_matches("0x").trim_start_matches("0X");
     u8::from_str_radix(s, 16).ok()
 }
 
+#[allow(dead_code)]
 fn build_advanced_internal(req: &AdvancedBuildRequest) -> Result<String, String> {
     let seg_type = req.segmentation_type_id.as_deref().and_then(parse_hex_u8);
     let upid_type = req.segmentation_upid_type.as_deref().and_then(parse_hex_u8);

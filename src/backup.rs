@@ -6,6 +6,7 @@
 //! - match_json/action/params_json fields (not condition/action)
 //! - No description fields
 //! - Arc<AppState> for handlers
+#![allow(dead_code)]
 
 use axum::{
     extract::{Path, State},

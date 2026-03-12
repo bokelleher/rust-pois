@@ -1,8 +1,10 @@
 // src/main.rs
-// Version: 3.2.2
-// Last Modified: 2024-11-28
-// Changes: 
-//   - CRITICAL: Fixed Axum 0.7 route syntax (:id → {id}, :channel → {channel})
+// Version: 3.2.4
+// Last Modified: 2026-03-12
+// Changes:
+//   - Added /esam/channel={channel} route for upstream compatibility (= vs / separator)
+//   - Added ?channel= query string support to /esam endpoint via EsamQuery extractor
+//   - Fixed all compiler warnings (unused variables, dead code suppressions)
 //   - CRITICAL: Fixed multi-tenancy security - non-admin users now properly filtered
 //   - Fixed event logging API calls (log_event → log_esam_event)
 //   - Fixed build_notification calls (3 params → 4 params: acq_id, utc_point, action, params)
@@ -54,6 +56,7 @@ use crate::rules::rule_matches;
 #[derive(Clone)]
 struct AppState {
     db: Pool<Sqlite>,
+    #[allow(dead_code)]
     admin_token: String,
     event_logger: EventLogger,
 }
@@ -185,6 +188,7 @@ async fn main() -> anyhow::Result<()> {
     // Main app - merge all routers (no with_state at this level!)
     let app = Router::new()
         .route("/esam/channel/{channel}", post(handle_esam_with_path))
+        .route("/esam/channel={channel}", post(handle_esam_with_path))
         .route("/healthz", get(|| async { "ok" }))
         .route("/esam", post(handle_esam))
         .with_state(state.clone())
@@ -275,6 +279,7 @@ async fn require_jwt_auth(
 
 // ---------------- Bearer token middleware (legacy admin token) ----------------
 
+#[allow(dead_code)]
 async fn require_bearer(
     State(st): axum::extract::State<Arc<AppState>>,
     req: Request<Body>,
@@ -300,13 +305,19 @@ async fn require_bearer(
 
 // ---------------------- ESAM handler ----------------------
 
+#[derive(serde::Deserialize, Default)]
+struct EsamQuery {
+    channel: Option<String>,
+}
+
 async fn handle_esam(
     State(st): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Query(q): Query<EsamQuery>,
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    handle_esam_impl(st, addr, headers, body, None).await
+    handle_esam_impl(st, addr, headers, body, q.channel).await
 }
 
 async fn handle_esam_with_path(
@@ -383,7 +394,7 @@ async fn handle_esam_impl(
     .ok()
     .flatten();
 
-    let Some((channel_id, tz)) = ch else {
+    let Some((channel_id, _tz)) = ch else {
         let duration = start.elapsed();
         let _ = st
             .event_logger
