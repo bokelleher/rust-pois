@@ -1,11 +1,16 @@
 // src/tools_api.rs
-// Version: 4.0.6
+// Version: 4.0.7
 // Created: 2024-11-17
-// Updated: 2024-11-24
+// Updated: 2026-03-12
 // 
 // Enhanced SCTE-35 Tools API - Decoder, Validator, Test Sender, Advanced Builder
 //
 // Changelog:
+// v4.0.7 (2026-03-12): Fixed /api/tools/scte35/build endpoint
+//   - BuildRequest now accepts segmentation_type_id, segmentation_upid_type, segmentation_upid
+//   - build_scte35 handler routes to advanced builder when segmentation params present
+//   - "time_signal" command alias added (frontend sends "time_signal", not "time_signal_immediate")
+//   - Removed #[allow(dead_code)] from build_advanced_internal and AdvancedBuildRequest
 // v4.0.6 (2024-11-24): CRITICAL FIX - Removed incorrect skip logic from v4.0.4
 //   - v4.0.4's skip logic was causing descriptor_loop_length to be read from wrong position
 //   - Command parsers already consume correct bytes; no skip needed
@@ -16,42 +21,15 @@
 //   - Now properly masks the 6 reserved bits: word & 0x03FF
 //   - This was causing descriptors to never be found (reading 8194 bytes instead of 32)
 // v4.0.4 (2024-11-24): Fixed command byte skipping for proper descriptor parsing
-//   - CRITICAL FIX: After parsing command info, now skips remaining command bytes
-//   - This fixes "No descriptors found" bug when splice_command_length > parsed bytes
-//   - splice_insert now fully parsed (flags, duration, program info)
-//   - Proper handling of splice_command_length=0xFFF (unspecified length)
 //   - NOTE: This introduced a bug that was fixed in v4.0.6
 // v4.0.3 (2024-11-20): Fixed segmentation descriptor parsing
 //   - CRITICAL FIX: Now properly reads 4-byte "CUEI" identifier before segmentation_event_id
-//   - This was causing all segmentation descriptors to be parsed incorrectly
-//   - Decoder now correctly displays seg type, UPID type, and UPID value
 // v4.0.2 (2024-11-19): Enhanced logging for descriptor parsing debugging
-//   - Added INFO level logs to track bit positions during decode
-//   - Better error handling for descriptor parsing failures
 // v4.0.1 (2024-11-19): Enhanced decoder for segmentation descriptors
-//   - Decoder now extracts and displays segmentation_type_id with name
-//   - Shows UPID type and formatted UPID value
-//   - Displays segmentation duration in both ticks and seconds
-//   - Smart UPID formatting (ASCII, UUID, hex) based on type
 // v4.0.0 (2024-11-19): Full segmentation descriptor support
-//   - Advanced builder now supports custom segmentation types and UPIDs
-//   - Added hex parsing for segmentation_type_id and upid_type
-//   - Integrated with new scte35::build_*_advanced_b64() functions
 // v3.1.2 (2024-11-17): Quick Test now processes real ESAM signals
-//   - test_send now builds proper ESAM XML and processes through pipeline
-//   - Runs signals through channel rules for matching
-//   - Creates real events in database visible in Event Monitora
-//   - Marks test events with "QuickTest:{username}" as source IP
 // v3.1.1 (2024-11-17): Fixed JWT authentication integration
-//   - Added Extension(claims) parameter to all endpoints for JWT auth
-//   - Added State(st) parameter for AppState access
-//   - All endpoints now properly integrate with require_jwt_auth middleware
 // v3.1.0 (2024-11-17): Initial release
-//   - Added SCTE-35 decoder with full message parsing
-//   - Added SCTE-35 validator with CRC-32 checking
-//   - Added quick test sender for channel testing
-//   - Added advanced builder foundation for segmentation descriptors
-//   - All endpoints require JWT authentication
 
 use axum::{
     extract::State,
@@ -75,6 +53,9 @@ use crate::jwt_auth;
 pub struct BuildRequest {
     pub command: String,
     pub duration_seconds: Option<u32>,
+    pub segmentation_type_id: Option<String>,
+    pub segmentation_upid_type: Option<String>,
+    pub segmentation_upid: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -127,8 +108,8 @@ pub struct ValidateResponse {
     pub info: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct AdvancedBuildRequest {
     pub command: String,
     pub duration_seconds: Option<u32>,
@@ -156,14 +137,35 @@ pub struct TestSendResponse {
 // API HANDLERS
 // ============================================================================
 
-/// POST /api/tools/scte35/build - Basic SCTE-35 builder
+/// POST /api/tools/scte35/build - Basic SCTE-35 builder (with optional segmentation)
 pub async fn build_scte35(
     State(_st): State<std::sync::Arc<AppState>>,
     Extension(_claims): Extension<jwt_auth::Claims>,
     Json(req): Json<BuildRequest>,
 ) -> Response {
+    // Route to advanced builder if segmentation params present
+    if req.segmentation_type_id.is_some() || req.segmentation_upid_type.is_some() {
+        let adv = AdvancedBuildRequest {
+            command: req.command,
+            duration_seconds: req.duration_seconds,
+            segmentation_type_id: req.segmentation_type_id,
+            segmentation_upid_type: req.segmentation_upid_type,
+            segmentation_upid: req.segmentation_upid,
+            event_id: None,
+            pts_time: None,
+        };
+        return match build_advanced_internal(&adv) {
+            Ok(b64) => Json(BuildResponse { base64: b64 }).into_response(),
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e})),
+            )
+                .into_response(),
+        };
+    }
+
     let b64 = match req.command.as_str() {
-        "time_signal_immediate" => scte35::build_time_signal_immediate_b64(),
+        "time_signal_immediate" | "time_signal" => scte35::build_time_signal_immediate_b64(),
         "splice_insert_out" => {
             let dur = req.duration_seconds.unwrap_or(60);
             scte35::build_splice_insert_out_b64(dur)
@@ -176,7 +178,7 @@ pub async fn build_scte35(
                 .into_response()
         }
     };
-    
+
     Json(BuildResponse { base64: b64 }).into_response()
 }
 
@@ -494,28 +496,20 @@ fn decode_scte35_internal(b64: &str) -> Result<DecodedScte35, String> {
         _ => "unknown",
     };
     
-    // Record position before parsing command (after command_type byte)
     let _command_start_pos = br.bitpos;
-    
-    // Parse command-specific data
     let command_info = parse_command_info(&mut br, command_type)?;
     
     tracing::info!("After command parse, bitpos: {}", br.bitpos);
-    
-    // v4.0.6 FIX: REMOVED the v4.0.4 skip logic - it was causing wrong bitpos!
-    // The command parsers already consume the correct number of bytes.
-    // descriptor_loop_length immediately follows the command data.
-    
     tracing::info!("Before reading descriptor_loop_length, bitpos: {}, total message bits: {}", 
                    br.bitpos, br.data.len() * 8);
     
-    // v4.0.5 FIX: Parse descriptors with proper 10-bit length field
-    // The descriptor_loop_length field is 10 bits, with 6 reserved bits before it
+    // v4.0.5 FIX: descriptor_loop_length is 10 bits with 6 reserved bits
     let descriptor_word = br.read_u16(16)?;
-    let descriptor_loop_length = (descriptor_word & 0x03FF) as usize;  // Mask to get lower 10 bits
+    let descriptor_loop_length = (descriptor_word & 0x03FF) as usize;
     
     tracing::info!("Descriptor loop word: 0x{:04X}, masked length: {} bytes, bitpos now: {}", 
                    descriptor_word, descriptor_loop_length, br.bitpos);
+
     let mut descriptors = Vec::new();
     
     if descriptor_loop_length > 0 {
@@ -529,7 +523,6 @@ fn decode_scte35_internal(b64: &str) -> Result<DecodedScte35, String> {
                 }
                 Err(e) => {
                     tracing::warn!("Failed to parse descriptor at bit {}: {}", br.bitpos, e);
-                    // Skip remaining descriptor data
                     if br.bitpos < desc_end {
                         let remaining_bits = desc_end - br.bitpos;
                         if let Err(skip_err) = br.skip_bits(remaining_bits as u32) {
@@ -561,16 +554,12 @@ fn parse_command_info(
 ) -> Result<serde_json::Value, String> {
     match command_type {
         0x00 => {
-            // splice_null - no data
-            Ok(serde_json::json!({
-                "command": "splice_null"
-            }))
+            Ok(serde_json::json!({ "command": "splice_null" }))
         }
         0x05 => {
-            // splice_insert - fully parse for display
             let event_id = br.read_u32(32)?;
             let event_cancel = br.read_u8(1)? == 1;
-            br.skip_bits(7)?; // reserved
+            br.skip_bits(7)?;
             
             if event_cancel {
                 return Ok(serde_json::json!({
@@ -584,7 +573,7 @@ fn parse_command_info(
             let program_splice_flag = br.read_u8(1)? == 1;
             let duration_flag = br.read_u8(1)? == 1;
             let splice_immediate_flag = br.read_u8(1)? == 1;
-            br.skip_bits(4)?; // reserved
+            br.skip_bits(4)?;
             
             let mut result = serde_json::json!({
                 "command": "splice_insert",
@@ -595,19 +584,17 @@ fn parse_command_info(
                 "splice_immediate_flag": splice_immediate_flag
             });
             
-            // Parse splice_time if program_splice and not immediate
             if program_splice_flag && !splice_immediate_flag {
                 let time_specified = br.read_u8(1)? == 1;
                 if time_specified {
-                    br.skip_bits(6)?; // reserved
+                    br.skip_bits(6)?;
                     let pts_time = br.read_u64(33)?;
                     result["pts_time"] = serde_json::json!(pts_time);
                 } else {
-                    br.skip_bits(7)?; // reserved
+                    br.skip_bits(7)?;
                 }
             }
             
-            // Parse component mode if not program splice
             if !program_splice_flag {
                 let component_count = br.read_u8(8)?;
                 let mut components = Vec::new();
@@ -630,10 +617,9 @@ fn parse_command_info(
                 result["components"] = serde_json::json!(components);
             }
             
-            // Parse break_duration if duration_flag
             if duration_flag {
                 let auto_return = br.read_u8(1)? == 1;
-                br.skip_bits(6)?; // reserved
+                br.skip_bits(6)?;
                 let duration = br.read_u64(33)?;
                 result["break_duration"] = serde_json::json!({
                     "auto_return": auto_return,
@@ -642,7 +628,6 @@ fn parse_command_info(
                 });
             }
             
-            // unique_program_id, avail_num, avails_expected
             let unique_program_id = br.read_u16(16)?;
             let avail_num = br.read_u8(8)?;
             let avails_expected = br.read_u8(8)?;
@@ -654,10 +639,9 @@ fn parse_command_info(
             Ok(result)
         }
         0x06 => {
-            // time_signal - parse splice_time()
             let time_specified = br.read_u8(1)? == 1;
             if time_specified {
-                br.skip_bits(6)?; // reserved
+                br.skip_bits(6)?;
                 let pts_time = br.read_u64(33)?;
                 Ok(serde_json::json!({
                     "command": "time_signal",
@@ -665,7 +649,7 @@ fn parse_command_info(
                     "pts_time": pts_time
                 }))
             } else {
-                br.skip_bits(7)?; // reserved
+                br.skip_bits(7)?;
                 Ok(serde_json::json!({
                     "command": "time_signal",
                     "time_specified": false,
@@ -674,10 +658,7 @@ fn parse_command_info(
             }
         }
         0x07 => {
-            // bandwidth_reservation - no additional data
-            Ok(serde_json::json!({
-                "command": "bandwidth_reservation"
-            }))
+            Ok(serde_json::json!({ "command": "bandwidth_reservation" }))
         }
         _ => Ok(serde_json::json!({"info": "Command parsing not implemented"})),
     }
@@ -694,20 +675,17 @@ fn parse_descriptor(br: &mut BitReader) -> Result<DescriptorInfo, String> {
         _ => "unknown",
     };
     
-    // For segmentation descriptor, parse detailed fields
     let data = if tag == 0x02 && length >= 6 {
         let start_pos = br.bitpos;
         
-        // Read identifier (should be "CUEI" = 0x43554549)
         let identifier = br.read_u32(32)?;
         tracing::info!("Segmentation descriptor identifier: 0x{:08X}", identifier);
         
         let seg_event_id = br.read_u32(32)?;
         let seg_cancel = br.read_u8(1)?;
-        br.skip_bits(7)?; // reserved
+        br.skip_bits(7)?;
         
         if seg_cancel == 0 && length > 5 {
-            // Parse flags
             let program_seg_flag = br.read_u8(1)?;
             let seg_duration_flag = br.read_u8(1)?;
             let delivery_not_restricted = br.read_u8(1)?;
@@ -718,27 +696,24 @@ fn parse_descriptor(br: &mut BitReader) -> Result<DescriptorInfo, String> {
                 let _archive_allowed = br.read_u8(1)?;
                 let _device_restrictions = br.read_u8(2)?;
             } else {
-                br.skip_bits(5)?; // reserved
+                br.skip_bits(5)?;
             }
             
-            // Parse components if not program segmentation
             if program_seg_flag == 0 {
                 let component_count = br.read_u8(8)?;
                 for _ in 0..component_count {
                     let _component_tag = br.read_u8(8)?;
-                    br.skip_bits(7)?; // reserved
+                    br.skip_bits(7)?;
                     let _pts_offset = br.read_u64(33)?;
                 }
             }
             
-            // Segmentation duration
             let seg_duration = if seg_duration_flag == 1 {
                 Some(br.read_u64(40)?)
             } else {
                 None
             };
             
-            // UPID
             let upid_type = br.read_u8(8)?;
             let upid_length = br.read_u8(8)? as usize;
             let mut upid_bytes = Vec::new();
@@ -746,18 +721,13 @@ fn parse_descriptor(br: &mut BitReader) -> Result<DescriptorInfo, String> {
                 upid_bytes.push(br.read_u8(8)?);
             }
             
-            // Segmentation type ID
             let seg_type_id = br.read_u8(8)?;
-            
-            // segment_num and segments_expected
             let segment_num = br.read_u8(8)?;
             let segments_expected = br.read_u8(8)?;
             
-            // Format UPID based on type
             let upid_display = format_upid(upid_type, &upid_bytes);
             let seg_type_name = format_segmentation_type(seg_type_id);
             
-            // Skip any remaining bytes (sub-segments for certain types)
             let bytes_read = (br.bitpos - start_pos) / 8;
             if bytes_read < length {
                 br.skip_bits(((length - bytes_read) * 8) as u32)?;
@@ -777,7 +747,6 @@ fn parse_descriptor(br: &mut BitReader) -> Result<DescriptorInfo, String> {
                 "segments_expected": segments_expected
             })
         } else {
-            // Cancelled segmentation
             let bytes_read = (br.bitpos - start_pos) / 8;
             if bytes_read < length {
                 br.skip_bits(((length - bytes_read) * 8) as u32)?;
@@ -789,20 +758,16 @@ fn parse_descriptor(br: &mut BitReader) -> Result<DescriptorInfo, String> {
             })
         }
     } else if tag == 0x00 && length >= 4 {
-        // avail_descriptor
         let provider_avail_id = br.read_u32(32)?;
         let bytes_read = 4;
         if bytes_read < length {
             br.skip_bits(((length - bytes_read) * 8) as u32)?;
         }
-        serde_json::json!({
-            "provider_avail_id": provider_avail_id
-        })
+        serde_json::json!({ "provider_avail_id": provider_avail_id })
     } else if tag == 0x01 && length >= 1 {
-        // DTMF_descriptor
         let preroll = br.read_u8(8)?;
         let dtmf_count = br.read_u8(3)?;
-        br.skip_bits(5)?; // reserved
+        br.skip_bits(5)?;
         let mut dtmf_chars = String::new();
         for _ in 0..dtmf_count {
             let ch = br.read_u8(8)?;
@@ -812,12 +777,8 @@ fn parse_descriptor(br: &mut BitReader) -> Result<DescriptorInfo, String> {
         if bytes_read < length {
             br.skip_bits(((length - bytes_read) * 8) as u32)?;
         }
-        serde_json::json!({
-            "preroll": preroll,
-            "dtmf_chars": dtmf_chars
-        })
+        serde_json::json!({ "preroll": preroll, "dtmf_chars": dtmf_chars })
     } else {
-        // Skip unknown descriptor data
         br.skip_bits((length * 8) as u32)?;
         serde_json::json!({})
     };
@@ -858,22 +819,16 @@ fn format_upid(upid_type: u8, bytes: &[u8]) -> String {
     if bytes.is_empty() {
         return "(empty)".to_string();
     }
-    
     match upid_type {
         0x01 | 0x02 | 0x03 | 0x0C | 0x0D => {
-            // ASCII types: User Defined, ISCI, Ad-ID, MPU, MID
             if bytes.iter().all(|&b| (32..=126).contains(&b)) {
                 String::from_utf8_lossy(bytes).to_string()
             } else {
                 format!("hex:{}", bytes.iter().map(|b| format!("{:02X}", b)).collect::<String>())
             }
         }
-        0x0F => {
-            // URI - always ASCII
-            String::from_utf8_lossy(bytes).to_string()
-        }
+        0x0F => String::from_utf8_lossy(bytes).to_string(),
         0x10 => {
-            // UUID - 16 bytes formatted
             if bytes.len() == 16 {
                 format!("{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
                     bytes[0], bytes[1], bytes[2], bytes[3],
@@ -885,7 +840,6 @@ fn format_upid(upid_type: u8, bytes: &[u8]) -> String {
             }
         }
         0x06 => {
-            // ISAN - 12 bytes
             if bytes.len() == 12 {
                 format!("ISAN:{}", bytes.iter().map(|b| format!("{:02X}", b)).collect::<String>())
             } else {
@@ -893,18 +847,13 @@ fn format_upid(upid_type: u8, bytes: &[u8]) -> String {
             }
         }
         0x0A => {
-            // EIDR - typically 12 bytes
             if bytes.len() == 12 {
-                // Format as 10.5240/XXXX-XXXX-XXXX-XXXX-XXXX-C
                 format!("EIDR:{}", bytes.iter().map(|b| format!("{:02X}", b)).collect::<String>())
             } else {
                 format!("hex:{}", bytes.iter().map(|b| format!("{:02X}", b)).collect::<String>())
             }
         }
-        _ => {
-            // Hex for others
-            format!("hex:{}", bytes.iter().map(|b| format!("{:02X}", b)).collect::<String>())
-        }
+        _ => format!("hex:{}", bytes.iter().map(|b| format!("{:02X}", b)).collect::<String>()),
     }
 }
 
@@ -964,7 +913,6 @@ fn validate_scte35_internal(b64: &str) -> Result<String, String> {
     if bytes.is_empty() {
         return Err("Empty data".to_string());
     }
-
     if bytes.len() < 14 {
         return Err(format!("Too short: {} bytes (minimum 14)", bytes.len()));
     }
@@ -974,7 +922,6 @@ fn validate_scte35_internal(b64: &str) -> Result<String, String> {
         return Err(format!("Invalid table_id: 0x{:02X} (expected 0xFC)", table_id));
     }
 
-    // Check CRC-32 (last 4 bytes)
     if bytes.len() < 4 {
         return Err("Message too short for CRC".to_string());
     }
@@ -1007,7 +954,6 @@ fn parse_hex_u8(s: &str) -> Option<u8> {
     u8::from_str_radix(s, 16).ok()
 }
 
-#[allow(dead_code)]
 fn build_advanced_internal(req: &AdvancedBuildRequest) -> Result<String, String> {
     let seg_type = req.segmentation_type_id.as_deref().and_then(parse_hex_u8);
     let upid_type = req.segmentation_upid_type.as_deref().and_then(parse_hex_u8);
