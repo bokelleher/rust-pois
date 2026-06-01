@@ -37,6 +37,9 @@ pub struct EsamEvent {
     // Raw payloads (optional)
     pub raw_esam_request: Option<String>,
     pub raw_esam_response: Option<String>,
+
+    // SESAME (SCTE 130-9) tier achieved (NULL = unauthenticated / Tier 0)
+    pub sesame_tier: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -56,6 +59,7 @@ pub struct EsamEventView {
     pub processing_time_ms: Option<i32>,
     pub response_status: i32,
     pub error_message: Option<String>,
+    pub sesame_tier: Option<i32>,
     pub channel_timezone: Option<String>,
     pub rule_priority: Option<i64>,
 }
@@ -133,8 +137,8 @@ impl EventLogger {
                 scte35_command, scte35_type_id, scte35_upid,
                 matched_rule_id, matched_rule_name, action,
                 request_size, processing_time_ms, response_status, error_message,
-                raw_esam_request, raw_esam_response
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                raw_esam_request, raw_esam_response, sesame_tier
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
             "#
         )
@@ -155,6 +159,7 @@ impl EventLogger {
         .bind(metrics.error_message.as_deref())
         .bind(raw_request)
         .bind(raw_response)
+        .bind(client_info.sesame_tier)
         .fetch_one(&self.db)
         .await?;
 
@@ -336,6 +341,9 @@ impl EventLogger {
 pub struct ClientInfo {
     pub source_ip: Option<String>,
     pub user_agent: Option<String>,
+    /// SESAME (SCTE 130-9) tier achieved on this request: Some(1|2|3) when
+    /// authenticated, None for unauthenticated / Tier-0 passthrough.
+    pub sesame_tier: Option<i32>,
 }
 
 impl ClientInfo {
@@ -360,6 +368,7 @@ impl ClientInfo {
         Self {
             source_ip,
             user_agent,
+            sesame_tier: None,
         }
     }
 }

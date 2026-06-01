@@ -382,6 +382,7 @@ pub async fn test_send(
     let client_info = ClientInfo {
         source_ip: Some(format!("QuickTest:{}", claims.username)),
         user_agent: Some("POIS Quick Test Tool".to_string()),
+        sesame_tier: None,
     };
     
     // Log the event - pass the actual matched rule if available

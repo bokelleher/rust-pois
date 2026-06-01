@@ -198,6 +198,7 @@
               <th>Action</th>
               <th>Rule</th>
               <th>Status</th>
+              <th>SESAME</th>
               <th>Time (ms)</th>
               <th>Command</th>
               <th>Source IP</th>
@@ -411,6 +412,7 @@
             <td><span class="badge badge-${this.getActionClass(event.action)}">${event.action}</span></td>
             <td>${event.matched_rule_name || '-'}</td>
             <td><span class="badge badge-${this.getStatusClass(event.response_status)}">${event.response_status}</span></td>
+            <td><span class="badge badge-${event.sesame_tier ? 'success' : 'muted'}" title="SESAME tier achieved">${event.sesame_tier ? 'T' + event.sesame_tier : '—'}</span></td>
             <td>${event.processing_time_ms}</td>
             <td>${event.scte35_command || '-'}</td>
             <td>${event.source_ip || '-'}</td>
@@ -585,6 +587,7 @@
               <div style="color: #fff; font-size: 14px;"><strong>Action:</strong> <span class="badge badge-${this.getActionClass(event.action)}">${event.action}</span></div>
               <div style="color: #fff; font-size: 14px;"><strong>Processing Time:</strong> ${event.processing_time_ms || '--'} ms</div>
               <div style="color: #fff; font-size: 14px;"><strong>Response Status:</strong> ${event.response_status}</div>
+              <div style="color: #fff; font-size: 14px;"><strong>SESAME Tier:</strong> ${event.sesame_tier ? 'Tier ' + event.sesame_tier : 'None (unauthenticated)'}</div>
               <div style="color: #fff; font-size: 14px;"><strong>Request Size:</strong> ${event.request_size || '--'} bytes</div>
               ${event.matched_rule_name ? `<div style="color: #fff; font-size: 14px;"><strong>Matched Rule:</strong> ${event.matched_rule_name} (ID: ${event.matched_rule_id})</div>` : ''}
               ${event.error_message ? `<div style="color: #ff6b6b; font-size: 14px;"><strong>Error:</strong> ${this.escapeHtml(event.error_message)}</div>` : ''}

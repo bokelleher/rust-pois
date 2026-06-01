@@ -365,13 +365,14 @@ async fn handle_esam_impl(
 ) -> Response {
     let start = Instant::now();
 
-    let client_info = ClientInfo {
+    let mut client_info = ClientInfo {
         source_ip: Some(addr.ip().to_string()),
         user_agent: Some(headers
             .get("user-agent")
             .and_then(|h| h.to_str().ok())
             .unwrap_or("unknown")
             .to_string()),
+        sesame_tier: None,
     };
 
     // ---- SESAME (SCTE 130-9) inbound verification ----
@@ -421,6 +422,12 @@ async fn handle_esam_impl(
     } else {
         (String::from_utf8_lossy(&raw_body).to_string(), None)
     };
+
+    // Record the achieved SESAME tier (1/2/3, or None for unauthenticated) so it
+    // is logged on every event below.
+    client_info.sesame_tier = sesame_ctx
+        .as_ref()
+        .map(|c| c.achieved_tier.level() as i32);
 
     let facts = match extract_facts(&body) {
         Ok(v) => v,
