@@ -1,6 +1,6 @@
 [package]
 name = "pois-esam-server"
-version = "0.1.0"
+version = "3.5.0"
 edition = "2021"
 
 [dependencies]
@@ -38,3 +38,26 @@ rand = "0.8"
 uuid = { version = "1.10.0", features = ["v4", "serde"] }
 time = { version = "0.3.36", features = ["macros", "serde", "formatting", "parsing"] }
 anyhow = "1.0.86"
+
+# SESAME (SCTE 130-9) crypto — pure-Rust RustCrypto stack. hmac/sha2/rand/
+# base64/time above are reused; only AES-GCM is new. The default build is
+# pure-Rust and cross-platform (handoff §4); a faster backend can be added
+# later behind an optional feature without changing the wire format.
+aes-gcm = "0.10"     # AES-256-GCM payload encryption (Tier 3)
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Expose the SESAME core as a library so benches/tests use it without the HTTP
+# stack. The binary (main.rs) consumes it as `pois_esam_server::sesame`.
+[lib]
+name = "pois_esam_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pois-esam-server"
+path = "src/main.rs"
+
+[[bench]]
+name = "sesame_overhead"
+harness = false

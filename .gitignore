@@ -24,8 +24,14 @@ Thumbs.db
 *.zip
 *.tar.gz
 *.bak
+*.bak.*
 static.backup/
 files.zip
+
+# Paper binaries are attached to GitHub Releases, not tracked in-tree
+docs/*.docx
+docs/*.pdf
+docs/*.tex
 
 # Local tokens or secrets
 dev_token

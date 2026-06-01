@@ -29,16 +29,18 @@ mod backup; // Backup/restore module
 mod jwt_auth; // JWT authentication
 mod auth_handlers; // Auth API endpoints
 mod tools_api; // SCTE-35 Tools API
+mod sesame_axum; // SESAME (SCTE 130-9) Axum adapter
 
 use axum::{
-    body::Body,
-    extract::{ConnectInfo, Extension, Path, Query, State},
+    body::{Body, Bytes},
+    extract::{ConnectInfo, Extension, OriginalUri, Path, Query, State},
     http::{HeaderMap, Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
     Json, Router,
 };
+use crate::sesame_axum::SesameRuntime;
 use base64::Engine;
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite};
 use std::{net::SocketAddr, sync::Arc, time::Instant};
@@ -64,6 +66,7 @@ struct AppState {
     #[allow(dead_code)]
     admin_token: String,
     event_logger: EventLogger,
+    sesame: Arc<SesameRuntime>,
 }
 
 #[tokio::main]
@@ -142,10 +145,25 @@ async fn main() -> anyhow::Result<()> {
         auth_service,
     });
 
+    // Initialize SESAME (SCTE 130-9) runtime from environment. When no SESAME
+    // env is set this is a transparent passthrough (legacy behavior).
+    let sesame = Arc::new(SesameRuntime::from_env());
+    if sesame.is_enabled() {
+        info!(
+            "SESAME enabled (default min tier {:?}, replay window {}s, response signing {})",
+            sesame.default_min_tier,
+            sesame.cfg.replay_window_secs,
+            if sesame.response_key_id.is_some() { "on" } else { "off" },
+        );
+    } else {
+        info!("SESAME inactive (no POIS_SESAME_* config); ESAM path unauthenticated");
+    }
+
     let state = Arc::new(AppState {
         db,
         admin_token,
         event_logger,
+        sesame,
     });
 
     // --- App / routes ---
@@ -319,29 +337,32 @@ async fn handle_esam(
     State(st): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(q): Query<EsamQuery>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
-    body: String,
+    body: Bytes,
 ) -> impl IntoResponse {
-    handle_esam_impl(st, addr, headers, body, q.channel).await
+    handle_esam_impl(st, addr, uri, headers, body, q.channel).await
 }
 
 async fn handle_esam_with_path(
     State(st): State<Arc<AppState>>,
     Path(channel_name): Path<String>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
-    body: String,
+    body: Bytes,
 ) -> impl IntoResponse {
-    handle_esam_impl(st, addr, headers, body, Some(channel_name)).await
+    handle_esam_impl(st, addr, uri, headers, body, Some(channel_name)).await
 }
 
 async fn handle_esam_impl(
     st: Arc<AppState>,
     addr: SocketAddr,
+    uri: axum::http::Uri,
     headers: HeaderMap,
-    body: String,
+    raw_body: Bytes,
     path_channel: Option<String>,
-) -> impl IntoResponse {
+) -> Response {
     let start = Instant::now();
 
     let client_info = ClientInfo {
@@ -351,6 +372,54 @@ async fn handle_esam_impl(
             .and_then(|h| h.to_str().ok())
             .unwrap_or("unknown")
             .to_string()),
+    };
+
+    // ---- SESAME (SCTE 130-9) inbound verification ----
+    // Verify/authorize/decrypt BEFORE the ESAM XML is parsed. On failure,
+    // short-circuit with the Appendix A.7 error and an audit log entry; never
+    // hand an unverified body to the parser.
+    let request_target = uri
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| uri.path().to_string());
+
+    let (body, sesame_ctx): (String, Option<sesame_axum::IncomingCtx>) = if st.sesame.is_enabled() {
+        match sesame_axum::verify_incoming(
+            &st.sesame,
+            "POST",
+            &request_target,
+            path_channel.as_deref(),
+            &headers,
+            &raw_body,
+        ) {
+            Ok(incoming) => (
+                String::from_utf8_lossy(&incoming.body).to_string(),
+                incoming.ctx,
+            ),
+            Err(rej) => {
+                let duration = start.elapsed();
+                let _ = st
+                    .event_logger
+                    .log_esam_event(
+                        path_channel.as_deref().unwrap_or("unknown"),
+                        &serde_json::json!({"error": "sesame_rejected", "code": rej.error_code()}),
+                        None,
+                        client_info,
+                        ProcessingMetrics {
+                            request_size: Some(raw_body.len() as i32),
+                            processing_time_ms: Some(duration.as_millis() as i32),
+                            response_status: 0,
+                            error_message: Some(format!("SESAME: {}", rej.error_code())),
+                        },
+                        None,
+                        None,
+                    )
+                    .await;
+                return rej.into_response();
+            }
+        }
+    } else {
+        (String::from_utf8_lossy(&raw_body).to_string(), None)
     };
 
     let facts = match extract_facts(&body) {
@@ -390,8 +459,8 @@ async fn handle_esam_impl(
         })
         .unwrap_or_else(|| "default".into());
 
-    let ch: Option<(i64, String)> = sqlx::query_as(
-        "SELECT id, timezone FROM channels WHERE name=? AND enabled=1 AND deleted_at IS NULL",
+    let ch: Option<(i64, String, i64)> = sqlx::query_as(
+        "SELECT id, timezone, sesame_min_tier FROM channels WHERE name=? AND enabled=1 AND deleted_at IS NULL",
     )
     .bind(&channel_name)
     .fetch_optional(&st.db)
@@ -399,7 +468,7 @@ async fn handle_esam_impl(
     .ok()
     .flatten();
 
-    let Some((channel_id, _tz)) = ch else {
+    let Some((channel_id, _tz, channel_min_tier)) = ch else {
         let duration = start.elapsed();
         let _ = st
             .event_logger
@@ -424,6 +493,34 @@ async fn handle_esam_impl(
         )
             .into_response();
     };
+
+    // ---- SESAME per-channel policy (§9.3), now that the channel is resolved ----
+    // The global default tier was enforced during inbound verification; here we
+    // additionally enforce any higher per-channel minimum, and confirm a Tier-2
+    // scope matches the channel the request actually targets.
+    if st.sesame.is_enabled() {
+        let achieved = sesame_ctx
+            .as_ref()
+            .map(|c| c.achieved_tier)
+            .unwrap_or(sesame_axum::Tier::Zero);
+        let required = sesame_axum::Tier::from_u8(channel_min_tier.clamp(0, 3) as u8);
+        if required.level() > achieved.level() {
+            let key_id = sesame_ctx.as_ref().map(|c| c.key_id.clone());
+            return sesame_axum::reject_insufficient_tier(key_id, required, achieved).into_response();
+        }
+        if let Some(ctx) = sesame_ctx.as_ref() {
+            if let Some(scope_ch) = ctx.scope_channel.as_deref() {
+                if scope_ch != channel_name {
+                    return sesame_axum::reject_scope_mismatch(
+                        Some(ctx.key_id.clone()),
+                        scope_ch,
+                        &channel_name,
+                    )
+                    .into_response();
+                }
+            }
+        }
+    }
 
     let rules = match sqlx::query_as::<_, Rule>(
         "SELECT * FROM rules WHERE channel_id=? AND enabled=1 AND deleted_at IS NULL ORDER BY priority",
@@ -509,12 +606,9 @@ async fn handle_esam_impl(
             )
             .await;
 
-        (
-            StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, "application/xml")],
-            resp_xml,
-        )
-            .into_response()
+        // Sign (and, if the request was Tier 3, encrypt) the outbound response —
+        // the primary SESAME protection against a forged POIS decision.
+        sesame_axum::build_esam_response(&st.sesame, sesame_ctx.as_ref(), acq_id, &resp_xml)
     } else {
         let duration = start.elapsed();
         
@@ -547,12 +641,9 @@ async fn handle_esam_impl(
             )
             .await;
 
-        (
-            StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, "application/xml")],
-            resp_xml,
-        )
-            .into_response()
+        // Sign (and, if the request was Tier 3, encrypt) the outbound response —
+        // the primary SESAME protection against a forged POIS decision.
+        sesame_axum::build_esam_response(&st.sesame, sesame_ctx.as_ref(), acq_id, &resp_xml)
     }
 }
 
