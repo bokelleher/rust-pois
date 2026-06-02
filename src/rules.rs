@@ -65,14 +65,40 @@ fn eval(cond: &Value, facts: &Map<String, Value>) -> bool {
     false
 }
 
+/// Glob match supporting any number of `*` wildcards, each matching any
+/// (possibly empty) run of characters. Examples:
+///   "blk-*"   prefix      "*-end"   suffix
+///   "*AFE1*"  contains     "a*b*c"   ordered segments
+/// With no `*`, this is an exact-equality test.
 fn glob_match(pat: &str, text: &str) -> bool {
-    if let Some(i) = pat.find('*') {
-        let (pre, post) = pat.split_at(i);
-        let post = &post[1..];
-        text.starts_with(pre) && text.ends_with(post)
-    } else {
-        pat == text
+    if !pat.contains('*') {
+        return pat == text;
     }
+    let parts: Vec<&str> = pat.split('*').collect();
+    let last = parts.len() - 1;
+    let mut pos = 0usize; // how far we have consumed `text`
+    for (i, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue; // adjacent/edge '*' matches anything
+        }
+        if i == 0 {
+            // No leading '*': the first segment must anchor at the start.
+            if !text[pos..].starts_with(part) {
+                return false;
+            }
+            pos += part.len();
+        } else if i == last {
+            // No trailing '*': the final segment must anchor at the end.
+            return text[pos..].ends_with(part);
+        } else {
+            // Interior segment: must appear somewhere after the current position.
+            match text[pos..].find(part) {
+                Some(idx) => pos += idx + part.len(),
+                None => return false,
+            }
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -115,5 +141,25 @@ mod tests {
         ]});
         assert!(rule_matches(&m, &facts("stop-9")));
         assert!(!rule_matches(&m, &facts("go-9")));
+    }
+
+    #[test]
+    fn glob_supports_prefix_suffix_contains_and_exact() {
+        // exact
+        assert!(glob_match("blk-001", "blk-001"));
+        assert!(!glob_match("blk-001", "blk-002"));
+        // prefix / suffix
+        assert!(glob_match("blk-*", "blk-evening"));
+        assert!(!glob_match("blk-*", "news"));
+        assert!(glob_match("*-end", "program-end"));
+        // contains (multi-*) — the case that previously could not match
+        assert!(glob_match("*AFE1*", "0x09:41442DAFE1303031"));
+        assert!(glob_match("*AFE1*", "AD-AFE1-001"));
+        assert!(!glob_match("*AFE1*", "AD-AFE2-001"));
+        // ordered interior segments
+        assert!(glob_match("a*b*c", "a__b__c"));
+        assert!(!glob_match("a*b*c", "a__c__b"));
+        // bare "*" matches anything
+        assert!(glob_match("*", "anything"));
     }
 }

@@ -462,6 +462,10 @@
       }
 
       getSegmentationTypeName(typeId) {
+        // Accept either decimal ("52") or hex ("0x34") ids.
+        const n = (typeof typeId === 'string')
+          ? (typeId.toLowerCase().startsWith('0x') ? parseInt(typeId, 16) : parseInt(typeId, 10))
+          : typeId;
         const types = {
           0x00: 'Not Indicated',
           0x01: 'Content Identification',
@@ -500,7 +504,7 @@
           0x50: 'Network Start',
           0x51: 'Network End'
         };
-        return types[typeId] || `Unknown (0x${typeId.toString(16).toUpperCase().padStart(2, '0')})`;
+        return types[n] || `Unknown (0x${(Number.isNaN(n) ? 0 : n).toString(16).toUpperCase().padStart(2, '0')})`;
       }
 
       decodeUpid(upidStr) {
@@ -658,6 +662,13 @@ Check raw_esam_request for base64.</div>`}
             
             // Segmentation Descriptor Section
             const segTypeId = event.scte35_type_id || event['scte35.segmentation_type_id'];
+            // Normalize to a number and present the id as hex (SCTE-35 convention),
+            // regardless of whether the backend stored it as decimal or hex.
+            const segTypeNum = (segTypeId == null) ? null
+              : (typeof segTypeId === 'string' && segTypeId.toLowerCase().startsWith('0x'))
+                ? parseInt(segTypeId, 16) : parseInt(segTypeId, 10);
+            const segTypeHex = (segTypeNum == null || Number.isNaN(segTypeNum)) ? segTypeId
+              : '0x' + segTypeNum.toString(16).toUpperCase().padStart(2, '0');
             const segTypeName = event['scte35.segmentation_type_name'];
             const segUpid = event.scte35_upid || event['scte35.segmentation_upid'];
             const upidTypeName = event['scte35.upid_type_name'];
@@ -674,7 +685,7 @@ Check raw_esam_request for base64.</div>`}
                   ${segTypeId ? `
                   <div>
                     <div style="color: #999; font-size: 14px; margin-bottom: 4px;">Type ID:</div>
-                    <div style="color: #fff; font-family: 'SF Mono', Monaco, monospace; font-size: 14px;">${segTypeId} - ${this.getSegmentationTypeName(segTypeId)}</div>
+                    <div style="color: #fff; font-family: 'SF Mono', Monaco, monospace; font-size: 14px;">${segTypeHex} - ${this.getSegmentationTypeName(segTypeNum)}</div>
                   </div>
                   ` : ''}
                   ${segUpid ? `
