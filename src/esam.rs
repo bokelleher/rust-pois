@@ -74,6 +74,32 @@ pub fn extract_facts(esam_xml: &str) -> Result<serde_json::Value, String> {
                     }
                 }
             }
+            // Self-closing elements such as <UTCPoint utcPoint="..."/> arrive as
+            // Empty events (not Start), so their attributes must be read here too.
+            // (BinaryData always carries text, so it only appears as Start.)
+            Ok(Event::Empty(e)) => {
+                let local = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                if local.ends_with("AcquiredSignal") {
+                    for a in e.attributes().flatten() {
+                        let k = String::from_utf8_lossy(a.key.as_ref()).to_string();
+                        let v = a.unescape_value().map_err(|e| e.to_string())?.to_string();
+                        if k.ends_with("acquisitionSignalID") {
+                            acquisition_signal_id = v;
+                        } else if k.ends_with("acquisitionPointIdentity") {
+                            acq_point_identity = v;
+                        }
+                    }
+                }
+                if local.ends_with("UTCPoint") {
+                    for a in e.attributes().flatten() {
+                        let k = String::from_utf8_lossy(a.key.as_ref()).to_string();
+                        let v = a.unescape_value().map_err(|e| e.to_string())?.to_string();
+                        if k.ends_with("utcPoint") {
+                            utc_point = Some(v);
+                        }
+                    }
+                }
+            }
             Ok(Event::Eof) => break,
             Err(e) => return Err(format!("XML parse error: {e}")),
             _ => {}
@@ -719,4 +745,24 @@ fn parse_splice_insert_pts(br: &mut BitReader) -> Result<Option<u64>, String> {
     }
     
     Ok(None)
+}
+#[cfg(test)]
+mod extract_facts_tests {
+    use super::*;
+
+    #[test]
+    fn self_closing_utcpoint_and_apid_are_parsed() {
+        // Self-closing <UTCPoint .../> previously arrived as an Empty event and
+        // was dropped, leaving utcPoint at the 1970 fallback. It must now parse.
+        let xml = r#"<?xml version="1.0"?>
+<SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1">
+  <AcquiredSignal acquisitionSignalID="sig-1" acquisitionPointIdentity="SportsFeed-East">
+    <UTCPoint utcPoint="2026-06-02T20:30:00Z"/>
+  </AcquiredSignal>
+</SignalProcessingEvent>"#;
+        let f = extract_facts(xml).expect("parse");
+        assert_eq!(f["utcPoint"], "2026-06-02T20:30:00Z");
+        assert_eq!(f["acquisitionPointIdentity"], "SportsFeed-East");
+        assert_eq!(f["acquisitionSignalID"], "sig-1");
+    }
 }

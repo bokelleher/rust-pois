@@ -1,19 +1,24 @@
 use serde_json::{Map, Value};
 
 /// Match semantics:
-/// - anyOf: OR of conditions (optional; default false)
-/// - allOf: AND of conditions (optional; default true)
-/// If either passes, the rule matches.
+/// - anyOf: OR of conditions — matches if any listed condition passes.
+/// - allOf: AND of conditions — matches if all listed conditions pass.
+/// - If both are given, the rule matches when either clause is satisfied.
+/// - An empty match object `{}` (neither clause) is a deliberate catch-all.
 pub fn rule_matches(match_json: &Value, facts: &Map<String, Value>) -> bool {
-    let any_ok = match_json
-        .get("anyOf")
-        .and_then(|v| v.as_array())
-        .map_or(false, |arr| arr.iter().any(|c| eval(c, facts)));
+    let any_clause = match_json.get("anyOf").and_then(|v| v.as_array());
+    let all_clause = match_json.get("allOf").and_then(|v| v.as_array());
 
-    let all_ok = match_json
-        .get("allOf")
-        .and_then(|v| v.as_array())
-        .map_or(true, |arr| arr.iter().all(|c| eval(c, facts)));
+    // No conditions at all (e.g. "{}") is a deliberate catch-all.
+    if any_clause.is_none() && all_clause.is_none() {
+        return true;
+    }
+
+    // A clause only contributes when it is present AND satisfied. In particular,
+    // an absent allOf must NOT default to true — otherwise an anyOf-only rule
+    // would match every request (and e.g. a blackout rule would drop all traffic).
+    let any_ok = any_clause.map_or(false, |arr| arr.iter().any(|c| eval(c, facts)));
+    let all_ok = all_clause.map_or(false, |arr| arr.iter().all(|c| eval(c, facts)));
 
     any_ok || all_ok
 }
@@ -67,5 +72,48 @@ fn glob_match(pat: &str, text: &str) -> bool {
         text.starts_with(pre) && text.ends_with(post)
     } else {
         pat == text
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn facts(sig: &str) -> Map<String, Value> {
+        json!({ "acquisitionSignalID": sig })
+            .as_object()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn empty_match_is_catch_all() {
+        assert!(rule_matches(&json!({}), &facts("anything")));
+    }
+
+    #[test]
+    fn anyof_only_matches_only_when_a_condition_passes() {
+        let m = json!({ "anyOf": [{ "acquisitionSignalID": "blk-*" }] });
+        assert!(rule_matches(&m, &facts("blk-001")));
+        // Regression: an anyOf-only rule must NOT match everything.
+        assert!(!rule_matches(&m, &facts("news-ad-01")));
+    }
+
+    #[test]
+    fn allof_requires_every_condition() {
+        let m = json!({ "allOf": [{ "acquisitionSignalID": "blk-*" }] });
+        assert!(rule_matches(&m, &facts("blk-001")));
+        assert!(!rule_matches(&m, &facts("other")));
+    }
+
+    #[test]
+    fn anyof_is_or_across_conditions() {
+        let m = json!({ "anyOf": [
+            { "acquisitionSignalID": "blk-*" },
+            { "acquisitionSignalID": "stop-*" }
+        ]});
+        assert!(rule_matches(&m, &facts("stop-9")));
+        assert!(!rule_matches(&m, &facts("go-9")));
     }
 }
