@@ -22,7 +22,8 @@ pub struct EsamEvent {
     pub scte35_command: Option<String>,
     pub scte35_type_id: Option<String>,
     pub scte35_upid: Option<String>,
-    
+    pub scte35_b64: Option<String>,
+
     // Rule matching
     pub matched_rule_id: Option<i64>,
     pub matched_rule_name: Option<String>,
@@ -53,6 +54,7 @@ pub struct EsamEventView {
     pub scte35_command: Option<String>,
     pub scte35_type_id: Option<String>,
     pub scte35_upid: Option<String>,
+    pub scte35_b64: Option<String>,
     pub matched_rule_id: Option<i64>,
     pub matched_rule_name: Option<String>,
     pub action: String,
@@ -134,11 +136,11 @@ impl EventLogger {
             r#"
             INSERT INTO esam_events (
                 channel_name, acquisition_signal_id, utc_point, source_ip, user_agent,
-                scte35_command, scte35_type_id, scte35_upid,
+                scte35_command, scte35_type_id, scte35_upid, scte35_b64,
                 matched_rule_id, matched_rule_name, action,
                 request_size, processing_time_ms, response_status, error_message,
                 raw_esam_request, raw_esam_response, sesame_tier
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
             "#
         )
@@ -150,6 +152,7 @@ impl EventLogger {
         .bind(scte35_command.as_deref())
         .bind(scte35_type_id.as_deref())
         .bind(scte35_upid.as_deref())
+        .bind(facts.get("scte35_b64").and_then(|v| v.as_str()))
         .bind(matched_rule_id)
         .bind(matched_rule_name)
         .bind(action)
