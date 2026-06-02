@@ -369,10 +369,10 @@ pub async fn test_send(
     // Build response based on matched rule or noop
     let (action, resp_xml) = if let Some(ref r) = matched_rule {
         let params: serde_json::Value = serde_json::from_str(&r.params_json).unwrap_or_default();
-        let resp = build_notification(&test_signal_id, &utc_point, "", &r.action, &params);
+        let resp = build_notification(&test_signal_id, &utc_point, "", &r.action, &params, Some(&params));
         (r.action.clone(), resp)
     } else {
-        let resp = build_notification(&test_signal_id, &utc_point, "", "noop", &serde_json::json!({}));
+        let resp = build_notification(&test_signal_id, &utc_point, "", "noop", &serde_json::json!({}), None);
         ("noop".to_string(), resp)
     };
     
@@ -764,12 +764,15 @@ fn parse_descriptor(br: &mut BitReader) -> Result<DescriptorInfo, String> {
             let program_seg_flag = br.read_u8(1)?;
             let seg_duration_flag = br.read_u8(1)?;
             let delivery_not_restricted = br.read_u8(1)?;
-            
+
+            // Delivery restriction flags (surfaced below for blackout/regionalize).
+            let (mut web_delivery, mut no_regional_blackout, mut archive_allowed, mut device_restrictions) =
+                (true, true, true, 3u8);
             if delivery_not_restricted == 0 {
-                let _web_delivery = br.read_u8(1)?;
-                let _no_regional_blackout = br.read_u8(1)?;
-                let _archive_allowed = br.read_u8(1)?;
-                let _device_restrictions = br.read_u8(2)?;
+                web_delivery = br.read_u8(1)? == 1;
+                no_regional_blackout = br.read_u8(1)? == 1;
+                archive_allowed = br.read_u8(1)? == 1;
+                device_restrictions = br.read_u8(2)?;
             } else {
                 br.skip_bits(5)?;
             }
@@ -815,6 +818,11 @@ fn parse_descriptor(br: &mut BitReader) -> Result<DescriptorInfo, String> {
                 "segmentation_type_name": seg_type_name,
                 "segmentation_duration_ticks": seg_duration,
                 "segmentation_duration_seconds": seg_duration.map(|d| d as f64 / 90000.0),
+                "delivery_not_restricted": delivery_not_restricted == 1,
+                "web_delivery_allowed": web_delivery,
+                "no_regional_blackout": no_regional_blackout,
+                "archive_allowed": archive_allowed,
+                "device_restrictions": device_restrictions,
                 "upid_type": format!("0x{:02X}", upid_type),
                 "upid_type_name": format_upid_type(upid_type),
                 "upid_value": upid_display,
@@ -1052,6 +1060,348 @@ fn build_advanced_internal(req: &AdvancedBuildRequest) -> Result<String, String>
     }
 }
 
+/// Parse the fixed header + splice_command and return byte offsets describing the
+/// descriptor loop: (descriptor_loop_length word offset, loop_start, loop_end).
+/// Returns None for non-SCTE-35, encrypted, or unparseable/misaligned input.
+/// Shared by every in-place rewrite below.
+fn locate_descriptor_loop(bytes: &[u8]) -> Option<(usize, usize, usize)> {
+    if bytes.len() < 15 || bytes[0] != 0xFC || bytes[4] & 0x80 != 0 {
+        return None;
+    }
+    let mut br = BitReader::new(bytes);
+    br.read_u8(8).ok()?; // table_id
+    br.read_u8(1).ok()?; // section_syntax_indicator
+    br.read_u8(1).ok()?; // private_indicator
+    br.read_u8(2).ok()?; // sap_type / reserved
+    br.read_u16(12).ok()?; // section_length
+    br.read_u8(8).ok()?; // protocol_version
+    br.read_u8(1).ok()?; // encrypted_packet
+    br.read_u8(6).ok()?; // encryption_algorithm
+    br.read_u64(33).ok()?; // pts_adjustment
+    br.read_u8(8).ok()?; // cw_index
+    br.read_u16(12).ok()?; // tier
+    br.read_u16(12).ok()?; // splice_command_length
+    let command_type = br.read_u8(8).ok()?;
+    parse_command_info(&mut br, command_type).ok()?;
+    if br.bitpos % 8 != 0 {
+        return None; // unexpected misalignment after the command
+    }
+    let dlw_off = br.bitpos / 8;
+    if dlw_off + 2 > bytes.len() {
+        return None;
+    }
+    let word = u16::from_be_bytes([bytes[dlw_off], bytes[dlw_off + 1]]);
+    let loop_start = dlw_off + 2;
+    let loop_end = loop_start + (word & 0x03FF) as usize;
+    if loop_end + 4 > bytes.len() {
+        return None;
+    }
+    Some((dlw_off, loop_start, loop_end))
+}
+
+/// Recompute the trailing CRC-32 in place for a message whose total length is
+/// unchanged (delivery-flag / duration edits don't move any bytes).
+fn refresh_crc_in_place(bytes: &mut [u8]) {
+    let n = bytes.len();
+    let crc = crate::scte35::compute_crc32(&bytes[..n - 4]);
+    bytes[n - 4..].copy_from_slice(&crc.to_be_bytes());
+}
+
+/// Rewrite the segmentation_upid of every segmentation_descriptor in a SCTE-35
+/// message, preserving every other byte. `new_type` optionally changes the
+/// segmentation_upid_type (None keeps each descriptor's existing type).
+///
+/// Returns the re-encoded base64 (descriptor/section lengths + CRC-32 fixed), or
+/// None when the input can't be parsed, is encrypted, or carries no segmentation
+/// UPID — callers should then pass the original signal through unchanged.
+pub fn rewrite_upid_b64(input: &str, new_type: Option<u8>, new_value: &str) -> Option<String> {
+    let bytes = scte35_input_to_bytes(input).ok()?;
+    let (dlw_off, loop_start, loop_end) = locate_descriptor_loop(&bytes)?;
+    let orig_word = u16::from_be_bytes([bytes[dlw_off], bytes[dlw_off + 1]]);
+
+    // Walk the descriptor loop, rewriting the UPID of each segmentation_descriptor.
+    let mut new_loop: Vec<u8> = Vec::with_capacity((loop_end - loop_start) + 8);
+    let mut cursor = loop_start;
+    let mut changed = false;
+    while cursor + 2 <= loop_end {
+        let tag = bytes[cursor];
+        let len = bytes[cursor + 1] as usize;
+        let body_end = cursor + 2 + len;
+        if body_end > loop_end {
+            return None; // malformed descriptor loop
+        }
+        if tag == 0x02 {
+            match rewrite_seg_descriptor_body(&bytes[cursor + 2..body_end], new_type, new_value) {
+                Some(nb) if nb.len() <= 255 => {
+                    new_loop.push(0x02);
+                    new_loop.push(nb.len() as u8);
+                    new_loop.extend_from_slice(&nb);
+                    changed = true;
+                }
+                Some(_) => return None, // descriptor would exceed the u8 length field
+                None => new_loop.extend_from_slice(&bytes[cursor..body_end]), // cancel / no UPID
+            }
+        } else {
+            new_loop.extend_from_slice(&bytes[cursor..body_end]);
+        }
+        cursor = body_end;
+    }
+    if !changed || new_loop.len() > 0x03FF {
+        return None;
+    }
+
+    // Reassemble: header+command unchanged, new loop, preserved trailing stuffing,
+    // fixed descriptor_loop_length / section_length, recomputed CRC-32.
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len() + new_loop.len());
+    out.extend_from_slice(&bytes[..dlw_off]);
+    let new_word = (orig_word & 0xFC00) | (new_loop.len() as u16 & 0x03FF);
+    out.extend_from_slice(&new_word.to_be_bytes());
+    out.extend_from_slice(&new_loop);
+    out.extend_from_slice(&bytes[loop_end..bytes.len() - 4]); // alignment stuffing, if any
+
+    // section_length covers everything after the 3-byte prefix, including the CRC.
+    let section_length = (out.len() + 4 - 3) as u16;
+    out[1] = (out[1] & 0xF0) | (((section_length >> 8) & 0x0F) as u8);
+    out[2] = (section_length & 0xFF) as u8;
+
+    let crc = crate::scte35::compute_crc32(&out);
+    out.extend_from_slice(&crc.to_be_bytes());
+
+    Some(B64.encode(out))
+}
+
+/// Set the delivery-restriction flags on every (non-cancelled) segmentation
+/// descriptor: clears `delivery_not_restricted_flag` and writes the 5 restriction
+/// bits. Same byte width → CRC-only refresh. Used by `blackout`/`regionalize`.
+/// Returns None when there is no segmentation descriptor to mark.
+pub fn rewrite_delivery_flags_b64(
+    input: &str,
+    web_delivery_allowed: bool,
+    no_regional_blackout: bool,
+    archive_allowed: bool,
+    device_restrictions: u8,
+) -> Option<String> {
+    let mut bytes = scte35_input_to_bytes(input).ok()?;
+    let (_dlw, loop_start, loop_end) = locate_descriptor_loop(&bytes)?;
+    let mut cursor = loop_start;
+    let mut changed = false;
+    while cursor + 2 <= loop_end {
+        let tag = bytes[cursor];
+        let len = bytes[cursor + 1] as usize;
+        let body_start = cursor + 2;
+        let body_end = body_start + len;
+        if body_end > loop_end {
+            return None;
+        }
+        // tag 0x02, body has the flags byte (>=10), and not a cancel descriptor.
+        if tag == 0x02 && len >= 10 && bytes[body_start + 8] & 0x80 == 0 {
+            // flags byte: program_seg(1) | seg_dur(1) | delivery_not_restricted(1) | 5 bits.
+            let top = bytes[body_start + 9] & 0xC0; // preserve program_seg + seg_dur
+            let restr = ((web_delivery_allowed as u8) << 4)
+                | ((no_regional_blackout as u8) << 3)
+                | ((archive_allowed as u8) << 2)
+                | (device_restrictions & 0x03);
+            bytes[body_start + 9] = top | restr; // delivery_not_restricted (bit5) cleared
+            changed = true;
+        }
+        cursor = body_end;
+    }
+    if !changed {
+        return None;
+    }
+    refresh_crc_in_place(&mut bytes);
+    Some(B64.encode(bytes))
+}
+
+/// Set the break duration (90 kHz ticks) of the avail in place: patches the
+/// splice_insert `break_duration` and/or any `segmentation_duration`. Same byte
+/// width → CRC-only refresh. Used by `shorten`/`extend`/`fill`. Returns None when
+/// the signal carries no duration field to modify.
+pub fn rewrite_break_duration_b64(input: &str, new_ticks: u64) -> Option<String> {
+    let mut bytes = scte35_input_to_bytes(input).ok()?;
+    let mut changed = false;
+
+    // splice_insert break_duration (auto_return 1b + reserved 6b + duration 33b).
+    if let Some(bd) = locate_break_duration(&bytes) {
+        let t = new_ticks & 0x1_FFFF_FFFF; // 33-bit
+        bytes[bd] = (bytes[bd] & 0xFE) | (((t >> 32) & 0x1) as u8); // keep auto_return + reserved
+        bytes[bd + 1] = (t >> 24) as u8;
+        bytes[bd + 2] = (t >> 16) as u8;
+        bytes[bd + 3] = (t >> 8) as u8;
+        bytes[bd + 4] = t as u8;
+        changed = true;
+    }
+
+    // segmentation_duration (40b) in any segmentation descriptor (time_signal avails).
+    if let Some((_dlw, loop_start, loop_end)) = locate_descriptor_loop(&bytes) {
+        let mut cursor = loop_start;
+        while cursor + 2 <= loop_end {
+            let len = bytes[cursor + 1] as usize;
+            let body_start = cursor + 2;
+            let body_end = body_start + len;
+            if body_end > loop_end {
+                break;
+            }
+            if bytes[cursor] == 0x02 {
+                if let Some(off) = seg_duration_offset(&bytes[body_start..body_end]) {
+                    let abs = body_start + off;
+                    let t = new_ticks & 0xFF_FFFF_FFFF; // 40-bit
+                    bytes[abs] = (t >> 32) as u8;
+                    bytes[abs + 1] = (t >> 24) as u8;
+                    bytes[abs + 2] = (t >> 16) as u8;
+                    bytes[abs + 3] = (t >> 8) as u8;
+                    bytes[abs + 4] = t as u8;
+                    changed = true;
+                }
+            }
+            cursor = body_end;
+        }
+    }
+
+    if !changed {
+        return None;
+    }
+    refresh_crc_in_place(&mut bytes);
+    Some(B64.encode(bytes))
+}
+
+/// Byte offset (from the start of `bytes`) of the splice_insert break_duration
+/// field, navigating the flag-dependent layout. None unless this is a
+/// splice_insert with `duration_flag` set. All preceding fields are whole bytes,
+/// so the result is byte-aligned.
+fn locate_break_duration(bytes: &[u8]) -> Option<usize> {
+    if bytes.len() < 15 || bytes[0] != 0xFC || bytes[4] & 0x80 != 0 {
+        return None;
+    }
+    let mut br = BitReader::new(bytes);
+    br.read_u8(8).ok()?;
+    br.read_u8(1).ok()?;
+    br.read_u8(1).ok()?;
+    br.read_u8(2).ok()?;
+    br.read_u16(12).ok()?;
+    br.read_u8(8).ok()?;
+    br.read_u8(1).ok()?;
+    br.read_u8(6).ok()?;
+    br.read_u64(33).ok()?;
+    br.read_u8(8).ok()?;
+    br.read_u16(12).ok()?;
+    br.read_u16(12).ok()?;
+    if br.read_u8(8).ok()? != 0x05 {
+        return None; // not splice_insert
+    }
+    br.read_u32(32).ok()?; // splice_event_id
+    let cancel = br.read_u8(1).ok()? == 1;
+    br.skip_bits(7).ok()?;
+    if cancel {
+        return None;
+    }
+    let _oon = br.read_u8(1).ok()?;
+    let program_splice = br.read_u8(1).ok()? == 1;
+    let duration_flag = br.read_u8(1).ok()? == 1;
+    let splice_immediate = br.read_u8(1).ok()? == 1;
+    br.skip_bits(4).ok()?;
+    if !duration_flag {
+        return None;
+    }
+    if program_splice && !splice_immediate {
+        skip_splice_time(&mut br)?;
+    } else if !program_splice {
+        let cc = br.read_u8(8).ok()?;
+        for _ in 0..cc {
+            br.read_u8(8).ok()?; // component_tag
+            if !splice_immediate {
+                skip_splice_time(&mut br)?;
+            }
+        }
+    }
+    if br.bitpos % 8 != 0 {
+        return None;
+    }
+    Some(br.bitpos / 8)
+}
+
+fn skip_splice_time(br: &mut BitReader) -> Option<()> {
+    if br.read_u8(1).ok()? == 1 {
+        br.skip_bits(6).ok()?; // reserved
+        br.read_u64(33).ok()?; // pts_time
+    } else {
+        br.skip_bits(7).ok()?; // reserved
+    }
+    Some(())
+}
+
+/// Offset within a segmentation_descriptor body of the 40-bit segmentation_duration,
+/// if `segmentation_duration_flag` is set. None otherwise.
+fn seg_duration_offset(body: &[u8]) -> Option<usize> {
+    if body.len() < 10 || body[8] & 0x80 != 0 {
+        return None;
+    }
+    let flags = body[9];
+    let program_segmentation_flag = flags & 0x80 != 0;
+    let segmentation_duration_flag = flags & 0x40 != 0;
+    if !segmentation_duration_flag {
+        return None;
+    }
+    let mut idx = 10usize;
+    if !program_segmentation_flag {
+        let cc = *body.get(idx)? as usize;
+        idx += 1;
+        idx += cc.checked_mul(6)?;
+    }
+    if idx + 5 > body.len() {
+        return None;
+    }
+    Some(idx)
+}
+
+/// Rewrite the segmentation_upid (type + value) inside one segmentation_descriptor
+/// body (the bytes after tag+length). Returns None for a cancelled descriptor or
+/// when the layout can't be walked.
+fn rewrite_seg_descriptor_body(body: &[u8], new_type: Option<u8>, new_value: &str) -> Option<Vec<u8>> {
+    // identifier(4) + segmentation_event_id(4) + cancel(1)/reserved(7)
+    if body.len() < 9 {
+        return None;
+    }
+    if body[8] & 0x80 != 0 {
+        return None; // segmentation_event_cancel_indicator set: no UPID present
+    }
+    let flags = *body.get(9)?;
+    let program_segmentation_flag = flags & 0x80 != 0;
+    let segmentation_duration_flag = flags & 0x40 != 0;
+    let mut idx = 10usize;
+    if !program_segmentation_flag {
+        // component_count(8), then component_count * (tag(8)+reserved(7)+pts_offset(33)) = 6 bytes each
+        let cc = *body.get(idx)? as usize;
+        idx += 1;
+        idx += cc.checked_mul(6)?;
+    }
+    if segmentation_duration_flag {
+        idx += 5; // segmentation_duration (40 bits)
+    }
+    // segmentation_upid_type(8), segmentation_upid_length(8), segmentation_upid[len]
+    let upid_type = *body.get(idx)?;
+    let upid_len = *body.get(idx + 1)? as usize;
+    let upid_end = (idx + 2).checked_add(upid_len)?;
+    if upid_end > body.len() {
+        return None;
+    }
+    let tail = &body[upid_end..]; // segmentation_type_id, segment_num, segments_expected, [sub_*]
+
+    let new_type_val = new_type.unwrap_or(upid_type);
+    let new_upid = crate::scte35::encode_upid(new_type_val, new_value);
+    if new_upid.len() > 255 {
+        return None;
+    }
+
+    let mut nb: Vec<u8> = Vec::with_capacity(idx + 2 + new_upid.len() + tail.len());
+    nb.extend_from_slice(&body[..idx]);
+    nb.push(new_type_val);
+    nb.push(new_upid.len() as u8);
+    nb.extend_from_slice(&new_upid);
+    nb.extend_from_slice(tail);
+    Some(nb)
+}
+
 // ============================================================================
 // BIT READER HELPER
 // ============================================================================
@@ -1161,5 +1511,90 @@ mod input_format_tests {
     #[test]
     fn rejects_garbage() {
         assert!(scte35_input_to_bytes("not valid !!!").is_err());
+    }
+
+    // ---- UPID rewrite (in-place) ----
+
+    fn seg_descriptor(decoded: &DecodedScte35) -> serde_json::Value {
+        decoded
+            .descriptors
+            .iter()
+            .find(|d| d.tag == 0x02)
+            .map(|d| d.data.clone())
+            .expect("a segmentation_descriptor")
+    }
+
+    #[test]
+    fn rewrite_changes_value_and_type_keeps_everything_else() {
+        // Build a time_signal carrying seg type 0x34 and an ASCII (MID) UPID.
+        let orig = crate::scte35::build_time_signal_advanced_b64(Some(0x34), Some(0x0C), Some("ORIGINAL"));
+        let before = decode_scte35_internal(&orig).unwrap();
+
+        // Rewrite to a URI-type (0x0F) UPID with a new value.
+        let out = rewrite_upid_b64(&orig, Some(0x0F), "https://new.example/ad").expect("rewrite");
+        let after = decode_scte35_internal(&out).expect("re-decodes (valid CRC + lengths)");
+
+        let sd = seg_descriptor(&after);
+        assert_eq!(sd["upid_type"], "0x0F");
+        assert!(sd["upid_value"].as_str().unwrap().contains("new.example/ad"), "new UPID present");
+        // Everything else preserved:
+        assert_eq!(after.command_type, before.command_type, "command unchanged");
+        assert_eq!(sd["segmentation_type_id"], "0x34", "seg type unchanged");
+    }
+
+    #[test]
+    fn rewrite_keeps_existing_type_when_none() {
+        let orig = crate::scte35::build_splice_insert_out_advanced_b64(30, Some(0x10), Some(0x0C), Some("OLD"));
+        let out = rewrite_upid_b64(&orig, None, "NEWVALUE").expect("rewrite");
+        let after = decode_scte35_internal(&out).expect("re-decodes");
+        let sd = seg_descriptor(&after);
+        assert_eq!(sd["upid_type"], "0x0C", "type kept");
+        assert!(sd["upid_value"].as_str().unwrap().contains("NEWVALUE"));
+    }
+
+    #[test]
+    fn rewrite_returns_none_without_segmentation_descriptor() {
+        // A plain immediate time_signal has no segmentation_descriptor -> nothing to change.
+        let plain = crate::scte35::build_time_signal_immediate_b64();
+        assert!(rewrite_upid_b64(&plain, Some(0x0E), "x").is_none());
+    }
+
+    // ---- break-duration rewrite (shorten/extend/fill) ----
+
+    #[test]
+    fn rewrite_break_duration_changes_avail_length() {
+        let orig = crate::scte35::build_splice_insert_out_b64(30);
+        let before = decode_scte35_internal(&orig).unwrap();
+        let out = rewrite_break_duration_b64(&orig, 15 * 90000).expect("rewrite");
+        let after = decode_scte35_internal(&out).expect("re-decodes (valid CRC + lengths)");
+
+        // splice_insert break_duration updated to 15s
+        let bd = after.command_info["break_duration"]["duration_seconds"].as_f64().unwrap();
+        assert!((bd - 15.0).abs() < 0.001, "break_duration={bd}");
+        assert_eq!(after.command_type, before.command_type, "command unchanged");
+        // the segmentation_duration in the descriptor is patched too
+        let segdur = seg_descriptor(&after)["segmentation_duration_seconds"].as_f64().unwrap();
+        assert!((segdur - 15.0).abs() < 0.001, "seg_duration={segdur}");
+    }
+
+    #[test]
+    fn rewrite_break_duration_none_without_duration_field() {
+        let plain = crate::scte35::build_time_signal_immediate_b64();
+        assert!(rewrite_break_duration_b64(&plain, 90000).is_none());
+    }
+
+    // ---- delivery-flag rewrite (blackout/regionalize) ----
+
+    #[test]
+    fn rewrite_delivery_flags_marks_blackout() {
+        let orig = crate::scte35::build_time_signal_advanced_b64(Some(0x34), Some(0x0C), Some("X"));
+        assert_eq!(seg_descriptor(&decode_scte35_internal(&orig).unwrap())["delivery_not_restricted"], true);
+
+        let out = rewrite_delivery_flags_b64(&orig, false, false, true, 0).expect("rewrite");
+        let sd = seg_descriptor(&decode_scte35_internal(&out).expect("re-decodes"));
+        assert_eq!(sd["delivery_not_restricted"], false);
+        assert_eq!(sd["web_delivery_allowed"], false);
+        assert_eq!(sd["no_regional_blackout"], false);
+        assert_eq!(sd["archive_allowed"], true);
     }
 }

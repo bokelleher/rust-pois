@@ -1,9 +1,13 @@
 <!doctype html>
 <!--
   docs.html - API Documentation
-  Version: 3.0.3
-  Last updated: 2024-11-14
-  Changes: Uses header.js for navigation, txcue logo, fixed script loading order
+  Version: 3.6.0
+  Last updated: 2026-06-02
+  Changes: Refreshed for the rule-engine action set (replace/blackout/regionalize/
+           shorten/extend/fill/slate/tracking-only), correct ESAM BinaryData
+           request/response + <pois:Decision> metadata, accurate Rules API routes
+           and params (build / scte35_b64 / rewrite_upid / restrictions / duration),
+           full match-condition reference, and a SESAME security note.
 -->
 <html lang="en">
 <head>
@@ -267,13 +271,15 @@
     <!-- Overview -->
     <div id="overview" class="section">
       <h2>Overview</h2>
-      <p>POIS is an ESAM (Event Signaling and Management) server that processes SCTE-35 signals and applies rule-based transformations. It provides:</p>
+      <p>POIS is an ESAM (Event Signaling and Management, SCTE 130-3) server that processes SCTE-35 signals and applies rule-based conditioning. It provides:</p>
       <ul>
-        <li><strong>ESAM Signal Processing</strong> - Handle SignalProcessingEvent XML requests</li>
-        <li><strong>Rule-Based Transformations</strong> - Match, modify, replace, or delete signals</li>
-        <li><strong>Multi-Channel Support</strong> - Independent rule sets per channel</li>
-        <li><strong>Event Logging</strong> - Track all processed signals</li>
-        <li><strong>RESTful API</strong> - Manage channels, rules, and view events</li>
+        <li><strong>ESAM Signal Processing</strong> - Handle <code>SignalProcessingEvent</code> XML, return a <code>SignalProcessingNotification</code></li>
+        <li><strong>Rule-Based Conditioning</strong> - Match by command, segmentation type/UPID, signal ID glob, or UTC window; then pass-through, replace, delete, blackout, regionalize, shorten/extend/fill, slate, or tracking-only</li>
+        <li><strong>Faithful SCTE-35 editing</strong> - In-place rewrite of UPID, break duration, and delivery-restriction flags (lengths + CRC recomputed), plus a built/literal payload builder</li>
+        <li><strong>Decision metadata</strong> - A standard ESAM verb on the wire (<code>replace</code>/<code>delete</code>/<code>noop</code>) plus an optional <code>&lt;pois:Decision&gt;</code> element carrying the friendly action + params for a downstream packager</li>
+        <li><strong>SESAME security (SCTE 130-9)</strong> - Optional HMAC auth, channel-scoped authorization, and AES-256-GCM payload encryption over the ESAM exchange (see below)</li>
+        <li><strong>SCTE-35 tools</strong> - Build / decode / validate (base64, hex, or binary input) — see the Tools page</li>
+        <li><strong>Multi-Channel + Event Logging + RESTful API</strong> - Independent rule sets per channel, full event history, and management endpoints</li>
       </ul>
     </div>
 
@@ -286,7 +292,7 @@
         <code>Authorization: Bearer your-token-here</code>
       </div>
 
-      <p>The ESAM endpoint (<code>/esam</code>) does not require authentication.</p>
+      <p>The ESAM endpoint (<code>/esam</code>) uses its own protection: by default it is unauthenticated (regular SCTE 130-3 ESAM), but per-channel <strong>SESAME</strong> (SCTE 130-9) can require a minimum security tier — HMAC-SHA256 auth (Tier 1), channel-scoped authorization (Tier 2), and AES-256-GCM payload encryption (Tier 3) — carried in HTTP headers with no ESAM XML schema change. Responses are signed (and, for Tier 3, encrypted) regardless, so a consumer can verify the POIS decision wasn't forged.</p>
 
       <h3>Getting a Token</h3>
       <p>Tokens are managed through the web interface or API:</p>
@@ -496,29 +502,32 @@ POST /esam?channel=news-24x7</code>
         </table>
 
         <h4>Request Body</h4>
-        <p>XML SignalProcessingEvent conforming to SCTE-130 Part 5</p>
+        <p>XML <code>SignalProcessingEvent</code>. The SCTE-35 payload is carried as base64 in <code>&lt;BinaryData signalType="SCTE35"&gt;</code>; <code>acquisitionPointIdentity</code> typically names the channel.</p>
         <div class="code-block">
           <code>&lt;?xml version="1.0"?&gt;
 &lt;SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
-  &lt;AcquiredSignal acquisitionSignalID="test-001"&gt;
-    &lt;UTCPoint utcPoint="2025-11-05T20:00:00Z"/&gt;
-    &lt;SCTE35PointDescriptor&gt;
-      &lt;SCTE35Command&gt;/DA4AAAAAAAA///wBQb+AAAAAAA=&lt;/SCTE35Command&gt;
-    &lt;/SCTE35PointDescriptor&gt;
+  &lt;AcquiredSignal acquisitionSignalID="test-001" acquisitionPointIdentity="sportsfeed-east"&gt;
+    &lt;UTCPoint utcPoint="2026-06-02T20:00:00Z"/&gt;
+    &lt;BinaryData signalType="SCTE35"&gt;/DAhAAAAAAAAAP/wEAUAAAAAf+//AAAAAH4AAAAAAAA1FwHt&lt;/BinaryData&gt;
   &lt;/AcquiredSignal&gt;
 &lt;/SignalProcessingEvent&gt;</code>
         </div>
 
         <h4>Response</h4>
-        <p>XML SignalProcessingNotification with processed signal</p>
+        <p>XML <code>SignalProcessingNotification</code>. The <code>ResponseSignal action</code> attribute is always a <strong>standard ESAM verb</strong> (<code>replace</code>, <code>delete</code>, or <code>noop</code>); the conditioned SCTE-35 is returned in <code>&lt;sig:BinaryData&gt;</code> (omitted for <code>delete</code>). When a rule matches, an optional <code>&lt;pois:Decision&gt;</code> element echoes the friendly action and its params for a downstream packager (ignored by stock encoders).</p>
         <div class="code-block">
           <code>&lt;?xml version="1.0"?&gt;
-&lt;SignalProcessingNotification xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
-  &lt;ResponseSignal acquisitionSignalID="test-001"&gt;
-    &lt;UTCPoint utcPoint="2025-11-05T20:00:00Z"/&gt;
-    &lt;SCTE35PointDescriptor&gt;
-      &lt;SCTE35Command&gt;/DBHAAAAAAAA///wBQb+AAAAAAA=&lt;/SCTE35Command&gt;
-    &lt;/SCTE35PointDescriptor&gt;
+&lt;SignalProcessingNotification
+    xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"
+    xmlns:sig="urn:cablelabs:md:xsd:signaling:3.0"
+    xmlns:core="urn:cablelabs:md:xsd:core:3.0"
+    xmlns:common="urn:cablelabs:iptvservices:esam:xsd:common:1"
+    xmlns:pois="urn:techex:pois:decision:1"&gt;
+  &lt;common:StatusCode classCode="0"&gt;&lt;core:Note&gt;replaced signal&lt;/core:Note&gt;&lt;/common:StatusCode&gt;
+  &lt;ResponseSignal action="replace" acquisitionSignalID="test-001" acquisitionPointIdentity="sportsfeed-east"&gt;
+    &lt;sig:UTCPoint utcPoint="2026-06-02T20:00:00Z"/&gt;
+    &lt;sig:BinaryData signalType="SCTE35"&gt;/DBLAAAAAAAAAP/wEAUAAAAB...&lt;/sig:BinaryData&gt;
+    &lt;pois:Decision action="blackout"&gt;{"restrictions":{"no_regional_blackout":false}}&lt;/pois:Decision&gt;
   &lt;/ResponseSignal&gt;
 &lt;/SignalProcessingNotification&gt;</code>
         </div>
@@ -642,9 +651,9 @@ POST /esam?channel=news-24x7</code>
       <div class="endpoint">
         <div class="endpoint-header">
           <span class="method method-get">GET</span>
-          <span class="endpoint-path">/api/channels/{channel_name}/rules</span>
+          <span class="endpoint-path">/api/channels/{channel_id}/rules</span>
         </div>
-        <p class="endpoint-description">List all rules for a channel</p>
+        <p class="endpoint-description">List all rules for a channel (ordered by priority)</p>
         
         <h4>Response</h4>
         <div class="code-block">
@@ -668,9 +677,9 @@ POST /esam?channel=news-24x7</code>
       <div class="endpoint">
         <div class="endpoint-header">
           <span class="method method-post">POST</span>
-          <span class="endpoint-path">/api/channels/{channel_name}/rules</span>
+          <span class="endpoint-path">/api/channels/{channel_id}/rules</span>
         </div>
-        <p class="endpoint-description">Create a new rule</p>
+        <p class="endpoint-description">Create a new rule (priority -1 appends at end, spaced by 10)</p>
         
         <h4>Request Body</h4>
         <div class="code-block">
@@ -685,55 +694,73 @@ POST /esam?channel=news-24x7</code>
         </div>
 
         <h4>Rule Actions</h4>
+        <p>The <code>action</code> is a friendly label; on the ESAM wire it maps to a standard verb and the effect is carried in the conditioned SCTE-35 (plus <code>&lt;pois:Decision&gt;</code> metadata).</p>
         <table class="param-table">
           <tr>
             <th>Action</th>
-            <th>Description</th>
+            <th>ESAM verb</th>
+            <th>Effect</th>
           </tr>
-          <tr>
-            <td><span class="param-name">noop</span></td>
-            <td>Log match but don't modify signal</td>
-          </tr>
-          <tr>
-            <td><span class="param-name">delete</span></td>
-            <td>Remove signal from output</td>
-          </tr>
-          <tr>
-            <td><span class="param-name">replace</span></td>
-            <td>Modify signal based on params_json</td>
-          </tr>
+          <tr><td><span class="param-name">noop</span></td><td>noop</td><td>Pass the original signal through unchanged</td></tr>
+          <tr><td><span class="param-name">replace</span></td><td>replace</td><td>Replace with a built / literal payload, or rewrite the incoming UPID</td></tr>
+          <tr><td><span class="param-name">delete</span></td><td>delete</td><td>Drop the signal (no BinaryData emitted)</td></tr>
+          <tr><td><span class="param-name">blackout</span></td><td>replace</td><td>Set delivery-restriction flags on the incoming cue</td></tr>
+          <tr><td><span class="param-name">regionalize</span></td><td>replace</td><td>Rewrite the incoming UPID (regional/affiliate targeting)</td></tr>
+          <tr><td><span class="param-name">shorten</span> / <span class="param-name">extend</span></td><td>replace</td><td>Set the break duration (break_duration / segmentation_duration)</td></tr>
+          <tr><td><span class="param-name">fill</span></td><td>replace</td><td>Pad the break to a target duration (filler is a packager hint)</td></tr>
+          <tr><td><span class="param-name">slate</span></td><td>noop</td><td>Pass through + signal the MCR/packager to insert a slate</td></tr>
+          <tr><td><span class="param-name">tracking-only</span></td><td>noop</td><td>Pass through + report only (no ad decisioning)</td></tr>
         </table>
+        <p class="text-muted" style="font-size:13px">Unknown actions fall back safely to <code>noop</code>. blackout/regionalize/shorten/extend/fill edit the <em>incoming</em> cue in place (lengths + CRC are recomputed); if there is no cue to condition the original is passed through.</p>
 
-        <h4>Match Criteria</h4>
-        <p>The <code>match_json</code> field supports pattern matching:</p>
+        <h4>Match Criteria (<code>match_json</code>)</h4>
+        <p>Combine leaf conditions with <code>anyOf</code> (OR) and/or <code>allOf</code> (AND). An empty object <code>{}</code> is a deliberate catch-all. Supported leaf keys:</p>
+        <table class="param-table">
+          <tr><th>Key</th><th>Match</th></tr>
+          <tr><td><span class="param-name">acquisitionSignalID</span></td><td>Glob (<code>*</code> wildcards, e.g. <code>blk-*</code>, <code>*AFE1*</code>)</td></tr>
+          <tr><td><span class="param-name">scte35.command</span></td><td>Command name, case-insensitive (<code>splice_insert</code>, <code>time_signal</code>, …)</td></tr>
+          <tr><td><span class="param-name">scte35.segmentation_type_id</span></td><td>Hex id, e.g. <code>0x34</code></td></tr>
+          <tr><td><span class="param-name">scte35.segmentation_upid</span></td><td>Glob against the decoded UPID</td></tr>
+          <tr><td><span class="param-name">utcBetween</span></td><td><code>{"start":"…Z","end":"…Z"}</code> ISO-8601 UTC window</td></tr>
+        </table>
         <div class="code-block">
-          <code>// Match any signal with splice_insert command
-{"anyOf":[{"scte35.command":"splice_insert"}]}
+          <code>// ANY splice_insert OR a Program Start/End segmentation descriptor
+{"anyOf":[{"scte35.command":"splice_insert"},{"scte35.segmentation_type_id":"0x10"}]}
 
-// Match signals with specific acquisition ID
-{"anyOf":[{"acquisition_signal_id":"test-001"}]}
+// ALL of: signal id glob AND a prime-time window
+{"allOf":[{"acquisitionSignalID":"prod-*"},{"utcBetween":{"start":"2026-06-02T18:00:00Z","end":"2026-06-02T23:00:00Z"}}]}
 
-// Match using wildcards
-{"anyOf":[{"acquisition_signal_id":"prod-*"}]}
-
-// Match all signals (empty condition)
-{"anyOf":[{}]}</code>
+// Catch-all (matches every signal)
+{}</code>
         </div>
 
-        <h4>Replace Parameters</h4>
-        <p>The <code>params_json</code> field for replace action:</p>
+        <h4>Action Parameters (<code>params_json</code>)</h4>
         <div class="code-block">
-          <code>// Change command type
-{"command":"splice_insert"}
+          <code>// replace — build a fresh avail (splice_insert ad-out), optional segmentation
+{"build":{"command":"splice_insert_out","duration_s":30,
+          "segmentation_type_id":"0x34","upid_type":"0x0C","upid":"ABCD1234"}}
 
-// Set duration (in 90kHz ticks)
-{"duration_ticks":5400000}
+// replace — build an immediate time_signal
+{"build":{"command":"time_signal_immediate"}}
 
-// Adjust PTS timing
-{"pts_adjustment":180000}
+// replace — literal SCTE-35 payload (base64)
+{"scte35_b64":"/DAh..."}
 
-// Combine multiple changes
-{"command":"splice_insert","duration_ticks":5400000,"pts_adjustment":0}</code>
+// replace / regionalize — rewrite the incoming UPID in place (type optional = keep)
+{"rewrite_upid":{"upid":"region-east-001","upid_type":"0x0C"}}      // (replace)
+{"upid":"region-east-001","upid_type":"0x0C","region":"us-east"}    // (regionalize)
+
+// blackout — set delivery-restriction flags
+{"restrictions":{"web_delivery_allowed":false,"no_regional_blackout":false,
+                 "archive_allowed":true,"device_restrictions":0}}
+
+// shorten / extend — set break duration (seconds);  fill — pad to a target
+{"duration_s":15}
+{"to_duration_s":30,"filler":"house"}
+
+// slate — packager hint;   noop / delete / tracking-only — no params
+{"asset":"slate-1","duration_s":10}
+{}</code>
         </div>
       </div>
 
@@ -741,18 +768,27 @@ POST /esam?channel=news-24x7</code>
       <div class="endpoint">
         <div class="endpoint-header">
           <span class="method method-put">PUT</span>
-          <span class="endpoint-path">/api/channels/{channel_name}/rules/{rule_id}</span>
+          <span class="endpoint-path">/api/rules/{rule_id}</span>
         </div>
-        <p class="endpoint-description">Update an existing rule</p>
+        <p class="endpoint-description">Update an existing rule (full upsert body, same fields as create)</p>
       </div>
 
       <!-- Delete Rule -->
       <div class="endpoint">
         <div class="endpoint-header">
           <span class="method method-delete">DELETE</span>
-          <span class="endpoint-path">/api/channels/{channel_name}/rules/{rule_id}</span>
+          <span class="endpoint-path">/api/rules/{rule_id}</span>
         </div>
-        <p class="endpoint-description">Delete a rule</p>
+        <p class="endpoint-description">Delete a rule (soft delete)</p>
+      </div>
+
+      <!-- Reorder Rules -->
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/rules/reorder</span>
+        </div>
+        <p class="endpoint-description">Reorder rules by priority — body: <code>{"ids":[3,1,2]}</code> (reassigns priorities 0,10,20,…)</p>
       </div>
     </div>
 
@@ -865,7 +901,7 @@ POST /esam?channel=news-24x7</code>
       <h4>Send ESAM Request</h4>
       <div class="code-block">
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <code>curl -X POST "http://localhost:8090/esam?channel=live-sports" \
+        <code>curl -X POST "http://localhost:3090/esam?channel=live-sports" \
   -H "Content-Type: application/xml" \
   -d '&lt;?xml version="1.0"?&gt;
 &lt;SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
@@ -878,7 +914,7 @@ POST /esam?channel=news-24x7</code>
       <h4>Create Channel</h4>
       <div class="code-block">
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <code>curl -X POST "http://localhost:8090/api/channels" \
+        <code>curl -X POST "http://localhost:3090/api/channels" \
   -H "Authorization: Bearer dev-token" \
   -H "Content-Type: application/json" \
   -d '{"name":"live-sports","enabled":true}'</code>
@@ -887,7 +923,7 @@ POST /esam?channel=news-24x7</code>
       <h4>Create Rule</h4>
       <div class="code-block">
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <code>curl -X POST "http://localhost:8090/api/channels/live-sports/rules" \
+        <code>curl -X POST "http://localhost:3090/api/channels/1/rules" \
   -H "Authorization: Bearer dev-token" \
   -H "Content-Type: application/json" \
   -d '{
@@ -903,7 +939,7 @@ POST /esam?channel=news-24x7</code>
       <div class="code-block">
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
         <code>curl -H "Authorization: Bearer dev-token" \
-  "http://localhost:8090/api/events?channel=live-sports&limit=10"</code>
+  "http://localhost:3090/api/events?channel=live-sports&limit=10"</code>
       </div>
 
       <h3>Rust Examples</h3>
@@ -916,7 +952,7 @@ use serde_json::json;
 #[tokio::main]
 async fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
     let client = reqwest::Client::new();
-    let base_url = "http://localhost:8090";
+    let base_url = "http://localhost:3090";
     let token = "dev-token";
 
     // Create channel
@@ -942,7 +978,7 @@ async fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
     });
     
     let response = client
-        .post(&format!("{}/api/channels/live-sports/rules", base_url))
+        .post(&format!("{}/api/channels/1/rules", base_url))
         .header("Authorization", format!("Bearer {}", token))
         .json(&rule)
         .send()

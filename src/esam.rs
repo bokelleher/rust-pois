@@ -182,14 +182,58 @@ pub fn extract_facts(esam_xml: &str) -> Result<serde_json::Value, String> {
 }
 
 /// Build a minimal ESAM SignalProcessingNotification response.
-pub fn build_notification(acq_id: &str, utc: &str, acq_point: &str, action: &str, params: &serde_json::Value) -> String {
+/// Map a friendly rule action to the standard ESAM ResponseSignal verb that
+/// actually drives encoder behavior. Keeping the wire attribute a standard verb
+/// means a non-broadcast.ad encoder honors it correctly (e.g. a `blackout` is a
+/// `replace` carrying the conditioned cue, never a silent pass-through). Unknown
+/// actions fall back to a safe pass-through.
+pub fn esam_verb(action: &str) -> &'static str {
+    match action.to_ascii_lowercase().as_str() {
+        "replace" | "blackout" | "regionalize" | "shorten" | "extend" | "fill" => "replace",
+        "delete" => "delete",
+        _ => "noop", // noop, tracking-only, slate, and anything unknown
+    }
+}
+
+/// Build the ESAM SignalProcessingNotification.
+///
+/// `action` is the *friendly* rule action; the standard ESAM verb is derived via
+/// [`esam_verb`] and used for the `ResponseSignal action` attribute + the
+/// BinaryData/note dispatch. `decision`, when present, is emitted as an optional
+/// `<pois:Decision>` element carrying the friendly action + authored params for
+/// the broadcast.ad packager and observability — stock encoders ignore it, and it
+/// is covered by SESAME signing/encryption like the rest of the body.
+pub fn build_notification(
+    acq_id: &str,
+    utc: &str,
+    acq_point: &str,
+    action: &str,
+    params: &serde_json::Value,
+    decision: Option<&serde_json::Value>,
+) -> String {
+    let verb = esam_verb(action);
+
     let mut extra = String::new();
-    // CRITICAL FIX: Handle both "replace" AND "noop" actions to pass through SCTE-35 payload
-    if action.eq_ignore_ascii_case("replace") || action.eq_ignore_ascii_case("noop") {
+    // replace AND noop pass through / carry the conditioned SCTE-35 payload.
+    if verb == "replace" || verb == "noop" {
         if let Some(b64) = params.get("scte35_b64").and_then(|v| v.as_str()) {
             extra = format!(r#"<sig:BinaryData signalType="SCTE35">{}</sig:BinaryData>"#, xml_escape(b64));
         }
     }
+
+    // Optional broadcast.ad decision metadata: friendly action + authored params
+    // as a JSON body, namespaced so stock ESAM encoders ignore it.
+    let decision_el = match decision {
+        Some(d) => {
+            let pj = serde_json::to_string(d).unwrap_or_else(|_| "{}".to_string());
+            format!(
+                "\n    <pois:Decision action=\"{}\">{}</pois:Decision>",
+                xml_escape(action),
+                xml_escape(&pj)
+            )
+        }
+        None => String::new(),
+    };
 
     // Echo inbound UTCPoint; fall back to now+4s only if absent/empty
     let utc_str = if utc.is_empty() || utc == "1970-01-01T00:00:00Z" {
@@ -207,21 +251,23 @@ pub fn build_notification(acq_id: &str, utc: &str, acq_point: &str, action: &str
   xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"
   xmlns:sig="urn:cablelabs:md:xsd:signaling:3.0"
   xmlns:core="urn:cablelabs:md:xsd:core:3.0"
-  xmlns:common="urn:cablelabs:iptvservices:esam:xsd:common:1">
+  xmlns:common="urn:cablelabs:iptvservices:esam:xsd:common:1"
+  xmlns:pois="urn:techex:pois:decision:1">
   <common:StatusCode classCode="0">
     <core:Note>{note}</core:Note>
   </common:StatusCode>
-  <ResponseSignal action="{action}" acquisitionSignalID="{acq}" acquisitionPointIdentity="{acq_point}">
+  <ResponseSignal action="{verb}" acquisitionSignalID="{acq}" acquisitionPointIdentity="{acq_point}">
     <sig:UTCPoint utcPoint="{utc}"/>
-    {extra}
+    {extra}{decision_el}
   </ResponseSignal>
 </SignalProcessingNotification>"#,
-        note = if action == "delete" { "filtered signal" } else if action == "replace" { "replaced signal" } else { "pass-through" },
-        action = xml_escape(action),
+        note = if verb == "delete" { "filtered signal" } else if verb == "replace" { "replaced signal" } else { "pass-through" },
+        verb = xml_escape(verb),
         acq = xml_escape(acq_id),
         acq_point = xml_escape(acq_point_str),
         utc = xml_escape(&utc_str),
-        extra = extra
+        extra = extra,
+        decision_el = decision_el
     ).trim_start_matches('\n').to_string()
 }
 

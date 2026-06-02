@@ -1,9 +1,11 @@
 <!doctype html>
 <!--
   channels.html - POIS Admin Panel (formerly admin.html)
-  Version: 3.0.21
-  Last updated: 2024-11-19
-  Changes: Replaced inline Header component with header.js, added favicon
+  Version: 4.0.0
+  Last updated: 2026-06-02
+  Changes: Replaced raw MATCH/PARAMS JSON textareas with a visual rules builder
+           (Visual | JSON toggle per pane, AWS-IAM-style), a pre-built rule
+           template gallery, and human-readable rule summaries on display.
 -->
 <html lang="en">
 <head>
@@ -12,20 +14,64 @@
   <title>POIS Admin</title>
   <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
   <link rel="stylesheet" href="/static/app.css">
+  <style>
+    /* ---- Rules builder UI (scoped additions) ---- */
+    .seg-control { display:inline-flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+    .seg-btn { padding:6px 16px; font-size:12px; border:0; border-radius:0; background:transparent;
+               color:var(--text-secondary); transform:none !important; box-shadow:none !important; }
+    .seg-btn:hover:not(:disabled) { background:var(--field-bg-hover); transform:none !important; }
+    .seg-btn.active { background:linear-gradient(135deg,var(--primary),var(--secondary)); color:#fff; }
+
+    .builder-section { margin-top:16px; padding:16px; border:1px solid var(--border); border-radius:10px;
+                       background:rgba(0,0,0,0.15); }
+    .builder-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; gap:12px; }
+    .builder-head .bh-title { font-size:13px; font-weight:600; color:var(--text-primary); }
+    .builder-head .bh-sub { font-size:11px; color:var(--text-secondary); margin-top:2px; }
+    .builder-note { color:var(--text-secondary); font-size:13px; padding:8px 2px; }
+
+    .cond-row { display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; }
+    .cond-row .field-sel { flex:0 0 230px; }
+    .cond-row .val-wrap { flex:1; min-width:0; }
+    .cond-x { flex:0 0 auto; padding:11px 13px; line-height:1; }
+
+    .chip { display:inline-block; background:var(--field-bg); border:1px solid var(--border);
+            border-radius:6px; padding:6px 10px; font-size:12px; color:var(--text-primary); }
+
+    .json-block { background:rgba(0,0,0,0.3); padding:12px; border-radius:6px; overflow-x:auto;
+                  font-family:monospace; font-size:12px; color:var(--text-primary); margin:0;
+                  border:1px solid rgba(139,92,246,0.2); }
+    details.json-details { margin-top:14px; }
+    details.json-details > summary { cursor:pointer; color:var(--text-secondary); font-size:11px;
+                  text-transform:uppercase; letter-spacing:.5px; font-weight:600; }
+    details.json-details[open] > summary { margin-bottom:10px; }
+
+    .summary-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:12px; }
+    .summary-label { font-size:11px; font-weight:600; text-transform:uppercase;
+                     color:var(--text-secondary); margin-bottom:6px; letter-spacing:.5px; }
+
+    .tpl-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); gap:12px; }
+    .tpl-card { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:10px;
+                padding:14px; background:var(--field-bg); }
+    .tpl-card .tpl-name { font-weight:600; font-size:13px; color:var(--text-primary); }
+    .tpl-card .tpl-desc { font-size:12px; color:var(--text-secondary); flex:1; margin:8px 0 12px; line-height:1.45; }
+
+    .flex-col { display:flex; flex-direction:column; }
+    .gap-2 { gap:8px; } .gap-3 { gap:12px; }
+  </style>
   <script type="module">
     import { h, render } from "https://esm.sh/preact@10.24.3";
     import htm from "https://esm.sh/htm@3.1.1";
     import * as hooks from "https://esm.sh/preact@10.24.3/hooks";
-    
+
     const html = htm.bind(h);
-    
+
     const API = {
       async get(p) { return req("GET", p) },
       async post(p, b) { return req("POST", p, b) },
       async put(p, b) { return req("PUT", p, b) },
       async del(p) { return req("DELETE", p) }
     };
-    
+
     async function req(method, path, body) {
       const token = localStorage.getItem("pois_token") || "";
       const res = await fetch(`/api${path}`, {
@@ -39,13 +85,406 @@
       if (!res.ok) throw new Error(await res.text());
       return res.status === 204 ? null : res.json();
     }
-    
 
-    
+    // ============================================================
+    //  Rule model metadata (kept in sync with src/rules.rs +
+    //  src/esam.rs + maybe_build_scte35 in src/main.rs)
+    // ============================================================
+
+    // Friendly authoring vocabulary. On the wire each maps to a standard ESAM verb
+    // (replace/delete/noop, see esam_verb in src/esam.rs); the effect rides the
+    // conditioned SCTE-35 + the <pois:Decision> element.
+    const ACTIONS = [
+      { value: "noop",          label: "noop (pass-through)" },
+      { value: "replace",       label: "replace" },
+      { value: "delete",        label: "delete" },
+      { value: "blackout",      label: "blackout (delivery restrictions)" },
+      { value: "regionalize",   label: "regionalize (UPID / region)" },
+      { value: "shorten",       label: "shorten (reduce break)" },
+      { value: "extend",        label: "extend (lengthen break)" },
+      { value: "fill",          label: "fill (pad to duration)" },
+      { value: "slate",         label: "slate (MCR/packager)" },
+      { value: "tracking-only", label: "tracking-only (report, no ads)" },
+    ];
+
+    // Device-restriction values (SCTE-35 device_restrictions, 2 bits).
+    const DEVICE_RESTRICTIONS = [
+      { id: "3", name: "None (0b11)" },
+      { id: "0", name: "Restrict Group 0" },
+      { id: "1", name: "Restrict Group 1" },
+      { id: "2", name: "Restrict Group 2" },
+    ];
+
+    // SCTE-35 splice command names recognized by the decoder (src/esam.rs).
+    const SCTE35_COMMANDS = [
+      "splice_insert", "time_signal", "splice_null", "splice_schedule",
+      "bandwidth_reservation", "private_command",
+    ];
+
+    // Segmentation type IDs + friendly names (src/esam.rs decode_segmentation_type_name).
+    const SEG_TYPES = [
+      { id: "0x00", name: "Not Indicated" },
+      { id: "0x01", name: "Content Identification" },
+      { id: "0x10", name: "Program Start" },
+      { id: "0x11", name: "Program End" },
+      { id: "0x12", name: "Program Early Termination" },
+      { id: "0x13", name: "Program Breakaway" },
+      { id: "0x14", name: "Program Resumption" },
+      { id: "0x15", name: "Program Runover Planned" },
+      { id: "0x16", name: "Program Runover Unplanned" },
+      { id: "0x17", name: "Program Overlap Start" },
+      { id: "0x18", name: "Program Blackout Override" },
+      { id: "0x19", name: "Program Start - In Progress" },
+      { id: "0x20", name: "Chapter Start" },
+      { id: "0x21", name: "Chapter End" },
+      { id: "0x22", name: "Break Start" },
+      { id: "0x23", name: "Break End" },
+      { id: "0x24", name: "Opening Credit Start" },
+      { id: "0x25", name: "Opening Credit End" },
+      { id: "0x26", name: "Closing Credit Start" },
+      { id: "0x27", name: "Closing Credit End" },
+      { id: "0x30", name: "Provider Advertisement Start" },
+      { id: "0x31", name: "Provider Advertisement End" },
+      { id: "0x32", name: "Distributor Advertisement Start" },
+      { id: "0x33", name: "Distributor Advertisement End" },
+      { id: "0x34", name: "Provider Placement Opportunity Start" },
+      { id: "0x35", name: "Provider Placement Opportunity End" },
+      { id: "0x36", name: "Distributor Placement Opportunity Start" },
+      { id: "0x37", name: "Distributor Placement Opportunity End" },
+      { id: "0x38", name: "Provider Overlay Placement Opportunity Start" },
+      { id: "0x39", name: "Provider Overlay Placement Opportunity End" },
+      { id: "0x3A", name: "Distributor Overlay Placement Opportunity Start" },
+      { id: "0x3B", name: "Distributor Overlay Placement Opportunity End" },
+      { id: "0x40", name: "Unscheduled Event Start" },
+      { id: "0x41", name: "Unscheduled Event End" },
+      { id: "0x50", name: "Network Start" },
+      { id: "0x51", name: "Network End" },
+    ];
+    const SEG_TYPE_NAMES = SEG_TYPES.reduce((m, t) => { m[t.id.toLowerCase()] = t.name; return m; }, {});
+
+    // UPID types (mirrors the Tools → Builder list; src/esam.rs decode_upid_type_name).
+    const UPID_TYPES = [
+      { id: "0x01", name: "User Defined (Deprecated)" },
+      { id: "0x02", name: "ISCI" },
+      { id: "0x03", name: "Ad-ID" },
+      { id: "0x05", name: "ISAN (ISO 15706)" },
+      { id: "0x06", name: "ISAN (ISO 15706-2)" },
+      { id: "0x07", name: "TID (Tribune ID)" },
+      { id: "0x08", name: "TI (Turner ID)" },
+      { id: "0x09", name: "ADI (CableLabs)" },
+      { id: "0x0A", name: "EIDR" },
+      { id: "0x0B", name: "ATSC Content Identifier" },
+      { id: "0x0C", name: "MPU (Managed Private UPID)" },
+      { id: "0x0D", name: "MID (Multiple UPIDs)" },
+      { id: "0x0E", name: "ADS Information" },
+      { id: "0x0F", name: "URI" },
+      { id: "0x10", name: "UUID" },
+    ];
+    const UPID_TYPE_NAMES = UPID_TYPES.reduce((m, t) => { m[t.id.toLowerCase()] = t.name; return m; }, {});
+
+    // Match condition fields (leaf keys evaluated in src/rules.rs eval()).
+    const MATCH_FIELDS = [
+      { value: "scte35.command",             label: "SCTE-35 command",       kind: "command" },
+      { value: "scte35.segmentation_type_id", label: "Segmentation type id", kind: "segtype" },
+      { value: "scte35.segmentation_upid",   label: "Segmentation UPID",     kind: "glob", placeholder: "*AFE1*" },
+      { value: "acquisitionSignalID",        label: "Acquisition signal ID", kind: "glob", placeholder: "blk-*" },
+      { value: "utcBetween",                 label: "UTC time window",       kind: "utc" },
+    ];
+    const FIELD_LABELS = MATCH_FIELDS.reduce((m, f) => { m[f.value] = f.label; return m; }, {});
+
+    // ============================================================
+    //  JSON <-> visual-model translation
+    //  (returns null when a JSON shape can't be edited visually;
+    //   the editor then stays in JSON mode for that pane.)
+    // ============================================================
+
+    function matchToVisual(obj) {
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+      const keys = Object.keys(obj);
+      if (keys.length === 0) return { combinator: "anyOf", conditions: [] }; // catch-all
+      const extra = keys.filter(k => k !== "anyOf" && k !== "allOf");
+      if (extra.length) return null;
+      const hasAny = Array.isArray(obj.anyOf);
+      const hasAll = Array.isArray(obj.allOf);
+      if (hasAny && hasAll) return null;   // both clauses -> JSON only
+      if (!hasAny && !hasAll) return null;
+      const combinator = hasAny ? "anyOf" : "allOf";
+      const arr = hasAny ? obj.anyOf : obj.allOf;
+      const conditions = [];
+      for (const c of arr) {
+        if (!c || typeof c !== "object" || Array.isArray(c)) return null;
+        const ck = Object.keys(c);
+        if (ck.length !== 1) return null;
+        const field = ck[0];
+        if (!FIELD_LABELS[field]) return null;
+        if (field === "utcBetween") {
+          const w = c[field];
+          if (!w || typeof w !== "object") return null;
+          conditions.push({ field, start: w.start || "", end: w.end || "" });
+        } else {
+          if (typeof c[field] !== "string") return null;
+          conditions.push({ field, value: c[field] });
+        }
+      }
+      return { combinator, conditions };
+    }
+
+    function visualToMatch(vm) {
+      if (!vm || vm.conditions.length === 0) return {};
+      const arr = vm.conditions.map(c =>
+        c.field === "utcBetween"
+          ? { utcBetween: { start: c.start || "", end: c.end || "" } }
+          : { [c.field]: c.value || "" }
+      );
+      return { [vm.combinator]: arr };
+    }
+
+    function paramsToVisual(obj, action) {
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+      const keys = Object.keys(obj);
+      const only = (allowed) => keys.every(k => allowed.includes(k));
+      switch (action) {
+        case "noop":
+        case "delete":
+        case "tracking-only":
+          return keys.length === 0 ? { mode: "none" } : null;
+        case "blackout": {
+          if (!only(["restrictions"])) return null;
+          const r = obj.restrictions;
+          if (r && (typeof r !== "object" || Array.isArray(r))) return null;
+          const rk = r ? Object.keys(r) : [];
+          if (!rk.every(k => ["web_delivery_allowed", "no_regional_blackout", "archive_allowed", "device_restrictions"].includes(k))) return null;
+          return {
+            web_delivery_allowed: (r && r.web_delivery_allowed) ?? false,
+            no_regional_blackout: (r && r.no_regional_blackout) ?? false,
+            archive_allowed: (r && r.archive_allowed) ?? true,
+            device_restrictions: String((r && r.device_restrictions) ?? 0),
+          };
+        }
+        case "regionalize":
+          if (!only(["upid", "upid_type", "region"])) return null;
+          return { upid: obj.upid || "", upid_type: obj.upid_type || "", region: obj.region || "" };
+        case "shorten":
+        case "extend":
+          if (!only(["duration_s"])) return null;
+          return { duration_s: obj.duration_s ?? 30 };
+        case "fill":
+          if (!only(["to_duration_s", "filler"])) return null;
+          return { to_duration_s: obj.to_duration_s ?? 30, filler: obj.filler || "" };
+        case "slate":
+          if (!only(["asset", "duration_s"])) return null;
+          return { asset: obj.asset || "", duration_s: obj.duration_s ?? 0 };
+        default:
+          break; // replace
+      }
+      // ----- replace -----
+      if (keys.length === 0) return { mode: "none" };
+      if (obj.rewrite_upid && typeof obj.rewrite_upid === "object" && !Array.isArray(obj.rewrite_upid)) {
+        if (keys.filter(k => k !== "rewrite_upid").length) return null;
+        const r = obj.rewrite_upid;
+        if (Object.keys(r).filter(k => k !== "upid" && k !== "upid_type").length) return null;
+        return { mode: "rewrite_upid", upid: r.upid || "", upid_type: r.upid_type || "" };
+      }
+      if (obj.build && typeof obj.build === "object" && !Array.isArray(obj.build)) {
+        // scte35_b64 may be present as a cached build output; ignore & regenerate.
+        const extra = keys.filter(k => k !== "build" && k !== "scte35_b64");
+        if (extra.length) return null;
+        const b = obj.build;
+        const segUpid = { seg_type_id: b.segmentation_type_id || "", upid_type: b.upid_type || "", upid: b.upid || "" };
+        const allowed = ["command", "duration_s", "segmentation_type_id", "upid_type", "upid"];
+        if (b.command === "splice_insert_out") {
+          if (Object.keys(b).filter(k => !allowed.includes(k)).length) return null;
+          return { mode: "build_splice", duration_s: b.duration_s ?? 30, ...segUpid };
+        }
+        if (b.command === "time_signal_immediate" || b.command === "time_signal") {
+          if (Object.keys(b).filter(k => !allowed.includes(k)).length) return null;
+          return { mode: "build_timesignal", ...segUpid };
+        }
+        return null;
+      }
+      if (typeof obj.scte35_b64 === "string") {
+        if (keys.filter(k => k !== "scte35_b64").length) return null;
+        return { mode: "literal", scte35_b64: obj.scte35_b64 };
+      }
+      return null;
+    }
+
+    // Append optional segmentation-descriptor fields to a build object.
+    function withSegUpid(build, pm) {
+      if (pm.seg_type_id) build.segmentation_type_id = pm.seg_type_id;
+      if (pm.upid_type) build.upid_type = pm.upid_type;
+      if (pm.upid) build.upid = pm.upid;
+      return build;
+    }
+
+    function visualToParams(pm, action) {
+      switch (action) {
+        case "noop":
+        case "delete":
+        case "tracking-only":
+          return {};
+        case "blackout":
+          return { restrictions: {
+            web_delivery_allowed: !!pm.web_delivery_allowed,
+            no_regional_blackout: !!pm.no_regional_blackout,
+            archive_allowed: !!pm.archive_allowed,
+            device_restrictions: Number(pm.device_restrictions) || 0,
+          } };
+        case "regionalize": {
+          const o = { upid: pm.upid || "" };
+          if (pm.upid_type) o.upid_type = pm.upid_type;
+          if (pm.region) o.region = pm.region;
+          return o;
+        }
+        case "shorten":
+        case "extend":
+          return { duration_s: Number(pm.duration_s) || 0 };
+        case "fill": {
+          const o = { to_duration_s: Number(pm.to_duration_s) || 0 };
+          if (pm.filler) o.filler = pm.filler;
+          return o;
+        }
+        case "slate": {
+          const o = {};
+          if (pm.asset) o.asset = pm.asset;
+          if (pm.duration_s) o.duration_s = Number(pm.duration_s) || 0;
+          return o;
+        }
+        default:
+          break; // replace
+      }
+      // ----- replace -----
+      switch (pm && pm.mode) {
+        case "build_splice":
+          return { build: withSegUpid({ command: "splice_insert_out", duration_s: Number(pm.duration_s) || 0 }, pm) };
+        case "build_timesignal":
+          return { build: withSegUpid({ command: "time_signal_immediate" }, pm) };
+        case "rewrite_upid": {
+          const r = { upid: pm.upid || "" };
+          if (pm.upid_type) r.upid_type = pm.upid_type;
+          return { rewrite_upid: r };
+        }
+        case "literal":
+          return { scte35_b64: pm.scte35_b64 || "" };
+        default:
+          return {};
+      }
+    }
+
+    const pretty = (obj) => { try { return JSON.stringify(obj, null, 2); } catch (e) { return String(obj); } };
+
+    function parseJsonLoose(s) {
+      if (s == null || s === "null" || s === "") return {};
+      return JSON.parse(s);
+    }
+
+    // ============================================================
+    //  Pre-built rule templates (AWS-IAM "managed policy" style).
+    //  Mirror the demos in migration-demo.sql.
+    // ============================================================
+
+    const RULE_TEMPLATES = [
+      {
+        name: "Ad-out splice_insert → built 30s avail",
+        desc: "When a splice_insert ad-out arrives, replace it with a freshly built 30-second avail.",
+        match: { allOf: [{ "scte35.command": "splice_insert" }] },
+        action: "replace",
+        params: { build: { command: "splice_insert_out", duration_s: 30 } },
+      },
+      {
+        name: "Placement Opportunity Start (0x34) → 60s avail",
+        desc: "Match a Provider Placement Opportunity Start segmentation descriptor and replace with a 60s avail.",
+        match: { allOf: [{ "scte35.segmentation_type_id": "0x34" }] },
+        action: "replace",
+        params: { build: { command: "splice_insert_out", duration_s: 60 } },
+      },
+      {
+        name: "Program boundary (0x10/0x11) → pass-through",
+        desc: "Let Program Start / Program End signals through unchanged.",
+        match: { anyOf: [{ "scte35.segmentation_type_id": "0x10" }, { "scte35.segmentation_type_id": "0x11" }] },
+        action: "noop",
+        params: {},
+      },
+      {
+        name: "time_signal → built immediate time_signal",
+        desc: "Replace incoming time_signal commands with a freshly built immediate time_signal.",
+        match: { allOf: [{ "scte35.command": "time_signal" }] },
+        action: "replace",
+        params: { build: { command: "time_signal_immediate" } },
+      },
+      {
+        name: "Blackout by signal ID (blk-*) → delete",
+        desc: "Drop any signal whose acquisition signal ID starts with “blk-” (blackout / filtering).",
+        match: { anyOf: [{ "acquisitionSignalID": "blk-*" }] },
+        action: "delete",
+        params: {},
+      },
+      {
+        name: "Region-tagged UPID (*AFE1*) → 15s avail",
+        desc: "Target signals whose UPID contains AFE1 and replace with a 15-second avail.",
+        match: { allOf: [{ "scte35.segmentation_upid": "*AFE1*" }] },
+        action: "replace",
+        params: { build: { command: "splice_insert_out", duration_s: 15 } },
+      },
+      {
+        name: "Prime-time window → 45s avail",
+        desc: "During a UTC time window, replace with a 45-second avail. Adjust the window after adding.",
+        match: { allOf: [{ utcBetween: { start: "2026-06-02T18:00:00Z", end: "2026-06-02T23:00:00Z" } }] },
+        action: "replace",
+        params: { build: { command: "splice_insert_out", duration_s: 45 } },
+      },
+      {
+        name: "splice_insert → literal SCTE-35 slate",
+        desc: "Replace splice_insert commands with a fixed, literal base64 SCTE-35 payload.",
+        match: { allOf: [{ "scte35.command": "splice_insert" }] },
+        action: "replace",
+        params: { scte35_b64: "/DAhAAAAAAAAAP/wEAUAAAAAf+//AAAAAH4AAAAAAAA1FwHt" },
+      },
+      {
+        name: "Regional blackout (program start) → restrict",
+        desc: "On Program Start, set delivery restrictions (regional blackout, no web) on the cue. Emitted as a standard replace.",
+        match: { allOf: [{ "scte35.segmentation_type_id": "0x10" }] },
+        action: "blackout",
+        params: { restrictions: { web_delivery_allowed: false, no_regional_blackout: false, archive_allowed: true, device_restrictions: 0 } },
+      },
+      {
+        name: "Shorten ad-out to 30s",
+        desc: "On a splice_insert ad-out, set the break duration to 30 seconds (edits the incoming cue).",
+        match: { allOf: [{ "scte35.command": "splice_insert" }] },
+        action: "shorten",
+        params: { duration_s: 30 },
+      },
+      {
+        name: "Regionalize by UPID (*AFE1*)",
+        desc: "For region-tagged signals, rewrite the incoming UPID to a region code. Region is metadata for the packager.",
+        match: { allOf: [{ "scte35.segmentation_upid": "*AFE1*" }] },
+        action: "regionalize",
+        params: { upid: "region-east-001", upid_type: "0x0C", region: "us-east" },
+      },
+      {
+        name: "Tracking-only on Provider Ad Start (0x30)",
+        desc: "Let the break run for reporting but suppress ad decisioning. The packager/MCR fires beacons; the cue passes through.",
+        match: { allOf: [{ "scte35.segmentation_type_id": "0x30" }] },
+        action: "tracking-only",
+        params: {},
+      },
+      {
+        name: "Catch-all pass-through",
+        desc: "A safe last-priority rule that matches every signal and passes it through unchanged.",
+        match: {},
+        action: "noop",
+        params: {},
+      },
+    ];
+
+    // ============================================================
+    //  Components
+    // ============================================================
+
     function Channels({ onSelect, selected }) {
       const [data, setData] = hooks.useState(null);
       const [err, setErr] = hooks.useState(null);
-      
+
       hooks.useEffect(() => {
         (async () => {
           try {
@@ -55,17 +494,17 @@
           }
         })();
       }, []);
-      
+
       if (err) return html`<div class="p-4 text-error">${err}</div>`;
       if (!data) return html`<div class="p-4 text-muted">Loading…</div>`;
-      
+
       const add = async () => {
         const name = prompt("Channel name?") || "";
         if (!name) return;
         await API.post("/channels", { name });
         location.reload();
       };
-      
+
       const toggle = async (ch) => {
         await API.put(`/channels/${ch.id}`, {
           name: ch.name,
@@ -74,7 +513,7 @@
         });
         location.reload();
       };
-      
+
       const deleteChannel = async (ch) => {
         if (!confirm(`Delete channel "${ch.name}"? This will also delete all associated rules.`)) return;
         try {
@@ -84,7 +523,7 @@
           alert(`Failed to delete channel: ${e.message}`);
         }
       };
-      
+
       return html`
         <div class="p-4">
           <div class="flex items-center justify-between mb-4">
@@ -112,32 +551,364 @@
         </div>
       `;
     }
-    
+
+    // ---- Condition value input (field-aware) ----
+    function CondValue({ cond, onUpdate }) {
+      const f = cond.field;
+      if (f === "scte35.command") {
+        return html`<select value=${cond.value || ""} onChange=${e => onUpdate({ value: e.target.value })}>
+          <option value="">— choose command —</option>
+          ${SCTE35_COMMANDS.map(c => html`<option value=${c}>${c}</option>`)}
+        </select>`;
+      }
+      if (f === "scte35.segmentation_type_id") {
+        return html`<input list="seg-type-list" placeholder="0x34"
+          value=${cond.value || ""} onInput=${e => onUpdate({ value: e.target.value })} />`;
+      }
+      if (f === "utcBetween") {
+        return html`<div class="flex gap-2">
+          <input placeholder="start — 2026-06-02T18:00:00Z" value=${cond.start || ""}
+            onInput=${e => onUpdate({ start: e.target.value })} />
+          <input placeholder="end — 2026-06-02T23:00:00Z" value=${cond.end || ""}
+            onInput=${e => onUpdate({ end: e.target.value })} />
+        </div>`;
+      }
+      const fdef = MATCH_FIELDS.find(x => x.value === f);
+      return html`<input placeholder=${(fdef && fdef.placeholder) || "value"}
+        value=${cond.value || ""} onInput=${e => onUpdate({ value: e.target.value })} />`;
+    }
+
+    // ---- Visual match builder ----
+    function MatchBuilder({ model, onChange }) {
+      const setCombinator = (c) => onChange({ ...model, combinator: c });
+      const updateCond = (i, patch) =>
+        onChange({ ...model, conditions: model.conditions.map((c, idx) => idx === i ? { ...c, ...patch } : c) });
+      const changeField = (i, field) => {
+        const base = field === "utcBetween" ? { field, start: "", end: "" } : { field, value: "" };
+        onChange({ ...model, conditions: model.conditions.map((c, idx) => idx === i ? base : c) });
+      };
+      const addCond = () => onChange({ ...model, conditions: [...model.conditions, { field: "scte35.command", value: "" }] });
+      const removeCond = (i) => onChange({ ...model, conditions: model.conditions.filter((_, idx) => idx !== i) });
+
+      const multi = model.conditions.length > 1;
+      return html`<div class="flex-col gap-3">
+        <div class="flex items-center gap-2">
+          <div class="seg-control">
+            <button class=${"seg-btn " + (model.combinator === "anyOf" ? "active" : "")}
+              onClick=${() => setCombinator("anyOf")}>Match ANY</button>
+            <button class=${"seg-btn " + (model.combinator === "allOf" ? "active" : "")}
+              onClick=${() => setCombinator("allOf")}>Match ALL</button>
+          </div>
+          <span class="text-xs text-muted">
+            ${multi
+              ? (model.combinator === "anyOf" ? "fires if any condition matches (OR)" : "fires only if every condition matches (AND)")
+              : "of the conditions below"}
+          </span>
+        </div>
+
+        ${model.conditions.length === 0
+          ? html`<div class="builder-note">No conditions — this rule matches <strong>every</strong> signal (catch-all).</div>`
+          : model.conditions.map((cond, i) => html`
+            <div class="cond-row" key=${i}>
+              <select class="field-sel" value=${cond.field} onChange=${e => changeField(i, e.target.value)}>
+                ${MATCH_FIELDS.map(f => html`<option value=${f.value}>${f.label}</option>`)}
+              </select>
+              <div class="val-wrap"><${CondValue} cond=${cond} onUpdate=${patch => updateCond(i, patch)} /></div>
+              <button class="btn btn-small cond-x text-error" title="Remove condition"
+                onClick=${() => removeCond(i)}>✕</button>
+            </div>
+          `)}
+
+        <div>
+          <button class="btn btn-small" onClick=${addCond}>+ Add condition</button>
+        </div>
+      </div>`;
+    }
+
+    // ---- Visual params builder ----
+    function ParamsBuilder({ action, model, onChange }) {
+      if (action === "noop") {
+        return html`<div class="builder-note">Pass-through — the original signal is returned unchanged. No parameters required.</div>`;
+      }
+      if (action === "delete") {
+        return html`<div class="builder-note">This rule drops the signal (filter). No parameters required.</div>`;
+      }
+      if (action === "tracking-only") {
+        return html`<div class="builder-note">Report-only — the break runs but no ad decisioning happens; the original signal passes through. Beaconing is the packager/MCR's job. No parameters.</div>`;
+      }
+      if (action === "blackout") {
+        return html`<div class="flex-col gap-3">
+          <div class="builder-note">Sets SCTE-35 delivery-restriction flags on the incoming cue (uncheck = restricted). Emitted as a standard <code>replace</code>.</div>
+          <label class="flex items-center gap-2"><input type="checkbox" style="width:auto" checked=${!!model.web_delivery_allowed} onChange=${e => onChange({ ...model, web_delivery_allowed: e.target.checked })} /> Web delivery allowed</label>
+          <label class="flex items-center gap-2"><input type="checkbox" style="width:auto" checked=${!!model.no_regional_blackout} onChange=${e => onChange({ ...model, no_regional_blackout: e.target.checked })} /> No regional blackout</label>
+          <label class="flex items-center gap-2"><input type="checkbox" style="width:auto" checked=${!!model.archive_allowed} onChange=${e => onChange({ ...model, archive_allowed: e.target.checked })} /> Archive allowed</label>
+          <div class="form-group">
+            <label>Device restrictions</label>
+            <select value=${model.device_restrictions || "0"} onChange=${e => onChange({ ...model, device_restrictions: e.target.value })}>
+              ${DEVICE_RESTRICTIONS.map(d => html`<option value=${d.id}>${d.name}</option>`)}
+            </select>
+          </div>
+        </div>`;
+      }
+      if (action === "regionalize") {
+        return html`<div class="flex-col gap-3">
+          <div class="builder-note">Rewrites the incoming UPID for regional/affiliate targeting. Region is metadata for the packager.</div>
+          <div class="form-group">
+            <label>Region</label>
+            <input value=${model.region || ""} placeholder="e.g., AFE1 / us-east" onInput=${e => onChange({ ...model, region: e.target.value })} />
+          </div>
+          <div class="form-group">
+            <label>New UPID type</label>
+            <select value=${model.upid_type || ""} onChange=${e => onChange({ ...model, upid_type: e.target.value })}>
+              <option value="">Keep existing type</option>
+              ${UPID_TYPES.map(t => html`<option value=${t.id}>${t.id} — ${t.name}</option>`)}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>New UPID value</label>
+            <input value=${model.upid || ""} placeholder="e.g., region-001" onInput=${e => onChange({ ...model, upid: e.target.value })} />
+          </div>
+        </div>`;
+      }
+      if (action === "shorten" || action === "extend") {
+        return html`<div class="flex-col gap-3">
+          <div class="builder-note">${action === "shorten" ? "Reduces" : "Lengthens"} the break by setting its duration on the incoming cue (break_duration / segmentation_duration). Emitted as a standard <code>replace</code>.</div>
+          <div class="form-group">
+            <label>New break duration (seconds)</label>
+            <input type="number" min="0" value=${model.duration_s ?? 30} onInput=${e => onChange({ ...model, duration_s: e.target.value })} />
+          </div>
+        </div>`;
+      }
+      if (action === "fill") {
+        return html`<div class="flex-col gap-3">
+          <div class="builder-note">Pads the break to a fixed target duration on the incoming cue. The filler choice is a hint for the packager/MCR.</div>
+          <div class="form-group">
+            <label>Fill to duration (seconds)</label>
+            <input type="number" min="0" value=${model.to_duration_s ?? 30} onInput=${e => onChange({ ...model, to_duration_s: e.target.value })} />
+          </div>
+          <div class="form-group">
+            <label>Filler (hint)</label>
+            <input value=${model.filler || ""} placeholder="e.g., house | slate" onInput=${e => onChange({ ...model, filler: e.target.value })} />
+          </div>
+        </div>`;
+      }
+      if (action === "slate") {
+        return html`<div class="flex-col gap-3">
+          <div class="builder-note">Signals the MCR/packager to insert a slate; the original signal passes through (the packager performs the slate).</div>
+          <div class="form-group">
+            <label>Slate asset (hint)</label>
+            <input value=${model.asset || ""} placeholder="asset id / URL" onInput=${e => onChange({ ...model, asset: e.target.value })} />
+          </div>
+          <div class="form-group">
+            <label>Duration (seconds, optional)</label>
+            <input type="number" min="0" value=${model.duration_s ?? 0} onInput=${e => onChange({ ...model, duration_s: e.target.value })} />
+          </div>
+        </div>`;
+      }
+      const mode = (model && model.mode) || "none";
+      const isBuild = mode === "build_splice" || mode === "build_timesignal";
+      const upidDisabled = !model.upid_type;
+      return html`<div class="flex-col gap-3">
+        <div class="form-group">
+          <label>Replacement source</label>
+          <select value=${mode} onChange=${e => onChange({ ...model, mode: e.target.value })}>
+            <option value="build_splice">Build — splice_insert ad-out (avail)</option>
+            <option value="build_timesignal">Build — time_signal (immediate)</option>
+            <option value="rewrite_upid">Rewrite incoming UPID</option>
+            <option value="literal">Literal SCTE-35 (base64)</option>
+            <option value="none">None (empty params)</option>
+          </select>
+        </div>
+        ${mode === "build_splice" && html`
+          <div class="form-group">
+            <label>Avail duration (seconds)</label>
+            <input type="number" min="0" value=${model.duration_s ?? 30}
+              onInput=${e => onChange({ ...model, duration_s: e.target.value })} />
+          </div>`}
+        ${isBuild && html`
+          <div class="form-group">
+            <label>Segmentation type</label>
+            <select value=${model.seg_type_id || ""} onChange=${e => onChange({ ...model, seg_type_id: e.target.value })}>
+              <option value="">None</option>
+              ${SEG_TYPES.map(t => html`<option value=${t.id}>${t.id} — ${t.name}</option>`)}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>UPID type</label>
+            <select value=${model.upid_type || ""} onChange=${e => onChange({ ...model, upid_type: e.target.value })}>
+              <option value="">None</option>
+              ${UPID_TYPES.map(t => html`<option value=${t.id}>${t.id} — ${t.name}</option>`)}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>UPID value</label>
+            <input value=${model.upid || ""} placeholder="e.g., ABCD1234"
+              disabled=${upidDisabled} style=${upidDisabled ? "opacity:0.5;" : ""}
+              onInput=${e => onChange({ ...model, upid: e.target.value })} />
+            <div class="text-xs text-muted">${upidDisabled ? "Choose a UPID type to set a value." : "Encoded per the chosen UPID type (hex or ASCII)."}</div>
+          </div>`}
+        ${mode === "rewrite_upid" && html`
+          <div class="builder-note">Passes the incoming signal through but changes only its UPID — command, timing, segmentation type, and other fields are preserved.</div>
+          <div class="form-group">
+            <label>New UPID type</label>
+            <select value=${model.upid_type || ""} onChange=${e => onChange({ ...model, upid_type: e.target.value })}>
+              <option value="">Keep existing type</option>
+              ${UPID_TYPES.map(t => html`<option value=${t.id}>${t.id} — ${t.name}</option>`)}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>New UPID value</label>
+            <input value=${model.upid || ""} placeholder="e.g., ABCD1234"
+              onInput=${e => onChange({ ...model, upid: e.target.value })} />
+            <div class="text-xs text-muted">Encoded per the chosen (or existing) UPID type. Applies to every segmentation descriptor in the signal.</div>
+          </div>`}
+        ${mode === "literal" && html`
+          <div class="form-group">
+            <label>SCTE-35 base64</label>
+            <textarea value=${model.scte35_b64 || ""} placeholder="/DAh..."
+              onInput=${e => onChange({ ...model, scte35_b64: e.target.value })}
+              style="font-family: monospace; min-height: 80px;"></textarea>
+          </div>`}
+        ${mode === "none" && html`<div class="builder-note">No payload will be built. Configure a source above to replace the signal.</div>`}
+      </div>`;
+    }
+
+    // ---- Read-only human-readable summaries ----
+    function describeCond(c) {
+      switch (c.field) {
+        case "acquisitionSignalID": return `Signal ID matches "${c.value}"`;
+        case "scte35.command": return `SCTE-35 command is ${c.value || "—"}`;
+        case "scte35.segmentation_type_id": {
+          const n = SEG_TYPE_NAMES[(c.value || "").toLowerCase()];
+          return `Segmentation type ${c.value || "—"}${n ? ` (${n})` : ""}`;
+        }
+        case "scte35.segmentation_upid": return `UPID matches "${c.value}"`;
+        case "utcBetween": return `UTC time between ${c.start || "…"} and ${c.end || "…"}`;
+        default: return JSON.stringify(c);
+      }
+    }
+
+    function MatchSummary({ obj }) {
+      const vm = matchToVisual(obj);
+      if (!vm) return html`<pre class="json-block">${pretty(obj)}</pre>`;
+      if (vm.conditions.length === 0) return html`<div class="text-muted">Matches every signal (catch-all)</div>`;
+      return html`<div class="flex-col gap-2">
+        <div class="text-xs text-muted">Match ${vm.combinator === "anyOf" ? "ANY" : "ALL"} of:</div>
+        ${vm.conditions.map((c, i) => html`<div class="chip" key=${i}>${describeCond(c)}</div>`)}
+      </div>`;
+    }
+
+    function ParamsSummary({ obj, action }) {
+      if (action === "noop") return html`<div class="text-muted">Original signal passed through unchanged</div>`;
+      if (action === "delete") return html`<div class="text-muted">Signal is dropped</div>`;
+      const pv = paramsToVisual(obj, action);
+      if (!pv) return html`<pre class="json-block">${pretty(obj)}</pre>`;
+      if (action === "tracking-only") return html`<div class="chip">Tracking-only → original passes through (verb noop)</div>`;
+      if (action === "blackout") {
+        const on = (b) => b ? "allowed" : "restricted";
+        return html`<div class="flex-col gap-2">
+          <div class="chip">Blackout → delivery restrictions (verb replace)</div>
+          <div class="chip">web ${on(pv.web_delivery_allowed)} · regional-blackout ${pv.no_regional_blackout ? "off" : "on"} · archive ${on(pv.archive_allowed)} · device ${pv.device_restrictions}</div>
+        </div>`;
+      }
+      if (action === "regionalize") {
+        const n = UPID_TYPE_NAMES[(pv.upid_type || "").toLowerCase()];
+        const t = pv.upid_type ? `, type ${pv.upid_type}${n ? ` (${n})` : ""}` : ", keep type";
+        return html`<div class="flex-col gap-2">
+          ${pv.region ? html`<div class="chip">Region: ${pv.region}</div>` : ""}
+          <div class="chip">Regionalize → UPID "${pv.upid}"${t} (verb replace)</div>
+        </div>`;
+      }
+      if (action === "shorten" || action === "extend") {
+        return html`<div class="chip">${action === "shorten" ? "Shorten" : "Extend"} → break duration ${pv.duration_s}s (verb replace)</div>`;
+      }
+      if (action === "fill") {
+        return html`<div class="chip">Fill → pad to ${pv.to_duration_s}s${pv.filler ? ` with ${pv.filler}` : ""} (verb replace)</div>`;
+      }
+      if (action === "slate") {
+        return html`<div class="chip">Slate → ${pv.asset ? `"${pv.asset}"` : "MCR/packager default"}${pv.duration_s ? `, ${pv.duration_s}s` : ""} (verb noop)</div>`;
+      }
+      const buildChips = (base) => {
+        const chips = [base];
+        if (pv.seg_type_id) {
+          const n = SEG_TYPE_NAMES[pv.seg_type_id.toLowerCase()];
+          chips.push(`Segmentation ${pv.seg_type_id}${n ? ` (${n})` : ""}`);
+        }
+        if (pv.upid) {
+          const n = UPID_TYPE_NAMES[(pv.upid_type || "").toLowerCase()];
+          chips.push(`UPID${pv.upid_type ? ` ${pv.upid_type}${n ? ` (${n})` : ""}` : ""} = ${pv.upid}`);
+        } else if (pv.upid_type) {
+          const n = UPID_TYPE_NAMES[pv.upid_type.toLowerCase()];
+          chips.push(`UPID type ${pv.upid_type}${n ? ` (${n})` : ""}`);
+        }
+        return html`<div class="flex-col gap-2">${chips.map((c, i) => html`<div class="chip" key=${i}>${c}</div>`)}</div>`;
+      };
+      switch (pv.mode) {
+        case "build_splice": return buildChips(`Replace → built splice_insert ad-out, ${pv.duration_s}s`);
+        case "build_timesignal": return buildChips("Replace → built immediate time_signal");
+        case "rewrite_upid": {
+          const n = UPID_TYPE_NAMES[(pv.upid_type || "").toLowerCase()];
+          const t = pv.upid_type ? `, type ${pv.upid_type}${n ? ` (${n})` : ""}` : ", keep type";
+          return html`<div class="chip">Rewrite incoming UPID → "${pv.upid}"${t}</div>`;
+        }
+        case "literal": return html`<div class="chip">Replace → literal SCTE-35 (base64)</div>`;
+        default: return html`<div class="text-muted">Replace (empty params)</div>`;
+      }
+    }
+
+    // ---- Template gallery ----
+    function TemplateGallery({ onPick, onBlank, onClose, busy }) {
+      return html`<div class="panel" style="padding: 20px; margin-bottom: 16px;">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div style="font-weight: 600; font-size: 15px;">Start from a template</div>
+            <div class="text-xs text-muted">Pre-built rules for common POIS scenarios. Pick one to add it, then fine-tune.</div>
+          </div>
+          <button class="btn btn-small" onClick=${onClose} disabled=${busy}>Cancel</button>
+        </div>
+        <div class="tpl-grid">
+          ${RULE_TEMPLATES.map((t, i) => html`
+            <div class="tpl-card" key=${i}>
+              <div class="flex items-center justify-between gap-2">
+                <div class="tpl-name">${t.name}</div>
+                <span class="badge badge-${t.action}">${t.action}</span>
+              </div>
+              <div class="tpl-desc">${t.desc}</div>
+              <button class="btn btn-primary btn-small" onClick=${() => onPick(t)} disabled=${busy}>Use template</button>
+            </div>
+          `)}
+          <div class="tpl-card">
+            <div class="tpl-name">Blank rule</div>
+            <div class="tpl-desc">Start from an empty catch-all rule and build it yourself.</div>
+            <button class="btn btn-small" onClick=${onBlank} disabled=${busy}>Create blank</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
     function Rules({ channel }) {
       const [rules, setRules] = hooks.useState(null);
       const [err, setErr] = hooks.useState(null);
       const [editingId, setEditingId] = hooks.useState(null);
       const [draft, setDraft] = hooks.useState(null);
       const [saving, setSaving] = hooks.useState(false);
+      const [showTemplates, setShowTemplates] = hooks.useState(false);
+      const [adding, setAdding] = hooks.useState(false);
 
       const fetchRules = hooks.useCallback(async () => {
         try {
           setErr(null);
-          console.log('Fetching rules for channel:', channel.id);
           const data = await API.get(`/channels/${channel.id}/rules`);
-          console.log('Rules data received:', data);
-          
-          // Clean up any rules with "null" strings
           const cleanedData = data.map(rule => ({
             ...rule,
             match_json: rule.match_json === "null" ? "{}" : rule.match_json,
             params_json: rule.params_json === "null" ? "{}" : rule.params_json
           }));
-          
           setRules(cleanedData);
+          return cleanedData;
         } catch (e) {
-          console.error('Error fetching rules:', e);
           setErr(String(e));
+          return [];
         }
       }, [channel.id]);
 
@@ -145,29 +916,71 @@
         setRules(null);
         setEditingId(null);
         setDraft(null);
+        setShowTemplates(false);
         fetchRules();
       }, [fetchRules]);
 
       if (err) return html`<div class="p-4 text-error">${err}</div>`;
       if (!rules) return html`<div class="p-4 text-muted">Loading rules…</div>`;
 
-      const addRule = async () => {
-        const name = prompt("Rule name?") || "";
-        if (!name) return;
+      // Build an editor draft from a stored rule, choosing visual mode when the
+      // JSON is representable, otherwise falling back to JSON mode for that pane.
+      const buildDraft = (rule) => {
+        let matchObj = {}, paramsObj = {};
+        try { matchObj = parseJsonLoose(rule.match_json); } catch (e) { matchObj = {}; }
+        try { paramsObj = parseJsonLoose(rule.params_json); } catch (e) { paramsObj = {}; }
+        const mv = matchToVisual(matchObj);
+        const pv = paramsToVisual(paramsObj, rule.action);
+        return {
+          name: rule.name,
+          priority: String(rule.priority),
+          action: rule.action,
+          matchMode: mv ? "visual" : "json",
+          matchVisual: mv || { combinator: "anyOf", conditions: [] },
+          matchJsonText: pretty(matchObj),
+          paramsMode: pv ? "visual" : "json",
+          paramsVisual: pv || { mode: "none" },
+          paramsJsonText: pretty(paramsObj),
+        };
+      };
+
+      const startEdit = (rule) => {
+        setShowTemplates(false);
+        setSaving(false);
+        setEditingId(rule.id);
+        setDraft(buildDraft(rule));
+      };
+
+      const cancelEdit = () => {
+        setEditingId(null);
+        setDraft(null);
+        setSaving(false);
+      };
+
+      const addFromTemplate = async (tpl) => {
+        setAdding(true);
         try {
-          await API.post(`/channels/${channel.id}/rules`, {
-            name,
-            priority: 100,
+          const created = await API.post(`/channels/${channel.id}/rules`, {
+            name: tpl.name,
+            priority: -1,          // append at end (backend spaces by 10)
             enabled: true,
-            match_json: {},
-            action: "noop",
-            params_json: {}
+            match_json: tpl.match,
+            action: tpl.action,
+            params_json: tpl.params,
           });
+          setShowTemplates(false);
           await fetchRules();
+          if (created && created.id) startEdit(created);
         } catch (e) {
           alert(`Failed to add rule: ${e.message}`);
+        } finally {
+          setAdding(false);
         }
       };
+
+      const addBlank = () => addFromTemplate({
+        name: "New rule", match: {}, action: "noop", params: {},
+      });
 
       const deleteRule = async (ruleId) => {
         if (!confirm("Delete this rule?")) return;
@@ -185,9 +998,9 @@
             name: rule.name,
             priority: rule.priority,
             enabled: rule.enabled === 0,
-            match_json: JSON.parse(rule.match_json),
+            match_json: parseJsonLoose(rule.match_json),
             action: rule.action,
-            params_json: JSON.parse(rule.params_json)
+            params_json: parseJsonLoose(rule.params_json)
           });
           await fetchRules();
         } catch (e) {
@@ -195,67 +1008,76 @@
         }
       };
 
-      const startEdit = (rule) => {
-        setEditingId(rule.id);
-        setSaving(false);
-        let formattedMatch = rule.match_json === "null" ? "{}" : rule.match_json;
-        let formattedParams = rule.params_json === "null" ? "{}" : rule.params_json;
-        
-        try {
-          formattedMatch = JSON.stringify(JSON.parse(formattedMatch), null, 2);
-        } catch (e) {
-          formattedMatch = "{}";
+      // ---- Visual <-> JSON mode switches (per pane) ----
+      const switchMatchMode = (mode) => {
+        if (!draft || mode === draft.matchMode) return;
+        if (mode === "json") {
+          setDraft({ ...draft, matchMode: "json", matchJsonText: pretty(visualToMatch(draft.matchVisual)) });
+        } else {
+          let obj;
+          try { obj = parseJsonLoose(draft.matchJsonText); }
+          catch (e) { alert("Invalid JSON — fix it before switching to the visual builder."); return; }
+          const mv = matchToVisual(obj);
+          if (!mv) { alert("This match uses advanced JSON (e.g. both anyOf and allOf, or unknown fields) that the visual builder can't represent. Keep editing it as JSON."); return; }
+          setDraft({ ...draft, matchMode: "visual", matchVisual: mv });
         }
-        try {
-          formattedParams = JSON.stringify(JSON.parse(formattedParams), null, 2);
-        } catch (e) {
-          formattedParams = "{}";
-        }
-        
-        setDraft({
-          name: rule.name,
-          priority: String(rule.priority),
-          match_json: formattedMatch,
-          action: rule.action,
-          params_json: formattedParams
-        });
       };
 
-      const cancelEdit = () => {
-        setEditingId(null);
-        setDraft(null);
-        setSaving(false);
+      const switchParamsMode = (mode) => {
+        if (!draft || mode === draft.paramsMode) return;
+        if (mode === "json") {
+          setDraft({ ...draft, paramsMode: "json", paramsJsonText: pretty(visualToParams(draft.paramsVisual, draft.action)) });
+        } else {
+          let obj;
+          try { obj = parseJsonLoose(draft.paramsJsonText); }
+          catch (e) { alert("Invalid JSON — fix it before switching to the visual builder."); return; }
+          const pv = paramsToVisual(obj, draft.action);
+          if (!pv) { alert("These params can't be represented in the visual builder. Keep editing them as JSON."); return; }
+          setDraft({ ...draft, paramsMode: "visual", paramsVisual: pv });
+        }
+      };
+
+      // Sensible default params model for each action (shapes differ per action).
+      const defaultParamsVisual = (action) => {
+        switch (action) {
+          case "replace": return { mode: "build_splice", duration_s: 30, seg_type_id: "", upid_type: "", upid: "" };
+          case "blackout": return { web_delivery_allowed: false, no_regional_blackout: false, archive_allowed: true, device_restrictions: "0" };
+          case "regionalize": return { upid: "", upid_type: "", region: "" };
+          case "shorten":
+          case "extend": return { duration_s: 30 };
+          case "fill": return { to_duration_s: 30, filler: "" };
+          case "slate": return { asset: "", duration_s: 0 };
+          default: return { mode: "none" }; // noop, delete, tracking-only
+        }
+      };
+
+      const changeAction = (action) => {
+        // The params shape is action-specific, so reset to that action's defaults
+        // and return to the visual builder.
+        setDraft({ ...draft, action, paramsMode: "visual", paramsVisual: defaultParamsVisual(action) });
       };
 
       const saveEdit = async (rule) => {
         if (!draft) return;
-        
         const trimmedName = (draft.name || "").trim();
-        if (!trimmedName) {
-          alert("Rule name is required.");
-          return;
-        }
-        
+        if (!trimmedName) { alert("Rule name is required."); return; }
         const priority = Number.parseInt(draft.priority, 10);
-        if (!Number.isFinite(priority)) {
-          alert("Priority must be a number.");
-          return;
-        }
-        
+        if (!Number.isFinite(priority)) { alert("Priority must be a number."); return; }
+
         let matchObj, paramsObj;
-        try {
-          matchObj = JSON.parse(draft.match_json || "{}");
-        } catch (e) {
-          alert(`Invalid match JSON: ${e.message}`);
-          return;
+        if (draft.matchMode === "visual") {
+          matchObj = visualToMatch(draft.matchVisual);
+        } else {
+          try { matchObj = parseJsonLoose(draft.matchJsonText); }
+          catch (e) { alert(`Invalid match JSON: ${e.message}`); return; }
         }
-        try {
-          paramsObj = JSON.parse(draft.params_json || "{}");
-        } catch (e) {
-          alert(`Invalid params JSON: ${e.message}`);
-          return;
+        if (draft.paramsMode === "visual") {
+          paramsObj = visualToParams(draft.paramsVisual, draft.action);
+        } else {
+          try { paramsObj = parseJsonLoose(draft.paramsJsonText); }
+          catch (e) { alert(`Invalid params JSON: ${e.message}`); return; }
         }
-        
+
         setSaving(true);
         try {
           await API.put(`/rules/${rule.id}`, {
@@ -276,90 +1098,102 @@
         }
       };
 
+      const paneTabs = (activeMode, onSwitch) => html`
+        <div class="seg-control">
+          <button class=${"seg-btn " + (activeMode === "visual" ? "active" : "")}
+            onClick=${() => onSwitch("visual")}>Visual</button>
+          <button class=${"seg-btn " + (activeMode === "json" ? "active" : "")}
+            onClick=${() => onSwitch("json")}>JSON</button>
+        </div>`;
+
       return html`
         <div class="p-4">
+          <datalist id="seg-type-list">
+            ${SEG_TYPES.map(t => html`<option value=${t.id}>${t.id} — ${t.name}</option>`)}
+          </datalist>
+
           <div class="flex items-center justify-between mb-4">
             <div class="font-semibold text-sm text-muted" style="text-transform: uppercase; letter-spacing: 0.5px;">
               Rules for ${channel.name}
             </div>
-            <button class="btn btn-primary btn-small" onClick=${addRule}>+ Add Rule</button>
+            <button class="btn btn-primary btn-small"
+              onClick=${() => setShowTemplates(s => !s)}>+ Add Rule</button>
           </div>
-          ${rules.length === 0 ? html`
+
+          ${showTemplates && html`<${TemplateGallery}
+            onPick=${addFromTemplate} onBlank=${addBlank}
+            onClose=${() => setShowTemplates(false)} busy=${adding} />`}
+
+          ${rules.length === 0 && !showTemplates ? html`
             <div class="empty-state" style="padding: 40px 20px; text-align: center;">
-              <div class="empty-state-text">No rules yet. Click "+ Add Rule" to create one.</div>
+              <div class="empty-state-text">No rules yet. Click "+ Add Rule" to start from a template.</div>
             </div>
           ` : html`
             <div class="rules-list">
               ${rules.map(rule => {
                 const isEditing = editingId === rule.id;
-                
-                // Prettify JSON outside the template
-                let prettyMatch = '{}';
-                let prettyParams = '{}';
-                try {
-                  const matchParsed = typeof rule.match_json === 'string' ? JSON.parse(rule.match_json) : rule.match_json;
-                  prettyMatch = JSON.stringify(matchParsed, null, 2);
-                } catch (e) {
-                  prettyMatch = rule.match_json || '{}';
-                }
-                try {
-                  const paramsParsed = typeof rule.params_json === 'string' ? JSON.parse(rule.params_json) : rule.params_json;
-                  prettyParams = JSON.stringify(paramsParsed, null, 2);
-                } catch (e) {
-                  prettyParams = rule.params_json || '{}';
-                }
-                
+                let matchObj = {}, paramsObj = {};
+                try { matchObj = parseJsonLoose(rule.match_json); } catch (e) { matchObj = {}; }
+                try { paramsObj = parseJsonLoose(rule.params_json); } catch (e) { paramsObj = {}; }
+
                 return html`
                   <div class="panel" key=${rule.id} style="padding: 20px; margin-bottom: 16px;">
                     ${isEditing ? html`
                       <div class="rule-edit-form">
-                        <div class="form-row">
+                        <div class="form-row" style="display:flex; gap:16px; flex-wrap:wrap;">
                           <div class="form-group" style="flex: 2;">
                             <label>Name</label>
-                            <input 
-                              value=${draft.name} 
-                              onInput=${e => setDraft({...draft, name: e.target.value})}
-                            />
+                            <input value=${draft.name} onInput=${e => setDraft({ ...draft, name: e.target.value })} />
                           </div>
                           <div class="form-group" style="flex: 0 0 100px;">
                             <label>Priority</label>
-                            <input 
-                              type="number" 
-                              value=${draft.priority} 
-                              onInput=${e => setDraft({...draft, priority: e.target.value})}
-                            />
+                            <input type="number" value=${draft.priority}
+                              onInput=${e => setDraft({ ...draft, priority: e.target.value })} />
                           </div>
                           <div class="form-group" style="flex: 1;">
                             <label>Action</label>
-                            <select 
-                              value=${draft.action} 
-                              onChange=${e => setDraft({...draft, action: e.target.value})}
-                            >
-                              <option value="noop">noop (passthrough)</option>
-                              <option value="replace">replace</option>
-                              <option value="delete">delete</option>
+                            <select value=${draft.action} onChange=${e => changeAction(e.target.value)}>
+                              ${ACTIONS.map(a => html`<option value=${a.value}>${a.label}</option>`)}
                             </select>
                           </div>
                         </div>
-                        <div class="form-row">
-                          <div class="form-group" style="flex: 1;">
-                            <label>Match JSON</label>
-                            <textarea 
-                              value=${draft.match_json}
-                              onInput=${e => setDraft({...draft, match_json: e.target.value})}
-                              style="font-family: monospace; min-height: 100px;"
-                            ></textarea>
+
+                        <div class="builder-section">
+                          <div class="builder-head">
+                            <div>
+                              <div class="bh-title">Match</div>
+                              <div class="bh-sub">When should this rule fire?</div>
+                            </div>
+                            ${paneTabs(draft.matchMode, switchMatchMode)}
                           </div>
-                          <div class="form-group" style="flex: 1;">
-                            <label>Params JSON</label>
-                            <textarea 
-                              value=${draft.params_json}
-                              onInput=${e => setDraft({...draft, params_json: e.target.value})}
-                              style="font-family: monospace; min-height: 100px;"
-                            ></textarea>
-                          </div>
+                          ${draft.matchMode === "visual"
+                            ? html`<${MatchBuilder} model=${draft.matchVisual}
+                                onChange=${mv => setDraft({ ...draft, matchVisual: mv })} />`
+                            : html`<textarea value=${draft.matchJsonText}
+                                onInput=${e => setDraft({ ...draft, matchJsonText: e.target.value })}
+                                style="font-family: monospace; min-height: 120px;"></textarea>`}
                         </div>
-                        <div class="flex gap-2 justify-end" style="margin-top: 12px;">
+
+                        <div class="builder-section">
+                          <div class="builder-head">
+                            <div>
+                              <div class="bh-title">Parameters</div>
+                              <div class="bh-sub">What should happen when it fires?</div>
+                            </div>
+                            ${draft.action === "replace" ? paneTabs(draft.paramsMode, switchParamsMode) : null}
+                          </div>
+                          ${draft.action !== "replace"
+                            ? html`<${ParamsBuilder} action=${draft.action} model=${draft.paramsVisual}
+                                onChange=${() => {}} />`
+                            : (draft.paramsMode === "visual"
+                              ? html`<${ParamsBuilder} action=${draft.action} model=${draft.paramsVisual}
+                                  onChange=${pv => setDraft({ ...draft, paramsVisual: pv })} />`
+                              : html`<textarea value=${draft.paramsJsonText}
+                                  onInput=${e => setDraft({ ...draft, paramsJsonText: e.target.value })}
+                                  style="font-family: monospace; min-height: 120px;"></textarea>`)}
+                        </div>
+
+                        <div class="flex gap-2 justify-end" style="margin-top: 16px;">
                           <button class="btn" onClick=${cancelEdit} disabled=${saving}>Cancel</button>
                           <button class="btn btn-primary" onClick=${() => saveEdit(rule)} disabled=${saving}>
                             ${saving ? 'Saving...' : 'Save'}
@@ -369,7 +1203,9 @@
                     ` : html`
                       <div class="rule-display">
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
-                          <h3 style="font-size: 18px; font-weight: 600; color: var(--text-primary); margin: 0;">${rule.name}</h3>
+                          <h3 style="font-size: 18px; font-weight: 600; color: var(--text-primary); margin: 0; ${rule.enabled === 0 ? 'opacity:0.55;' : ''}">
+                            ${rule.name} ${rule.enabled === 0 ? html`<span class="badge badge-neutral" style="margin-left:8px;">disabled</span>` : ''}
+                          </h3>
                           <div style="display: flex; gap: 8px;">
                             <button class="btn btn-small" onClick=${() => toggleRule(rule)}>
                               ${rule.enabled !== 0 ? 'Disable' : 'Enable'}
@@ -378,30 +1214,33 @@
                             <button class="btn btn-small text-error" onClick=${() => deleteRule(rule.id)}>Delete</button>
                           </div>
                         </div>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 4px;">
                           <div>
-                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; letter-spacing: 0.5px;">Priority</div>
+                            <div class="summary-label">Priority</div>
                             <div style="color: var(--text-primary); font-size: 14px;">${rule.priority}</div>
                           </div>
                           <div>
-                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; letter-spacing: 0.5px;">Action</div>
-                            <span style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; ${
-                              rule.action === 'noop' ? 'background: rgba(139, 92, 246, 0.2); color: #c4b5fd;' :
-                              rule.action === 'delete' ? 'background: rgba(239, 68, 68, 0.2); color: #fca5a5;' :
-                              'background: rgba(16, 185, 129, 0.2); color: #6ee7b7;'
-                            }">${rule.action}</span>
+                            <div class="summary-label">Action</div>
+                            <span class="badge badge-${rule.action}">${rule.action}</span>
                           </div>
                         </div>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                        <div class="summary-grid">
                           <div>
-                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; letter-spacing: 0.5px;">Match JSON</div>
-                            <pre style="background: rgba(0, 0, 0, 0.3); padding: 12px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 12px; color: var(--text-primary); margin: 0; border: 1px solid rgba(139, 92, 246, 0.2);">${prettyMatch}</pre>
+                            <div class="summary-label">Match</div>
+                            <${MatchSummary} obj=${matchObj} />
                           </div>
                           <div>
-                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; letter-spacing: 0.5px;">Params JSON</div>
-                            <pre style="background: rgba(0, 0, 0, 0.3); padding: 12px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 12px; color: var(--text-primary); margin: 0; border: 1px solid rgba(139, 92, 246, 0.2);">${prettyParams}</pre>
+                            <div class="summary-label">Parameters</div>
+                            <${ParamsSummary} obj=${paramsObj} action=${rule.action} />
                           </div>
                         </div>
+                        <details class="json-details">
+                          <summary>View JSON</summary>
+                          <div class="summary-grid" style="margin-top:0;">
+                            <pre class="json-block">${pretty(matchObj)}</pre>
+                            <pre class="json-block">${pretty(paramsObj)}</pre>
+                          </div>
+                        </details>
                       </div>
                     `}
                   </div>
@@ -424,11 +1263,9 @@
           alert("Please enter ESAM XML to test.");
           return;
         }
-        
         setTesting(true);
         setResult(null);
         setErr(null);
-        
         try {
           const data = await API.post(`/channels/${channel.id}/test`, {
             esam_request_xml: inputXml
@@ -467,7 +1304,7 @@
                 <div class="card-title">Test Result</div>
               </div>
               <div style="font-family: monospace; font-size: 13px; color: var(--text-secondary);">
-                ${result.matched_rule_id ? `Matched Rule ID: ${result.matched_rule_id}` : 'No rules matched'} 
+                ${result.matched_rule_id ? `Matched Rule ID: ${result.matched_rule_id}` : 'No rules matched'}
                 — ${result.note}
               </div>
             </div>
@@ -475,10 +1312,10 @@
         </div>
       `;
     }
-    
+
     function App() {
       const [sel, setSel] = hooks.useState(null);
-      
+
       return html`
         <div class="min-h-screen">
           <div class="grid grid-cols-12">
@@ -497,7 +1334,7 @@
         </div>
       `;
     }
-    
+
     render(html`<${App} />`, document.body);
   </script>
   <script src="/static/app.js"></script>

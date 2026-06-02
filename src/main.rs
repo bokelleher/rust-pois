@@ -54,7 +54,7 @@ use crate::event_logging::{
 };
 
 // bring model types into scope
-use crate::esam::{build_notification, extract_facts};
+use crate::esam::{build_notification, esam_verb, extract_facts};
 use crate::models::{
     Channel, DryRunRequest, DryRunResult, ReorderRules, Rule, UpsertChannel, UpsertRule,
 };
@@ -571,28 +571,31 @@ async fn handle_esam_impl(
     }
 
     if let Some(r) = matched_rule {
-        let params: serde_json::Value = serde_json::from_str(&r.params_json).unwrap_or_default();
-        let mut final_params = maybe_build_scte35(params);
+        let rule_params: serde_json::Value = serde_json::from_str(&r.params_json).unwrap_or_default();
+        let orig_b64 = facts.get("scte35_b64").and_then(|v| v.as_str());
 
-        // For noop, pass through the original SCTE-35 payload from the request
-        if r.action.eq_ignore_ascii_case("noop") {
-            if let Some(b64) = facts.get("scte35_b64").and_then(|v| v.as_str()) {
-                final_params["scte35_b64"] = serde_json::json!(b64);
-            }
+        // Condition the outbound SCTE-35 for the friendly action (build / passthrough
+        // / in-place edit of the incoming cue). The standard ESAM verb is derived in
+        // build_notification; the authored params ride the <pois:Decision> element.
+        let final_params = apply_action(&r.action, rule_params.clone(), orig_b64);
+
+        if esam_verb(&r.action) == "replace" && final_params.get("scte35_b64").is_none() {
+            tracing::warn!(
+                "handle_esam: replace-class action '{}' on channel '{}' rule '{}' produced no scte35_b64 — BinaryData will be absent (no incoming cue to condition, or unparseable)",
+                r.action, channel_name, r.name
+            );
         }
 
-        // Issue 5: warn when replace has no payload configured
-        if r.action.eq_ignore_ascii_case("replace") && final_params.get("scte35_b64").is_none() {
-            tracing::warn!(
-                "handle_esam: replace action on channel '{}' rule '{}' has no scte35_b64 — BinaryData will be absent from response",
-                channel_name, r.name
-            );
+        // Decision metadata = authored params minus the (possibly large) raw payload.
+        let mut decision = rule_params.clone();
+        if let Some(obj) = decision.as_object_mut() {
+            obj.remove("scte35_b64");
         }
 
         let acq_id = facts.get("acquisitionSignalID").and_then(|v| v.as_str()).unwrap_or("");
         let utc_point = facts.get("utcPoint").and_then(|v| v.as_str()).unwrap_or("");
         let acq_point = facts.get("acquisitionPointIdentity").and_then(|v| v.as_str()).unwrap_or("");
-        let resp_xml = build_notification(acq_id, utc_point, acq_point, &r.action, &final_params);
+        let resp_xml = build_notification(acq_id, utc_point, acq_point, &r.action, &final_params, Some(&decision));
 
         let duration = start.elapsed();
         let _ = st
@@ -628,7 +631,7 @@ async fn handle_esam_impl(
             Some(b64) => serde_json::json!({ "scte35_b64": b64 }),
             None => serde_json::json!({}),
         };
-        let resp_xml = build_notification(acq_id, utc_point, acq_point, "noop", &noop_params);
+        let resp_xml = build_notification(acq_id, utc_point, acq_point, "noop", &noop_params, None);
         
         let _ = st
             .event_logger
@@ -1092,17 +1095,126 @@ async fn dryrun(
 
 // ---------- Builder endpoint & helper ----------
 
+/// Parse a hex byte like "0x34" / "34" into a u8.
+fn parse_hex_u8(s: &str) -> Option<u8> {
+    let s = s.trim().trim_start_matches("0x").trim_start_matches("0X");
+    u8::from_str_radix(s, 16).ok()
+}
+
+/// Set `scte35_b64` on params from an in-place edit, falling back to the original
+/// incoming payload when the edit couldn't be applied (e.g. no segmentation
+/// descriptor / unparseable) so a conditioning action never drops the signal.
+fn set_payload(p: &mut serde_json::Value, edited: Option<String>, orig_b64: Option<&str>) {
+    match edited {
+        Some(b) => p["scte35_b64"] = serde_json::json!(b),
+        None => {
+            if let Some(o) = orig_b64 {
+                p["scte35_b64"] = serde_json::json!(o);
+            }
+        }
+    }
+}
+
+/// Resolve a matched rule's friendly action into conditioned params carrying the
+/// outbound `scte35_b64`. `build`/`replace` produce a fresh or rewritten cue;
+/// blackout/regionalize/shorten/extend/fill edit the *incoming* cue in place;
+/// noop/tracking-only/slate pass the original through; delete emits no payload.
+fn apply_action(
+    action: &str,
+    params: serde_json::Value,
+    orig_b64: Option<&str>,
+) -> serde_json::Value {
+    let mut p = maybe_build_scte35(params);
+    match action.to_ascii_lowercase().as_str() {
+        "noop" | "tracking-only" | "slate" => {
+            if let Some(o) = orig_b64 {
+                p["scte35_b64"] = serde_json::json!(o);
+            }
+        }
+        "replace" => {
+            // Back-compat: a replace rule may carry an in-place UPID rewrite.
+            if let Some(rw) = p.get("rewrite_upid").cloned() {
+                let nt = rw.get("upid_type").and_then(|v| v.as_str()).and_then(parse_hex_u8);
+                let nv = rw.get("upid").and_then(|v| v.as_str()).unwrap_or("");
+                let edited = orig_b64.and_then(|o| tools_api::rewrite_upid_b64(o, nt, nv));
+                set_payload(&mut p, edited, orig_b64);
+            }
+            // else: built/literal payload already set by maybe_build_scte35 / params.
+        }
+        "regionalize" => {
+            let nt = p.get("upid_type").and_then(|v| v.as_str()).and_then(parse_hex_u8);
+            let nv = p.get("upid").and_then(|v| v.as_str()).unwrap_or("");
+            let edited = orig_b64.and_then(|o| tools_api::rewrite_upid_b64(o, nt, nv));
+            set_payload(&mut p, edited, orig_b64);
+        }
+        "blackout" => {
+            let r = p.get("restrictions").cloned().unwrap_or_else(|| serde_json::json!({}));
+            let web = r.get("web_delivery_allowed").and_then(|v| v.as_bool()).unwrap_or(false);
+            let nrb = r.get("no_regional_blackout").and_then(|v| v.as_bool()).unwrap_or(false);
+            let arc = r.get("archive_allowed").and_then(|v| v.as_bool()).unwrap_or(true);
+            let dev = r.get("device_restrictions").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+            let edited = orig_b64.and_then(|o| tools_api::rewrite_delivery_flags_b64(o, web, nrb, arc, dev));
+            set_payload(&mut p, edited, orig_b64);
+        }
+        "shorten" | "extend" | "fill" => {
+            let secs = p
+                .get("to_duration_s")
+                .or_else(|| p.get("duration_s"))
+                .and_then(|v| v.as_f64());
+            let edited = match (secs, orig_b64) {
+                (Some(s), Some(o)) => tools_api::rewrite_break_duration_b64(o, (s * 90000.0) as u64),
+                _ => None,
+            };
+            set_payload(&mut p, edited, orig_b64);
+        }
+        "delete" => {}
+        _ => {
+            // Unknown action → safe pass-through (mirrors esam_verb's default).
+            if let Some(o) = orig_b64 {
+                p["scte35_b64"] = serde_json::json!(o);
+            }
+        }
+    }
+    p
+}
+
 fn maybe_build_scte35(mut params: serde_json::Value) -> serde_json::Value {
     if let Some(build) = params.get("build").cloned() {
         if let Some(cmd) = build.get("command").and_then(|v| v.as_str()) {
+            // Optional segmentation descriptor params. When any are present we
+            // route to the advanced builders so the replacement carries a custom
+            // segmentation type id / UPID; otherwise the basic builders run.
+            let seg_type = build
+                .get("segmentation_type_id")
+                .and_then(|v| v.as_str())
+                .and_then(parse_hex_u8);
+            let upid_type = build
+                .get("upid_type")
+                .and_then(|v| v.as_str())
+                .and_then(parse_hex_u8);
+            let upid_val = build.get("upid").and_then(|v| v.as_str());
+            let advanced = seg_type.is_some() || upid_type.is_some() || upid_val.is_some();
+
             let out = match cmd {
-                "time_signal_immediate" => scte35::build_time_signal_immediate_b64(),
+                "time_signal_immediate" | "time_signal" => {
+                    if advanced {
+                        scte35::build_time_signal_advanced_b64(seg_type, upid_type, upid_val)
+                    } else {
+                        scte35::build_time_signal_immediate_b64()
+                    }
+                }
                 "splice_insert_out" => {
                     let dur = build
                         .get("duration_s")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0) as u32;
-                    scte35::build_splice_insert_out_b64(dur)
+                    if advanced {
+                        scte35::build_splice_insert_out_advanced_b64(
+                            dur, seg_type, upid_type, upid_val,
+                        )
+                    } else {
+                        scte35::build_splice_insert_out_b64(dur)
+                    }
                 }
                 _ => String::new(),
             };
@@ -1309,4 +1421,101 @@ fn resp<T: serde::Serialize, E: std::fmt::Display>(r: Result<T, E>) -> Response 
 }
 fn err<E: std::fmt::Display>(e: E) -> Response {
     (StatusCode::BAD_REQUEST, e.to_string()).into_response()
+}
+
+#[cfg(test)]
+mod build_params_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn b64(params: serde_json::Value) -> String {
+        maybe_build_scte35(params)["scte35_b64"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    }
+
+    #[test]
+    fn basic_builds_unchanged() {
+        // No segmentation params -> basic builders, matching the demo rules.
+        assert_eq!(
+            b64(json!({"build":{"command":"splice_insert_out","duration_s":30}})),
+            scte35::build_splice_insert_out_b64(30)
+        );
+        assert_eq!(
+            b64(json!({"build":{"command":"time_signal_immediate"}})),
+            scte35::build_time_signal_immediate_b64()
+        );
+    }
+
+    #[test]
+    fn seg_upid_params_route_to_advanced_builder() {
+        // The router must parse the hex fields and forward them verbatim to the
+        // advanced builder (and the result must differ from the basic build).
+        let got = b64(json!({"build":{
+            "command":"splice_insert_out","duration_s":60,
+            "segmentation_type_id":"0x34","upid_type":"0x0C","upid":"ABCD1234"
+        }}));
+        assert_eq!(
+            got,
+            scte35::build_splice_insert_out_advanced_b64(60, Some(0x34), Some(0x0C), Some("ABCD1234"))
+        );
+        assert_ne!(got, scte35::build_splice_insert_out_b64(60));
+    }
+
+    #[test]
+    fn time_signal_alias_and_partial_params() {
+        // "time_signal" is accepted as an alias; a lone seg type still goes advanced.
+        assert_eq!(
+            b64(json!({"build":{"command":"time_signal","segmentation_type_id":"0x10"}})),
+            scte35::build_time_signal_advanced_b64(Some(0x10), None, None)
+        );
+    }
+
+    // ---- richer action set: verb mapping, dispatch, decision metadata ----
+
+    #[test]
+    fn esam_verb_maps_friendly_actions() {
+        assert_eq!(esam_verb("blackout"), "replace");
+        assert_eq!(esam_verb("shorten"), "replace");
+        assert_eq!(esam_verb("regionalize"), "replace");
+        assert_eq!(esam_verb("tracking-only"), "noop");
+        assert_eq!(esam_verb("slate"), "noop");
+        assert_eq!(esam_verb("delete"), "delete");
+        assert_eq!(esam_verb("totally-unknown"), "noop"); // safe default
+    }
+
+    #[test]
+    fn notification_uses_standard_verb_and_emits_decision() {
+        let params = json!({ "scte35_b64": "AAAA" });
+        let decision = json!({ "restrictions": { "no_regional_blackout": false } });
+        let xml = build_notification("sig", "2026-06-02T00:00:00Z", "ap", "blackout", &params, Some(&decision));
+        // Standard verb drives the wire; the friendly action only appears in <pois:Decision>.
+        assert!(xml.contains(r#"<ResponseSignal action="replace""#), "{xml}");
+        assert!(xml.contains(r#"<pois:Decision action="blackout">"#), "{xml}");
+        assert!(xml.contains("no_regional_blackout"), "{xml}");
+        assert!(xml.contains(r#"<sig:BinaryData signalType="SCTE35">AAAA</sig:BinaryData>"#));
+    }
+
+    #[test]
+    fn apply_action_blackout_conditions_incoming_cue() {
+        let orig = scte35::build_time_signal_advanced_b64(Some(0x34), Some(0x0C), Some("X"));
+        let params = json!({ "restrictions": { "web_delivery_allowed": false, "no_regional_blackout": false, "archive_allowed": true, "device_restrictions": 0 } });
+        let out = apply_action("blackout", params, Some(&orig));
+        assert_ne!(out["scte35_b64"].as_str().unwrap(), orig, "payload conditioned");
+    }
+
+    #[test]
+    fn apply_action_passthrough_actions_keep_original() {
+        for action in ["tracking-only", "slate", "noop", "totally-unknown"] {
+            let out = apply_action(action, json!({}), Some("ORIG"));
+            assert_eq!(out["scte35_b64"], json!("ORIG"), "action {action}");
+        }
+    }
+
+    #[test]
+    fn apply_action_delete_emits_no_payload() {
+        let out = apply_action("delete", json!({}), Some("ORIG"));
+        assert!(out.get("scte35_b64").is_none());
+    }
 }

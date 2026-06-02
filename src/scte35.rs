@@ -224,7 +224,7 @@ fn add_segmentation_descriptor(
 }
 
 /// NEW: Encode UPID value based on type
-fn encode_upid(upid_type: u8, value: &str) -> Vec<u8> {
+pub(crate) fn encode_upid(upid_type: u8, value: &str) -> Vec<u8> {
     match upid_type {
         0x01 | 0x02 | 0x03 | 0x0C => {
             // User Defined, ISCI, Ad-ID, MID - treat as ASCII
@@ -469,7 +469,7 @@ fn finalize_with_crc32(w: &mut BitWriter, section_length_pos: usize) -> Vec<u8> 
     w.bytes.clone()
 }
 
-fn compute_crc32(data: &[u8]) -> u32 {
+pub(crate) fn compute_crc32(data: &[u8]) -> u32 {
     let mut crc = 0xFFFFFFFF_u32;
     for &byte in data {
         crc ^= (byte as u32) << 24;
