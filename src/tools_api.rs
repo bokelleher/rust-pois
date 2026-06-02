@@ -451,10 +451,84 @@ pub async fn test_send(
 // INTERNAL DECODE LOGIC
 // ============================================================================
 
-fn decode_scte35_internal(b64: &str) -> Result<DecodedScte35, String> {
-    let bytes = B64
-        .decode(b64)
-        .map_err(|e| format!("Invalid Base64: {}", e))?;
+/// Convert a hex string (no separators) to bytes.
+fn hex_str_to_bytes(s: &str) -> Result<Vec<u8>, String> {
+    if s.len() % 2 != 0 {
+        return Err("Hex input has an odd number of digits".to_string());
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| "Invalid hex digit".to_string())
+        })
+        .collect()
+}
+
+/// Decode a SCTE-35 message supplied as base64, hex, or binary into raw bytes,
+/// matching the input flexibility of common parsers (e.g. tools.middleman.tv):
+///   - base64:  "/DAvAAAA..."        (the ESAM/wire form)
+///   - hex:     "FC302F...", "0xFC...", "fc 30 2f", "fc:30:2f"
+///   - binary:  "0b11111100...", or a whitespace-grouped run of 0/1
+/// Whitespace and ':' separators are ignored. When the form is ambiguous (hex
+/// digits are also valid base64), the interpretation whose first byte is the
+/// SCTE-35 table_id (0xFC) is preferred.
+fn scte35_input_to_bytes(raw: &str) -> Result<Vec<u8>, String> {
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != ':')
+        .collect();
+    if cleaned.is_empty() {
+        return Err("Empty input".to_string());
+    }
+
+    // Binary: explicit "0b...", or an implicit run of 0/1 that begins with the
+    // SCTE-35 table_id (11111100) and is a whole number of bytes.
+    let bin = cleaned
+        .strip_prefix("0b")
+        .or_else(|| cleaned.strip_prefix("0B"))
+        .unwrap_or(&cleaned);
+    let explicit_bin = cleaned.starts_with("0b") || cleaned.starts_with("0B");
+    if (explicit_bin || (bin.len() >= 16 && bin.starts_with("11111100")))
+        && bin.len() % 8 == 0
+        && bin.bytes().all(|b| b == b'0' || b == b'1')
+    {
+        return Ok(bin
+            .as_bytes()
+            .chunks(8)
+            .map(|c| c.iter().fold(0u8, |acc, &d| (acc << 1) | (d - b'0')))
+            .collect());
+    }
+
+    // Explicit hex: "0x...".
+    if let Some(h) = cleaned.strip_prefix("0x").or_else(|| cleaned.strip_prefix("0X")) {
+        return hex_str_to_bytes(h);
+    }
+
+    // Ambiguous: try both base64 and hex, prefer a 0xFC-leading result.
+    let as_b64 = B64.decode(cleaned.as_bytes()).ok().filter(|b| !b.is_empty());
+    let as_hex = if cleaned.len() % 2 == 0 && cleaned.bytes().all(|b| b.is_ascii_hexdigit()) {
+        hex_str_to_bytes(&cleaned).ok().filter(|b| !b.is_empty())
+    } else {
+        None
+    };
+    match (as_b64, as_hex) {
+        (Some(b), Some(h)) => {
+            if b.first() == Some(&0xFC) {
+                Ok(b)
+            } else if h.first() == Some(&0xFC) {
+                Ok(h)
+            } else {
+                Ok(b)
+            }
+        }
+        (Some(b), None) => Ok(b),
+        (None, Some(h)) => Ok(h),
+        (None, None) => Err("Input is not valid base64, hex, or binary".to_string()),
+    }
+}
+
+fn decode_scte35_internal(input: &str) -> Result<DecodedScte35, String> {
+    let bytes = scte35_input_to_bytes(input)?;
 
     if bytes.is_empty() {
         return Err("Empty data".to_string());
@@ -906,10 +980,8 @@ fn format_segmentation_type(type_id: u8) -> &'static str {
     }
 }
 
-fn validate_scte35_internal(b64: &str) -> Result<String, String> {
-    let bytes = B64
-        .decode(b64)
-        .map_err(|e| format!("Invalid Base64: {}", e))?;
+fn validate_scte35_internal(input: &str) -> Result<String, String> {
+    let bytes = scte35_input_to_bytes(input)?;
 
     if bytes.is_empty() {
         return Err("Empty data".to_string());
@@ -1054,4 +1126,40 @@ fn calculate_crc32(data: &[u8]) -> u32 {
         }
     }
     crc
+}
+#[cfg(test)]
+mod input_format_tests {
+    use super::*;
+
+    // A real splice_insert sample (first byte 0xFC).
+    const SAMPLE: &str = "/DAlAAAAAAAAAP/wFAUAAAABf+/+ANSrgP4AKTLgAAEBAQAArQrwxg==";
+
+    #[test]
+    fn accepts_base64_hex_binary_equivalently() {
+        let bytes = scte35_input_to_bytes(SAMPLE).unwrap();
+        assert_eq!(bytes[0], 0xFC);
+
+        let hex_lower: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+        let hex_spaced: String = bytes.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+        let bin: String = bytes.iter().map(|b| format!("{:08b}", b)).collect();
+
+        assert_eq!(scte35_input_to_bytes(&hex_lower).unwrap(), bytes, "plain hex");
+        assert_eq!(scte35_input_to_bytes(&format!("0x{hex_lower}")).unwrap(), bytes, "0x hex");
+        assert_eq!(scte35_input_to_bytes(&hex_spaced).unwrap(), bytes, "spaced hex");
+        assert_eq!(scte35_input_to_bytes(&bin).unwrap(), bytes, "binary");
+        assert_eq!(scte35_input_to_bytes(&format!("0b{bin}")).unwrap(), bytes, "0b binary");
+    }
+
+    #[test]
+    fn full_decode_from_hex_matches_base64() {
+        let from_b64 = decode_scte35_internal(SAMPLE).unwrap();
+        let hex: String = B64.decode(SAMPLE).unwrap().iter().map(|b| format!("{:02X}", b)).collect();
+        let from_hex = decode_scte35_internal(&hex).unwrap();
+        assert_eq!(from_b64.command_type, from_hex.command_type);
+    }
+
+    #[test]
+    fn rejects_garbage() {
+        assert!(scte35_input_to_bytes("not valid !!!").is_err());
+    }
 }

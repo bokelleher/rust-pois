@@ -125,12 +125,12 @@
       <div class="panel">
         <div class="card-header">
           <div class="card-title">SCTE-35 Decoder</div>
-          <div class="card-subtitle">Decode Base64 to human-readable format</div>
+          <div class="card-subtitle">Decode base64, hex, or binary to human-readable format</div>
         </div>
-        
+
         <div class="form-group" style="margin-bottom: 10px;">
-          <label for="decodeInput">SCTE-35 Base64</label>
-          <textarea id="decodeInput" rows="3" placeholder="Paste Base64 SCTE-35 string here..."></textarea>
+          <label for="decodeInput">SCTE-35 (base64, hex, or binary)</label>
+          <textarea id="decodeInput" rows="3" placeholder="Paste SCTE-35 as base64 (/DAv…), hex (FC302F… or 0xFC…), or binary (11111100…)"></textarea>
         </div>
         
         <button id="decodeBtn" class="btn-primary" style="margin-bottom: 24px;">Decode</button>
@@ -181,12 +181,12 @@
       <div class="panel">
         <div class="card-header">
           <div class="card-title">SCTE-35 Validator</div>
-          <div class="card-subtitle">Validate SCTE-35 Base64 structure and CRC</div>
+          <div class="card-subtitle">Validate SCTE-35 (base64, hex, or binary) structure and CRC</div>
         </div>
-        
+
         <div class="form-group" style="margin-bottom: 10px;">
-          <label for="validateInput">SCTE-35 Base64</label>
-          <textarea id="validateInput" rows="3" placeholder="Paste Base64 SCTE-35 string here..."></textarea>
+          <label for="validateInput">SCTE-35 (base64, hex, or binary)</label>
+          <textarea id="validateInput" rows="3" placeholder="Paste SCTE-35 as base64, hex, or binary…"></textarea>
         </div>
         
         <button id="validateBtn" class="btn-primary">Validate</button>
