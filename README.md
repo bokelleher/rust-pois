@@ -16,6 +16,7 @@ exchange with **measured sub-millisecond per-request overhead**
 
 - ESAM / SCTE-35 XML processing via REST endpoints
 - **SESAME (SCTE 130-9) security** — three additive, independently-enableable tiers, bidirectional (verifies inbound requests *and* signs outbound POIS responses), with no ESAM XML schema changes
+- SCTE-35 **tools** (build / decode / validate) — the decoder accepts **base64, hex, or binary** input
 - Front-end web UI served directly from `/static`
 - Channel and Rule management API with bearer authentication
 - Automatic SQLite migrations on first start
@@ -176,6 +177,15 @@ sudo ./uninstall.sh
 ```
 
 Removes the binary, systemd unit, and optional user/data directory.
+
+---
+
+## 🗺️ Roadmap
+
+Planned/proposed enhancements are tracked in [`ROADMAP.md`](ROADMAP.md) — including
+SMPTE‑timecode/frame‑rate rendering and SCTE‑104 conversion for the SCTE‑35 tools,
+human‑readable UPIDs in the Event Monitor, logging of SESAME rejections, and a
+distributed (Redis) replay cache for multi‑node SESAME.
 
 ---
 
