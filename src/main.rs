@@ -1,5 +1,5 @@
 // src/main.rs
-// Version: 3.6.1
+// Version: 3.7.0
 // Last Modified: 2026-03-12
 // Changes:
 //   - Issue 1: Channel routing now uses acquisitionPointIdentity from XML body as fallback
@@ -30,6 +30,7 @@ mod jwt_auth; // JWT authentication
 mod auth_handlers; // Auth API endpoints
 mod tools_api; // SCTE-35 Tools API
 mod sesame_axum; // SESAME (SCTE 130-9) Axum adapter
+mod template_library; // Template library + projects
 
 use axum::{
     body::{Body, Bytes},
@@ -208,6 +209,15 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/events/stats", get(get_event_stats))
         .route("/api/events/{id}", get(get_event_detail))
         .route("/api/backup/export/channel/{id}", post(backup::export_channel_only))
+        // Template library + projects
+        .route("/api/projects", get(template_library::list_projects).post(template_library::create_project))
+        .route("/api/projects/{id}", get(template_library::get_project).put(template_library::update_project).delete(template_library::delete_project))
+        .route("/api/projects/{id}/apply", post(template_library::apply_project))
+        .route("/api/templates", get(template_library::list_templates))
+        .route("/api/templates/{id}", get(template_library::get_template).put(template_library::update_template).delete(template_library::delete_template))
+        .route("/api/templates/from-rule/{rule_id}", post(template_library::save_rule_template))
+        .route("/api/templates/from-channel/{channel_id}", post(template_library::save_channel_template))
+        .route("/api/templates/{id}/apply", post(template_library::apply_template))
         .with_state(state.clone())
         .route_layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),

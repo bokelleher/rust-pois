@@ -1,0 +1,341 @@
+<!doctype html>
+<!--
+  projects.html - POIS Template Library + Projects
+  Version: 3.7.0
+  Last updated: 2026-06-04
+  Purpose: Browse/apply saved templates (rule + channel) and organize them into
+           projects (persistent, shareable multi-channel bundles). Templates are
+           created from channels.html ("Save as template" / "Add to project");
+           this page applies them to create fresh live channels/rules and manages
+           projects, sharing, and membership.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>POIS Projects</title>
+  <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    .flex-col { display:flex; flex-direction:column; }
+    .gap-2 { gap:8px; } .gap-3 { gap:12px; }
+    .proj-item { display:flex; align-items:center; justify-content:space-between; gap:8px;
+                 padding:10px 12px; border:1px solid var(--border); border-radius:8px;
+                 margin-bottom:8px; cursor:pointer; background:var(--field-bg); }
+    .proj-item.active { border-color:var(--primary); background:var(--field-bg-hover); }
+    .proj-item .pname { font-weight:600; font-size:13px; color:var(--text-primary); }
+    .tmpl-row { display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+                padding:14px; border:1px solid var(--border); border-radius:10px;
+                margin-bottom:12px; background:var(--field-bg); }
+    .tmpl-name { font-weight:600; font-size:14px; color:var(--text-primary); }
+    .tmpl-desc { font-size:12px; color:var(--text-secondary); margin-top:4px; line-height:1.45; }
+    .kind-badge { display:inline-block; border-radius:6px; padding:2px 8px; font-size:11px;
+                  font-weight:600; text-transform:uppercase; letter-spacing:.4px; }
+    .kind-channel { background:rgba(139,92,246,0.18); color:#c4b5fd; border:1px solid rgba(139,92,246,0.35); }
+    .kind-rule    { background:rgba(16,185,129,0.16); color:#6ee7b7; border:1px solid rgba(16,185,129,0.35); }
+    .shared-badge { background:rgba(59,130,246,0.16); color:#93c5fd; border:1px solid rgba(59,130,246,0.35); }
+    .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex;
+                      align-items:center; justify-content:center; z-index:1000; }
+    .modal-card { background:var(--bg-elevated, #1b1b27); border:1px solid var(--border);
+                  border-radius:12px; padding:22px; width:min(440px,92vw); }
+    .meta-line { font-size:11px; color:var(--text-secondary); margin-top:6px; }
+  </style>
+  <script type="module">
+    import { h, render } from "https://esm.sh/preact@10.24.3";
+    import htm from "https://esm.sh/htm@3.1.1";
+    import * as hooks from "https://esm.sh/preact@10.24.3/hooks";
+
+    const html = htm.bind(h);
+
+    const API = {
+      async get(p) { return req("GET", p) },
+      async post(p, b) { return req("POST", p, b) },
+      async put(p, b) { return req("PUT", p, b) },
+      async del(p) { return req("DELETE", p) }
+    };
+    async function req(method, path, body) {
+      const token = localStorage.getItem("pois_token") || "";
+      const res = await fetch(`/api${path}`, {
+        method,
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.status === 204 ? null : res.json();
+    }
+
+    const me = () => { try { return JSON.parse(localStorage.getItem("pois_user") || "{}"); } catch { return {}; } };
+
+    function KindBadge({ kind }) {
+      return html`<span class="kind-badge ${kind === 'channel' ? 'kind-channel' : 'kind-rule'}">${kind}</span>`;
+    }
+
+    // Summarize a template body for display (counts rules for channel kind).
+    function bodySummary(t) {
+      let b;
+      try { b = JSON.parse(t.body_json); } catch { return ""; }
+      if (t.kind === "channel") {
+        const n = (b.rules || []).length;
+        const tz = b.channel?.timezone || "UTC";
+        return `Channel "${b.channel?.name ?? "?"}" · ${n} rule${n === 1 ? "" : "s"} · ${tz}`;
+      }
+      if (t.kind === "rule") {
+        return `Action: ${b.action ?? "?"}`;
+      }
+      return "";
+    }
+
+    // ---- Channel picker modal (for applying a rule template) ----
+    function ApplyRuleModal({ onClose, onApply }) {
+      const [channels, setChannels] = hooks.useState(null);
+      const [sel, setSel] = hooks.useState("");
+      const [err, setErr] = hooks.useState(null);
+      hooks.useEffect(() => {
+        (async () => {
+          try { const c = await API.get("/channels"); setChannels(c); if (c[0]) setSel(String(c[0].id)); }
+          catch (e) { setErr(String(e)); }
+        })();
+      }, []);
+      return html`<div class="modal-backdrop" onClick=${onClose}>
+        <div class="modal-card" onClick=${e => e.stopPropagation()}>
+          <div style="font-weight:600; font-size:15px; margin-bottom:12px;">Apply rule into a channel</div>
+          ${err && html`<div class="text-error" style="margin-bottom:8px;">${err}</div>`}
+          ${channels == null ? html`<div class="text-muted">Loading channels…</div>`
+            : channels.length === 0 ? html`<div class="text-muted">No channels available. Create one first.</div>`
+            : html`<div class="form-group">
+                <label>Target channel</label>
+                <select value=${sel} onChange=${e => setSel(e.target.value)}>
+                  ${channels.map(c => html`<option value=${String(c.id)}>${c.name}</option>`)}
+                </select>
+                <div class="meta-line">The rule is appended at the end (lowest priority) of the chosen channel.</div>
+              </div>`}
+          <div class="flex gap-2 justify-end" style="margin-top:16px;">
+            <button class="btn" onClick=${onClose}>Cancel</button>
+            <button class="btn btn-primary" disabled=${!sel} onClick=${() => onApply(Number(sel))}>Apply</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    // ---- Project picker modal (for moving a template) ----
+    function MoveModal({ projects, current, onClose, onMove }) {
+      const [sel, setSel] = hooks.useState(current == null ? "" : String(current));
+      return html`<div class="modal-backdrop" onClick=${onClose}>
+        <div class="modal-card" onClick=${e => e.stopPropagation()}>
+          <div style="font-weight:600; font-size:15px; margin-bottom:12px;">Move template</div>
+          <div class="form-group">
+            <label>Project</label>
+            <select value=${sel} onChange=${e => setSel(e.target.value)}>
+              <option value="">Library (no project)</option>
+              ${projects.map(p => html`<option value=${String(p.id)}>${p.name}</option>`)}
+            </select>
+          </div>
+          <div class="flex gap-2 justify-end" style="margin-top:16px;">
+            <button class="btn" onClick=${onClose}>Cancel</button>
+            <button class="btn btn-primary" onClick=${() => onMove(sel === "" ? null : Number(sel))}>Move</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    function TemplateRow({ t, projects, isOwner, onChanged }) {
+      const [applyRule, setApplyRule] = hooks.useState(false);
+      const [moving, setMoving] = hooks.useState(false);
+      const [busy, setBusy] = hooks.useState(false);
+
+      const applyChannel = async () => {
+        const name = prompt("New channel name (blank = use template name; a unique suffix is added if it collides):", "") ;
+        if (name === null) return;
+        setBusy(true);
+        try {
+          const r = await API.post(`/templates/${t.id}/apply`, name.trim() ? { name: name.trim() } : {});
+          alert(`Created channel "${r.channel_name}" with ${r.rules_created} rule(s).`);
+        } catch (e) { alert(`Apply failed: ${e.message}`); }
+        finally { setBusy(false); }
+      };
+      const applyRuleInto = async (channelId) => {
+        setApplyRule(false); setBusy(true);
+        try {
+          const r = await API.post(`/templates/${t.id}/apply`, { target_channel_id: channelId });
+          alert(`Rule "${r.name}" added (priority ${r.priority}).`);
+        } catch (e) { alert(`Apply failed: ${e.message}`); }
+        finally { setBusy(false); }
+      };
+      const move = async (projectId) => {
+        setMoving(false); setBusy(true);
+        try { await API.put(`/templates/${t.id}`, { project_id: projectId }); onChanged(); }
+        catch (e) { alert(`Move failed: ${e.message}`); setBusy(false); }
+      };
+      const toggleShare = async () => {
+        setBusy(true);
+        try { await API.put(`/templates/${t.id}`, { is_shared: !t.is_shared }); onChanged(); }
+        catch (e) { alert(`Failed: ${e.message}`); setBusy(false); }
+      };
+      const del = async () => {
+        if (!confirm(`Delete template "${t.name}"?`)) return;
+        setBusy(true);
+        try { await API.del(`/templates/${t.id}`); onChanged(); }
+        catch (e) { alert(`Delete failed: ${e.message}`); setBusy(false); }
+      };
+
+      return html`<div class="tmpl-row">
+        <div class="flex-col" style="min-width:0;">
+          <div class="flex items-center gap-2">
+            <span class="tmpl-name">${t.name}</span>
+            <${KindBadge} kind=${t.kind} />
+            ${t.is_shared ? html`<span class="kind-badge shared-badge">shared</span>` : ""}
+          </div>
+          <div class="tmpl-desc">${t.description || bodySummary(t)}</div>
+        </div>
+        <div class="flex gap-2" style="flex-shrink:0; flex-wrap:wrap; justify-content:flex-end;">
+          ${t.kind === "channel"
+            ? html`<button class="btn btn-primary btn-small" disabled=${busy} onClick=${applyChannel}>Apply</button>`
+            : html`<button class="btn btn-primary btn-small" disabled=${busy} onClick=${() => setApplyRule(true)}>Apply…</button>`}
+          ${isOwner && html`<button class="btn btn-small" disabled=${busy} onClick=${() => setMoving(true)}>Move</button>`}
+          ${isOwner && html`<button class="btn btn-small" disabled=${busy} onClick=${toggleShare}>${t.is_shared ? "Unshare" : "Share"}</button>`}
+          ${isOwner && html`<button class="btn btn-small text-error" disabled=${busy} onClick=${del}>Delete</button>`}
+        </div>
+        ${applyRule && html`<${ApplyRuleModal} onClose=${() => setApplyRule(false)} onApply=${applyRuleInto} />`}
+        ${moving && html`<${MoveModal} projects=${projects} current=${t.project_id} onClose=${() => setMoving(false)} onMove=${move} />`}
+      </div>`;
+    }
+
+    function App() {
+      const user = me();
+      const isAdmin = user.role === "admin";
+      const myId = user.id;
+      const [projects, setProjects] = hooks.useState(null);
+      const [sel, setSel] = hooks.useState({ type: "library" }); // {type:'library'} | {type:'project', id}
+      const [templates, setTemplates] = hooks.useState(null);
+      const [err, setErr] = hooks.useState(null);
+      const [tick, setTick] = hooks.useState(0);
+      const refresh = () => setTick(t => t + 1);
+
+      const loadProjects = hooks.useCallback(async () => {
+        try { setProjects(await API.get("/projects")); }
+        catch (e) { setErr(String(e)); }
+      }, []);
+      hooks.useEffect(() => { loadProjects(); }, [loadProjects, tick]);
+
+      hooks.useEffect(() => {
+        (async () => {
+          setTemplates(null);
+          try {
+            if (sel.type === "library") setTemplates(await API.get("/templates?unfiled=true"));
+            else {
+              const p = await API.get(`/projects/${sel.id}`);
+              setTemplates(p.templates);
+            }
+          } catch (e) { setErr(String(e)); }
+        })();
+      }, [sel, tick]);
+
+      const ownerOf = (row) => isAdmin || row.owner_user_id == null || row.owner_user_id === myId;
+
+      const addProject = async () => {
+        const name = prompt("Project name?"); if (!name) return;
+        try { const p = await API.post("/projects", { name }); refresh(); setSel({ type: "project", id: p.id }); }
+        catch (e) { alert(`Failed: ${e.message}`); }
+      };
+      const renameProject = async (p) => {
+        const name = prompt("Rename project:", p.name); if (!name || name === p.name) return;
+        try { await API.put(`/projects/${p.id}`, { name }); refresh(); } catch (e) { alert(e.message); }
+      };
+      const shareProject = async (p) => {
+        try { await API.put(`/projects/${p.id}`, { is_shared: !p.is_shared }); refresh(); } catch (e) { alert(e.message); }
+      };
+      const deleteProject = async (p) => {
+        if (!confirm(`Delete project "${p.name}"? Its templates are kept and moved to the Library.`)) return;
+        try { await API.del(`/projects/${p.id}`); if (sel.type === "project" && sel.id === p.id) setSel({ type: "library" }); refresh(); }
+        catch (e) { alert(e.message); }
+      };
+      const applyProject = async (p) => {
+        if (!confirm(`Apply project "${p.name}"? This creates a fresh copy of every channel (with its rules) owned by you.`)) return;
+        try {
+          const r = await API.post(`/projects/${p.id}/apply`, {});
+          const names = r.created.map(c => `• ${c.channel_name} (${c.rules_created} rules)`).join("\n");
+          alert(`Created ${r.channels_created} channel(s):\n${names}${r.errors.length ? `\n\nErrors:\n${r.errors.join("\n")}` : ""}`);
+        } catch (e) { alert(`Apply failed: ${e.message}`); }
+      };
+
+      if (err) return html`<div class="p-4 text-error">${err}</div>`;
+
+      const selProject = sel.type === "project" && projects ? projects.find(p => p.id === sel.id) : null;
+
+      return html`<div class="min-h-screen">
+        <div class="grid grid-cols-12">
+          <div class="col-span-3 border-r admin-sidebar">
+            <div class="p-4">
+              <div class="font-semibold text-sm text-muted" style="text-transform:uppercase; letter-spacing:.5px; margin-bottom:10px;">Library</div>
+              <div class="proj-item ${sel.type === 'library' ? 'active' : ''}" onClick=${() => setSel({ type: "library" })}>
+                <span class="pname">Unfiled templates</span>
+              </div>
+
+              <div class="flex items-center justify-between" style="margin:18px 0 10px;">
+                <div class="font-semibold text-sm text-muted" style="text-transform:uppercase; letter-spacing:.5px;">Projects</div>
+                <button class="btn btn-primary btn-small" onClick=${addProject}>+ Add</button>
+              </div>
+              ${projects == null ? html`<div class="text-muted">Loading…</div>`
+                : projects.length === 0 ? html`<div class="text-muted text-xs">No projects yet.</div>`
+                : projects.map(p => html`
+                  <div class="proj-item ${sel.type === 'project' && sel.id === p.id ? 'active' : ''}"
+                       onClick=${() => setSel({ type: "project", id: p.id })} key=${p.id}>
+                    <span class="pname">${p.name}</span>
+                    ${p.is_shared ? html`<span class="kind-badge shared-badge">shared</span>` : ""}
+                  </div>`)}
+            </div>
+          </div>
+
+          <div class="col-span-9">
+            <div class="p-4">
+              ${sel.type === "library" ? html`
+                <div class="flex items-center justify-between mb-4">
+                  <div>
+                    <div style="font-weight:600; font-size:16px;">Unfiled templates</div>
+                    <div class="text-xs text-muted">Saved rules and channels not assigned to a project. Create templates from Channels &amp; Rules.</div>
+                  </div>
+                </div>
+              ` : selProject ? html`
+                <div class="flex items-center justify-between mb-4">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <div style="font-weight:600; font-size:16px;">${selProject.name}</div>
+                      ${selProject.is_shared ? html`<span class="kind-badge shared-badge">shared</span>` : ""}
+                    </div>
+                    <div class="text-xs text-muted">${selProject.description || "Channel templates in this project. Apply the project to recreate them all."}</div>
+                  </div>
+                  <div class="flex gap-2" style="flex-wrap:wrap; justify-content:flex-end;">
+                    <button class="btn btn-primary btn-small" onClick=${() => applyProject(selProject)}>Apply project</button>
+                    ${ownerOf(selProject) && html`<button class="btn btn-small" onClick=${() => shareProject(selProject)}>${selProject.is_shared ? "Unshare" : "Share"}</button>`}
+                    ${ownerOf(selProject) && html`<button class="btn btn-small" onClick=${() => renameProject(selProject)}>Rename</button>`}
+                    ${ownerOf(selProject) && html`<button class="btn btn-small text-error" onClick=${() => deleteProject(selProject)}>Delete</button>`}
+                  </div>
+                </div>
+              ` : html`<div class="text-muted">Loading…</div>`}
+
+              ${templates == null ? html`<div class="text-muted">Loading templates…</div>`
+                : templates.length === 0 ? html`
+                  <div class="empty-state" style="padding:40px 20px; text-align:center;">
+                    <div class="empty-state-text">
+                      ${sel.type === "library"
+                        ? "No unfiled templates. Use “Save as template” on a rule or channel."
+                        : "This project has no channels yet. Use “Add to project” on a channel in Channels & Rules."}
+                    </div>
+                  </div>`
+                : html`<div>${templates.map(t => html`
+                    <${TemplateRow} key=${t.id} t=${t} projects=${projects || []}
+                      isOwner=${ownerOf(t)} onChanged=${refresh} />`)}</div>`}
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    render(html`<${App} />`, document.body);
+  </script>
+  <script src="/static/app.js"></script>
+</head>
+<body>
+  <script src="/static/header.js"></script>
+</body>
+</html>

@@ -1,9 +1,12 @@
 <!doctype html>
 <!--
   channels.html - POIS Admin Panel (formerly admin.html)
-  Version: 3.6.0
-  Last updated: 2026-06-02
-  Changes: Replaced raw MATCH/PARAMS JSON textareas with a visual rules builder
+  Version: 3.7.0
+  Last updated: 2026-06-04
+  Changes: Added "Save as template" on each rule and "Save as template / Add to
+           project" on each channel, feeding the new Projects template library
+           (src/template_library.rs, static/projects.html).
+           (3.6.0) Replaced raw MATCH/PARAMS JSON textareas with a visual rules builder
            (Visual | JSON toggle per pane, AWS-IAM-style), a pre-built rule
            template gallery, and human-readable rule summaries; added the richer
            action set (blackout/regionalize/shorten/extend/fill/slate/
@@ -60,6 +63,12 @@
 
     .flex-col { display:flex; flex-direction:column; }
     .gap-2 { gap:8px; } .gap-3 { gap:12px; }
+
+    /* ---- Save-as-template modal ---- */
+    .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex;
+                      align-items:center; justify-content:center; z-index:1000; }
+    .modal-card { background:var(--bg-elevated, #1b1b27); border:1px solid var(--border);
+                  border-radius:12px; padding:22px; width:min(440px,92vw); }
   </style>
   <script type="module">
     import { h, render } from "https://esm.sh/preact@10.24.3";
@@ -889,6 +898,80 @@
       </div>`;
     }
 
+    // ---- Save-as-template / Add-to-project modal ----
+    // Used for both a single rule (POST /templates/from-rule/{id}) and a whole
+    // channel incl. its rules (POST /templates/from-channel/{id}). The project
+    // picker (with inline "new project") doubles as "Add to project".
+    function SaveTemplateModal({ title, subtitle, defaultName, onClose, onSave }) {
+      const [name, setName] = hooks.useState(defaultName || "");
+      const [desc, setDesc] = hooks.useState("");
+      const [projects, setProjects] = hooks.useState(null);
+      const [projectId, setProjectId] = hooks.useState("");   // "" = Library (unfiled)
+      const [shared, setShared] = hooks.useState(false);
+      const [busy, setBusy] = hooks.useState(false);
+      const [err, setErr] = hooks.useState(null);
+
+      const loadProjects = async () => {
+        try { setProjects(await API.get("/projects")); } catch (e) { setErr(String(e)); }
+      };
+      hooks.useEffect(() => { loadProjects(); }, []);
+
+      const newProject = async () => {
+        const pn = prompt("New project name?"); if (!pn) return;
+        try { const p = await API.post("/projects", { name: pn }); await loadProjects(); setProjectId(String(p.id)); }
+        catch (e) { alert(`Failed to create project: ${e.message}`); }
+      };
+
+      const save = async () => {
+        if (!name.trim()) { alert("Template name is required."); return; }
+        setBusy(true);
+        try {
+          await onSave({
+            name: name.trim(),
+            description: desc.trim() || null,
+            project_id: projectId === "" ? null : Number(projectId),
+            is_shared: shared,
+          });
+        } catch (e) { alert(`Save failed: ${e.message}`); setBusy(false); return; }
+        setBusy(false);
+        onClose();
+      };
+
+      return html`<div class="modal-backdrop" onClick=${onClose}>
+        <div class="modal-card" onClick=${e => e.stopPropagation()}>
+          <div style="font-weight:600; font-size:15px;">${title}</div>
+          ${subtitle && html`<div class="text-xs text-muted" style="margin-bottom:12px;">${subtitle}</div>`}
+          ${err && html`<div class="text-error" style="margin-bottom:8px;">${err}</div>`}
+          <div class="form-group">
+            <label>Template name</label>
+            <input value=${name} onInput=${e => setName(e.target.value)} />
+          </div>
+          <div class="form-group">
+            <label>Description (optional)</label>
+            <input value=${desc} onInput=${e => setDesc(e.target.value)} placeholder="What is this for?" />
+          </div>
+          <div class="form-group">
+            <label>Project</label>
+            <div class="flex gap-2">
+              <select style="flex:1;" value=${projectId} onChange=${e => setProjectId(e.target.value)}>
+                <option value="">Library (no project)</option>
+                ${(projects || []).map(p => html`<option value=${String(p.id)}>${p.name}</option>`)}
+              </select>
+              <button class="btn btn-small" onClick=${newProject}>+ New</button>
+            </div>
+          </div>
+          <label class="flex items-center gap-2" style="margin-top:4px;">
+            <input type="checkbox" style="width:auto" checked=${shared} onChange=${e => setShared(e.target.checked)} />
+            Share with all users (they can apply it)
+          </label>
+          <div class="flex gap-2 justify-end" style="margin-top:16px;">
+            <button class="btn" onClick=${onClose} disabled=${busy}>Cancel</button>
+            <button class="btn btn-primary" onClick=${save} disabled=${busy}>${busy ? "Saving…" : "Save template"}</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
     function Rules({ channel }) {
       const [rules, setRules] = hooks.useState(null);
       const [err, setErr] = hooks.useState(null);
@@ -897,6 +980,19 @@
       const [saving, setSaving] = hooks.useState(false);
       const [showTemplates, setShowTemplates] = hooks.useState(false);
       const [adding, setAdding] = hooks.useState(false);
+      const [saveTarget, setSaveTarget] = hooks.useState(null); // null | {kind:'rule',rule} | {kind:'channel'}
+
+      // Persist a rule or the whole channel as a reusable template (optionally
+      // into a project). See src/template_library.rs.
+      const doSaveTemplate = async (body) => {
+        if (saveTarget?.kind === "rule") {
+          await API.post(`/templates/from-rule/${saveTarget.rule.id}`, body);
+          alert(`Saved rule template "${body.name}".`);
+        } else {
+          await API.post(`/templates/from-channel/${channel.id}`, body);
+          alert(`Saved channel template "${body.name}" (channel + its rules).`);
+        }
+      };
 
       const fetchRules = hooks.useCallback(async () => {
         try {
@@ -1119,9 +1215,22 @@
             <div class="font-semibold text-sm text-muted" style="text-transform: uppercase; letter-spacing: 0.5px;">
               Rules for ${channel.name}
             </div>
-            <button class="btn btn-primary btn-small"
-              onClick=${() => setShowTemplates(s => !s)}>+ Add Rule</button>
+            <div class="flex gap-2">
+              <button class="btn btn-small" title="Save this channel and its rules as a template / add it to a project"
+                onClick=${() => setSaveTarget({ kind: "channel" })}>Save as template / Add to project</button>
+              <button class="btn btn-primary btn-small"
+                onClick=${() => setShowTemplates(s => !s)}>+ Add Rule</button>
+            </div>
           </div>
+
+          ${saveTarget && html`<${SaveTemplateModal}
+            title=${saveTarget.kind === "rule" ? "Save rule as template" : "Save channel as template / Add to project"}
+            subtitle=${saveTarget.kind === "rule"
+              ? "Reuse this rule in any channel later."
+              : "Captures this channel and all its rules. Add it to a project to bundle multiple channels."}
+            defaultName=${saveTarget.kind === "rule" ? saveTarget.rule.name : channel.name}
+            onClose=${() => setSaveTarget(null)}
+            onSave=${doSaveTemplate} />`}
 
           ${showTemplates && html`<${TemplateGallery}
             onPick=${addFromTemplate} onBlank=${addBlank}
@@ -1214,6 +1323,8 @@
                               ${rule.enabled !== 0 ? 'Disable' : 'Enable'}
                             </button>
                             <button class="btn btn-small" onClick=${() => startEdit(rule)}>Edit</button>
+                            <button class="btn btn-small" title="Save this rule as a reusable template"
+                              onClick=${() => setSaveTarget({ kind: "rule", rule })}>Save as template</button>
                             <button class="btn btn-small text-error" onClick=${() => deleteRule(rule.id)}>Delete</button>
                           </div>
                         </div>
