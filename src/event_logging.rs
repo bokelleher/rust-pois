@@ -186,122 +186,50 @@ impl EventLogger {
         offset: i64,
         filters: Option<EventFilters>,
     ) -> Result<Vec<EsamEventView>, sqlx::Error> {
-        // Use separate queries for different filter combinations to avoid dynamic SQL
-        match filters {
-            Some(EventFilters { 
-                channel_name: Some(channel), 
-                action: Some(action), 
-                since: Some(since) 
-            }) => {
-                sqlx::query_as::<_, EsamEventView>(
-                    "SELECT * FROM esam_events_view WHERE channel_name = ? AND action = ? AND timestamp >= ? ORDER BY timestamp DESC LIMIT ? OFFSET ?"
-                )
-                .bind(channel)
-                .bind(action)
-                .bind(since)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(&self.db)
-                .await
+        // Build the query dynamically; every user value is bound (no injection).
+        let mut qb: sqlx::QueryBuilder<Sqlite> =
+            sqlx::QueryBuilder::new("SELECT * FROM esam_events_view WHERE 1=1");
+
+        if let Some(f) = filters {
+            if let Some(channel) = f.channel_name {
+                qb.push(" AND channel_name = ").push_bind(channel);
             }
-            Some(EventFilters { 
-                channel_name: Some(channel), 
-                action: None, 
-                since: Some(since) 
-            }) => {
-                sqlx::query_as::<_, EsamEventView>(
-                    "SELECT * FROM esam_events_view WHERE channel_name = ? AND timestamp >= ? ORDER BY timestamp DESC LIMIT ? OFFSET ?"
-                )
-                .bind(channel)
-                .bind(since)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(&self.db)
-                .await
+            if let Some(action) = f.action {
+                qb.push(" AND action = ").push_bind(action);
             }
-            Some(EventFilters { 
-                channel_name: Some(channel), 
-                action: Some(action), 
-                since: None 
-            }) => {
-                sqlx::query_as::<_, EsamEventView>(
-                    "SELECT * FROM esam_events_view WHERE channel_name = ? AND action = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?"
-                )
-                .bind(channel)
-                .bind(action)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(&self.db)
-                .await
+            if let Some(since) = f.since {
+                qb.push(" AND timestamp >= ").push_bind(since);
             }
-            Some(EventFilters { 
-                channel_name: Some(channel), 
-                action: None, 
-                since: None 
-            }) => {
-                sqlx::query_as::<_, EsamEventView>(
-                    "SELECT * FROM esam_events_view WHERE channel_name = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?"
-                )
-                .bind(channel)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(&self.db)
-                .await
-            }
-            Some(EventFilters { 
-                channel_name: None, 
-                action: Some(action), 
-                since: Some(since) 
-            }) => {
-                sqlx::query_as::<_, EsamEventView>(
-                    "SELECT * FROM esam_events_view WHERE action = ? AND timestamp >= ? ORDER BY timestamp DESC LIMIT ? OFFSET ?"
-                )
-                .bind(action)
-                .bind(since)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(&self.db)
-                .await
-            }
-            Some(EventFilters { 
-                channel_name: None, 
-                action: Some(action), 
-                since: None 
-            }) => {
-                sqlx::query_as::<_, EsamEventView>(
-                    "SELECT * FROM esam_events_view WHERE action = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?"
-                )
-                .bind(action)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(&self.db)
-                .await
-            }
-            Some(EventFilters { 
-                channel_name: None, 
-                action: None, 
-                since: Some(since) 
-            }) => {
-                sqlx::query_as::<_, EsamEventView>(
-                    "SELECT * FROM esam_events_view WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT ? OFFSET ?"
-                )
-                .bind(since)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(&self.db)
-                .await
-            }
-            _ => {
-                // No filters or all None
-                sqlx::query_as::<_, EsamEventView>(
-                    "SELECT * FROM esam_events_view ORDER BY timestamp DESC LIMIT ? OFFSET ?"
-                )
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(&self.db)
-                .await
+            if let Some(search) = f.search {
+                let term = search.trim();
+                if !term.is_empty() {
+                    let like = format!("%{}%", term);
+                    // The UPID column stores hex ("0xTT:HHHH…"). Also match the
+                    // ASCII→hex of the term so typing an ASCII UPID (e.g. ABCD1234)
+                    // matches an ASCII-type UPID stored as its hex bytes.
+                    let hex: String = term.bytes().map(|b| format!("{:02X}", b)).collect();
+                    let hex_like = format!("%{}%", hex);
+                    qb.push(" AND (acquisition_signal_id LIKE ")
+                        .push_bind(like.clone())
+                        .push(" OR source_ip LIKE ")
+                        .push_bind(like.clone())
+                        .push(" OR scte35_command LIKE ")
+                        .push_bind(like.clone())
+                        .push(" OR scte35_upid LIKE ")
+                        .push_bind(like)
+                        .push(" OR scte35_upid LIKE ")
+                        .push_bind(hex_like)
+                        .push(")");
+                }
             }
         }
+
+        qb.push(" ORDER BY timestamp DESC LIMIT ")
+            .push_bind(limit)
+            .push(" OFFSET ")
+            .push_bind(offset);
+
+        qb.build_query_as::<EsamEventView>().fetch_all(&self.db).await
     }
 
     pub async fn get_event_stats(&self) -> Result<EventStats, sqlx::Error> {
@@ -389,6 +317,9 @@ pub struct EventFilters {
     pub channel_name: Option<String>,
     pub action: Option<String>,
     pub since: Option<String>,
+    /// Free-text search across acquisition signal ID, source IP, SCTE-35 command,
+    /// and UPID (hex form, plus an ASCII→hex match so an ASCII UPID also matches).
+    pub search: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

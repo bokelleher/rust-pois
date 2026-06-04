@@ -1,5 +1,5 @@
 // src/main.rs
-// Version: 3.8.1
+// Version: 3.8.2
 // Last Modified: 2026-03-12
 // Changes:
 //   - Issue 1: Channel routing now uses acquisitionPointIdentity from XML body as fallback
@@ -1279,6 +1279,10 @@ async fn list_events(
         channel_name: channel_filter,
         action: params.get("action").cloned(),
         since: params.get("since").cloned(),
+        search: params
+            .get("search")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
     };
 
     match st.event_logger.get_recent_events(limit, offset, Some(filters)).await {

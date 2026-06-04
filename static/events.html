@@ -1,10 +1,11 @@
 <!doctype html>
 <!--
   events.html - Event Monitor
-  Version: 3.2.4
-  Last updated: 2025-11-24
-  Changes: Fixed LAST 24H field name (last_24h_events instead of events_last_24h)
-  Base: 3.2.3
+  Version: 3.8.2
+  Last updated: 2026-06-04
+  Changes: Search box now actually filters server-side (acquisition signal ID,
+           source IP, SCTE-35 command, and UPID — hex or ASCII). Updated placeholder.
+           (3.2.4) Fixed LAST 24H field name (last_24h_events instead of events_last_24h)
 -->
 <html lang="en">
 <head>
@@ -175,7 +176,7 @@
         </div>
         <div class="form-group">
           <label for="filterSearch">Search</label>
-          <input type="text" id="filterSearch" placeholder="Signal ID, IP...">
+          <input type="text" id="filterSearch" placeholder="Signal ID, IP, command, UPID (hex or ASCII)…">
         </div>
         <button class="btn btn-primary" id="applyFiltersBtn" style="margin-top: 24px;">Apply Filters</button>
         <button class="btn" id="clearFiltersBtn" style="margin-top: 24px;">Clear</button>
