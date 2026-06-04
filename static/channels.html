@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   channels.html - POIS Admin Panel (formerly admin.html)
-  Version: 3.8.3
+  Version: 3.8.4
   Last updated: 2026-06-04
   Changes: Added "Save as template" on each rule and "Save as template / Add to
            project" on each channel, feeding the new Projects template library
@@ -468,7 +468,7 @@
       },
       {
         name: "Extend ad-out by 30s",
-        desc: "On a splice_insert ad-out, lengthen the break by setting its duration to 30 seconds (edits the incoming cue).",
+        desc: "On a splice_insert ad-out, lengthen the break by adding 30 seconds to the incoming cue's duration.",
         match: { allOf: [{ "scte35.command": "splice_insert" }] },
         action: "extend",
         params: { duration_s: 30 },
@@ -690,10 +690,13 @@
         </div>`;
       }
       if (action === "shorten" || action === "extend") {
+        const isExtend = action === "extend";
         return html`<div class="flex-col gap-3">
-          <div class="builder-note">${action === "shorten" ? "Reduces" : "Lengthens"} the break by setting its duration on the incoming cue (break_duration / segmentation_duration). Emitted as a standard <code>replace</code>.</div>
+          <div class="builder-note">${isExtend
+            ? html`<strong>Adds</strong> this many seconds to the incoming break (break_duration / segmentation_duration).`
+            : "Reduces the break by setting its duration on the incoming cue (break_duration / segmentation_duration)."} Emitted as a standard <code>replace</code>.</div>
           <div class="form-group">
-            <label>New break duration (seconds)</label>
+            <label>${isExtend ? "Seconds to add" : "New break duration (seconds)"}</label>
             <input type="number" min="0" value=${model.duration_s ?? 30} onInput=${e => onChange({ ...model, duration_s: e.target.value })} />
           </div>
         </div>`;
@@ -839,7 +842,9 @@
         </div>`;
       }
       if (action === "shorten" || action === "extend") {
-        return html`<div class="chip">${action === "shorten" ? "Shorten" : "Extend"} → break duration ${pv.duration_s}s (verb replace)</div>`;
+        return html`<div class="chip">${action === "shorten"
+          ? `Shorten → break duration ${pv.duration_s}s`
+          : `Extend → break +${pv.duration_s}s`} (verb replace)</div>`;
       }
       if (action === "fill") {
         return html`<div class="chip">Fill → pad to ${pv.to_duration_s}s${pv.filler ? ` with ${pv.filler}` : ""} (verb replace)</div>`;

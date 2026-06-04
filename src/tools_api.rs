@@ -1265,6 +1265,69 @@ pub fn rewrite_break_duration_b64(input: &str, new_ticks: u64) -> Option<String>
     Some(B64.encode(bytes))
 }
 
+/// Additive variant of `rewrite_break_duration_b64`: ADD `delta_ticks` (90 kHz,
+/// may be negative) to the existing splice_insert `break_duration` and to any
+/// `segmentation_duration`, flooring the result at 0. Used by `extend` so the
+/// label "extend by Ns" lengthens the incoming break rather than overwriting it.
+/// Returns None when the signal carries no duration field to modify.
+pub fn adjust_break_duration_b64(input: &str, delta_ticks: i64) -> Option<String> {
+    let mut bytes = scte35_input_to_bytes(input).ok()?;
+    let mut changed = false;
+
+    // splice_insert break_duration (33-bit), preserving auto_return + reserved.
+    if let Some(bd) = locate_break_duration(&bytes) {
+        let cur = (((bytes[bd] & 0x01) as u64) << 32)
+            | ((bytes[bd + 1] as u64) << 24)
+            | ((bytes[bd + 2] as u64) << 16)
+            | ((bytes[bd + 3] as u64) << 8)
+            | (bytes[bd + 4] as u64);
+        let t = (cur as i64 + delta_ticks).max(0) as u64 & 0x1_FFFF_FFFF;
+        bytes[bd] = (bytes[bd] & 0xFE) | (((t >> 32) & 0x1) as u8);
+        bytes[bd + 1] = (t >> 24) as u8;
+        bytes[bd + 2] = (t >> 16) as u8;
+        bytes[bd + 3] = (t >> 8) as u8;
+        bytes[bd + 4] = t as u8;
+        changed = true;
+    }
+
+    // segmentation_duration (40-bit) in any segmentation descriptor.
+    if let Some((_dlw, loop_start, loop_end)) = locate_descriptor_loop(&bytes) {
+        let mut cursor = loop_start;
+        while cursor + 2 <= loop_end {
+            let len = bytes[cursor + 1] as usize;
+            let body_start = cursor + 2;
+            let body_end = body_start + len;
+            if body_end > loop_end {
+                break;
+            }
+            if bytes[cursor] == 0x02 {
+                if let Some(off) = seg_duration_offset(&bytes[body_start..body_end]) {
+                    let abs = body_start + off;
+                    let cur = ((bytes[abs] as u64) << 32)
+                        | ((bytes[abs + 1] as u64) << 24)
+                        | ((bytes[abs + 2] as u64) << 16)
+                        | ((bytes[abs + 3] as u64) << 8)
+                        | (bytes[abs + 4] as u64);
+                    let t = (cur as i64 + delta_ticks).max(0) as u64 & 0xFF_FFFF_FFFF;
+                    bytes[abs] = (t >> 32) as u8;
+                    bytes[abs + 1] = (t >> 24) as u8;
+                    bytes[abs + 2] = (t >> 16) as u8;
+                    bytes[abs + 3] = (t >> 8) as u8;
+                    bytes[abs + 4] = t as u8;
+                    changed = true;
+                }
+            }
+            cursor = body_end;
+        }
+    }
+
+    if !changed {
+        return None;
+    }
+    refresh_crc_in_place(&mut bytes);
+    Some(B64.encode(bytes))
+}
+
 /// Byte offset (from the start of `bytes`) of the splice_insert break_duration
 /// field, navigating the flag-dependent layout. None unless this is a
 /// splice_insert with `duration_flag` set. All preceding fields are whole bytes,
@@ -1581,6 +1644,34 @@ mod input_format_tests {
     fn rewrite_break_duration_none_without_duration_field() {
         let plain = crate::scte35::build_time_signal_immediate_b64();
         assert!(rewrite_break_duration_b64(&plain, 90000).is_none());
+    }
+
+    #[test]
+    fn adjust_break_duration_adds_delta() {
+        // extend "by 30s": a 30s avail becomes 60s (break + segmentation durations).
+        let orig = crate::scte35::build_splice_insert_out_b64(30);
+        let out = adjust_break_duration_b64(&orig, 30 * 90000).expect("adjust");
+        let after = decode_scte35_internal(&out).expect("re-decodes (valid CRC + lengths)");
+        let bd = after.command_info["break_duration"]["duration_seconds"].as_f64().unwrap();
+        assert!((bd - 60.0).abs() < 0.001, "break_duration={bd}");
+        let segdur = seg_descriptor(&after)["segmentation_duration_seconds"].as_f64().unwrap();
+        assert!((segdur - 60.0).abs() < 0.001, "seg_duration={segdur}");
+    }
+
+    #[test]
+    fn adjust_break_duration_floors_at_zero() {
+        // Subtracting more than the current duration floors at 0, never negative.
+        let orig = crate::scte35::build_splice_insert_out_b64(10);
+        let out = adjust_break_duration_b64(&orig, -30 * 90000).expect("adjust");
+        let after = decode_scte35_internal(&out).expect("re-decodes");
+        let bd = after.command_info["break_duration"]["duration_seconds"].as_f64().unwrap();
+        assert!(bd.abs() < 0.001, "break_duration={bd}");
+    }
+
+    #[test]
+    fn adjust_break_duration_none_without_duration_field() {
+        let plain = crate::scte35::build_time_signal_immediate_b64();
+        assert!(adjust_break_duration_b64(&plain, 90000).is_none());
     }
 
     // ---- delivery-flag rewrite (blackout/regionalize) ----

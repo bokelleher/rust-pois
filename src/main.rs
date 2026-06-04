@@ -1,5 +1,5 @@
 // src/main.rs
-// Version: 3.8.3
+// Version: 3.8.4
 // Last Modified: 2026-03-12
 // Changes:
 //   - Issue 1: Channel routing now uses acquisitionPointIdentity from XML body as fallback
@@ -1172,13 +1172,28 @@ fn apply_action(
             let edited = orig_b64.and_then(|o| tools_api::rewrite_delivery_flags_b64(o, web, nrb, arc, dev));
             set_payload(&mut p, edited, orig_b64);
         }
-        "shorten" | "extend" | "fill" => {
+        "shorten" | "fill" => {
+            // Absolute: SET the break to the given duration ("shorten/fill to Ns").
             let secs = p
                 .get("to_duration_s")
                 .or_else(|| p.get("duration_s"))
                 .and_then(|v| v.as_f64());
             let edited = match (secs, orig_b64) {
                 (Some(s), Some(o)) => tools_api::rewrite_break_duration_b64(o, (s * 90000.0) as u64),
+                _ => None,
+            };
+            set_payload(&mut p, edited, orig_b64);
+        }
+        "extend" => {
+            // Additive: ADD duration_s seconds to the incoming break ("extend by Ns").
+            let secs = p
+                .get("duration_s")
+                .or_else(|| p.get("to_duration_s"))
+                .and_then(|v| v.as_f64());
+            let edited = match (secs, orig_b64) {
+                (Some(s), Some(o)) => {
+                    tools_api::adjust_break_duration_b64(o, (s * 90000.0) as i64)
+                }
                 _ => None,
             };
             set_payload(&mut p, edited, orig_b64);
