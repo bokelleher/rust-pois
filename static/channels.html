@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   channels.html - POIS Admin Panel (formerly admin.html)
-  Version: 3.8.0
+  Version: 3.8.1
   Last updated: 2026-06-04
   Changes: Added "Save as template" on each rule and "Save as template / Add to
            project" on each channel, feeding the new Projects template library
@@ -464,6 +464,13 @@
         desc: "On a splice_insert ad-out, set the break duration to 30 seconds (edits the incoming cue).",
         match: { allOf: [{ "scte35.command": "splice_insert" }] },
         action: "shorten",
+        params: { duration_s: 30 },
+      },
+      {
+        name: "Extend ad-out to 30s",
+        desc: "On a splice_insert ad-out, lengthen the break by setting its duration to 30 seconds (edits the incoming cue).",
+        match: { allOf: [{ "scte35.command": "splice_insert" }] },
+        action: "extend",
         params: { duration_s: 30 },
       },
       {
