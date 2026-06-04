@@ -1,5 +1,5 @@
 // src/main.rs
-// Version: 3.4.3
+// Version: 3.6.1
 // Last Modified: 2026-03-12
 // Changes:
 //   - Issue 1: Channel routing now uses acquisitionPointIdentity from XML body as fallback
@@ -71,6 +71,12 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // --version / -V: print the build version and exit before any setup runs.
+    if std::env::args().skip(1).any(|a| a == "--version" || a == "-V") {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::from_default_env()
