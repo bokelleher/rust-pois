@@ -82,6 +82,7 @@ pub struct Template {
     pub project_id: Option<i64>,
     pub body_json: String,
     pub is_shared: i64,
+    pub is_default: i64,
     pub owner_user_id: Option<i64>,
     pub deleted_at: Option<String>,
     pub created_at: String,
@@ -116,6 +117,10 @@ pub struct SaveTemplate {
     pub description: Option<String>,
     #[serde(default)]
     pub is_shared: Option<bool>,
+    /// Mark as a default/featured starter shown in the rule gallery. When the
+    /// saver is an admin this is saved global (visible to all users).
+    #[serde(default)]
+    pub is_default: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -129,6 +134,8 @@ pub struct UpdateTemplateMeta {
     pub project_id: Option<Option<i64>>,
     #[serde(default)]
     pub is_shared: Option<bool>,
+    #[serde(default)]
+    pub is_default: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

@@ -295,6 +295,9 @@ pub struct TemplateQuery {
     pub kind: Option<String>,
     #[serde(default)]
     pub unfiled: Option<bool>,
+    /// Only featured/default templates (the curated gallery subset).
+    #[serde(default)]
+    pub default: Option<bool>,
 }
 
 pub async fn list_templates(
@@ -322,7 +325,11 @@ pub async fn list_templates(
     if let Some(kind) = q.kind {
         qb.push(" AND kind = ").push_bind(kind);
     }
-    qb.push(" ORDER BY kind, name");
+    if q.default == Some(true) {
+        qb.push(" AND is_default = 1");
+    }
+    // Featured (default) templates first, then alphabetical within kind.
+    qb.push(" ORDER BY is_default DESC, kind, name");
 
     let rows = qb.build_query_as::<Template>().fetch_all(&st.db).await;
     resp(rows)
@@ -442,6 +449,7 @@ pub async fn save_rule_template(
 
     insert_template(
         &st.db, &claims, &name, "rule", p.description, p.project_id, &body_json, p.is_shared,
+        p.is_default,
     )
     .await
 }
@@ -513,6 +521,7 @@ pub async fn save_channel_template(
 
     insert_template(
         &st.db, &claims, &name, "channel", p.description, p.project_id, &body_json, p.is_shared,
+        p.is_default,
     )
     .await
 }
@@ -527,17 +536,22 @@ async fn insert_template(
     project_id: Option<i64>,
     body_json: &str,
     is_shared: Option<bool>,
+    is_default: Option<bool>,
 ) -> Response {
+    let want_default = is_default.unwrap_or(false);
+    // An admin's default template is global so every user sees it in the gallery.
+    let shared = is_shared.unwrap_or(false) || (want_default && is_admin(claims));
     let r = sqlx::query_as::<_, Template>(
-        "INSERT INTO templates(name,kind,description,project_id,body_json,is_shared,owner_user_id) \
-         VALUES(?,?,?,?,?,?,?) RETURNING *",
+        "INSERT INTO templates(name,kind,description,project_id,body_json,is_shared,is_default,owner_user_id) \
+         VALUES(?,?,?,?,?,?,?,?) RETURNING *",
     )
     .bind(name)
     .bind(kind)
     .bind(description)
     .bind(project_id)
     .bind(body_json)
-    .bind(is_shared.unwrap_or(false) as i64)
+    .bind(shared as i64)
+    .bind(want_default as i64)
     .bind(uid_of(claims))
     .fetch_one(db)
     .await;
@@ -578,10 +592,15 @@ pub async fn update_template(
         Some(v) => v, // explicit set (may be None to unfile)
         None => cur.project_id,
     };
-    let is_shared = p.is_shared.map(|b| b as i64).unwrap_or(cur.is_shared);
+    let is_default = p.is_default.map(|b| b as i64).unwrap_or(cur.is_default);
+    let mut is_shared = p.is_shared.map(|b| b as i64).unwrap_or(cur.is_shared);
+    // Keep admin defaults global so all users keep seeing them in the gallery.
+    if is_default == 1 && is_admin(&claims) {
+        is_shared = 1;
+    }
 
     let r = sqlx::query_as::<_, Template>(
-        "UPDATE templates SET name=?, description=?, project_id=?, is_shared=?, \
+        "UPDATE templates SET name=?, description=?, project_id=?, is_shared=?, is_default=?, \
            updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') \
          WHERE id=? AND deleted_at IS NULL RETURNING *",
     )
@@ -589,6 +608,7 @@ pub async fn update_template(
     .bind(description)
     .bind(project_id)
     .bind(is_shared)
+    .bind(is_default)
     .bind(id)
     .fetch_one(&st.db)
     .await;

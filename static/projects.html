@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   projects.html - POIS Template Library + Projects
-  Version: 3.7.0
+  Version: 3.8.0
   Last updated: 2026-06-04
   Purpose: Browse/apply saved templates (rule + channel) and organize them into
            projects (persistent, shareable multi-channel bundles). Templates are
@@ -34,6 +34,7 @@
     .kind-channel { background:rgba(139,92,246,0.18); color:#c4b5fd; border:1px solid rgba(139,92,246,0.35); }
     .kind-rule    { background:rgba(16,185,129,0.16); color:#6ee7b7; border:1px solid rgba(16,185,129,0.35); }
     .shared-badge { background:rgba(59,130,246,0.16); color:#93c5fd; border:1px solid rgba(59,130,246,0.35); }
+    .default-badge { background:rgba(245,158,11,0.16); color:#fcd34d; border:1px solid rgba(245,158,11,0.35); }
     .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex;
                       align-items:center; justify-content:center; z-index:1000; }
     .modal-card { background:var(--bg-elevated, #1b1b27); border:1px solid var(--border);
@@ -171,6 +172,11 @@
         try { await API.put(`/templates/${t.id}`, { is_shared: !t.is_shared }); onChanged(); }
         catch (e) { alert(`Failed: ${e.message}`); setBusy(false); }
       };
+      const toggleDefault = async () => {
+        setBusy(true);
+        try { await API.put(`/templates/${t.id}`, { is_default: !t.is_default }); onChanged(); }
+        catch (e) { alert(`Failed: ${e.message}`); setBusy(false); }
+      };
       const del = async () => {
         if (!confirm(`Delete template "${t.name}"?`)) return;
         setBusy(true);
@@ -183,6 +189,7 @@
           <div class="flex items-center gap-2">
             <span class="tmpl-name">${t.name}</span>
             <${KindBadge} kind=${t.kind} />
+            ${t.is_default ? html`<span class="kind-badge default-badge">★ default</span>` : ""}
             ${t.is_shared ? html`<span class="kind-badge shared-badge">shared</span>` : ""}
           </div>
           <div class="tmpl-desc">${t.description || bodySummary(t)}</div>
@@ -193,6 +200,7 @@
             : html`<button class="btn btn-primary btn-small" disabled=${busy} onClick=${() => setApplyRule(true)}>Apply…</button>`}
           ${isOwner && html`<button class="btn btn-small" disabled=${busy} onClick=${() => setMoving(true)}>Move</button>`}
           ${isOwner && html`<button class="btn btn-small" disabled=${busy} onClick=${toggleShare}>${t.is_shared ? "Unshare" : "Share"}</button>`}
+          ${isOwner && t.kind === "rule" && html`<button class="btn btn-small" disabled=${busy} onClick=${toggleDefault}>${t.is_default ? "Unset default" : "Make default"}</button>`}
           ${isOwner && html`<button class="btn btn-small text-error" disabled=${busy} onClick=${del}>Delete</button>`}
         </div>
         ${applyRule && html`<${ApplyRuleModal} onClose=${() => setApplyRule(false)} onApply=${applyRuleInto} />`}

@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   channels.html - POIS Admin Panel (formerly admin.html)
-  Version: 3.7.0
+  Version: 3.8.0
   Last updated: 2026-06-04
   Changes: Added "Save as template" on each rule and "Save as template / Add to
            project" on each channel, feeding the new Projects template library
@@ -869,32 +869,78 @@
     }
 
     // ---- Template gallery ----
-    function TemplateGallery({ onPick, onBlank, onClose, busy }) {
+    // Two tabs: "Built-in" (the hardcoded RULE_TEMPLATES) and "Saved templates"
+    // (browse the user's visible saved rule library; src/template_library.rs).
+    function TemplateGallery({ onPick, onBlank, onPickSaved, onClose, busy }) {
+      const [mode, setMode] = hooks.useState("builtin"); // "builtin" | "saved"
+      const [saved, setSaved] = hooks.useState(null);
+      const [savedErr, setSavedErr] = hooks.useState(null);
+
+      hooks.useEffect(() => {
+        if (mode !== "saved" || saved !== null) return;
+        (async () => {
+          try { setSaved(await API.get("/templates?kind=rule")); }
+          catch (e) { setSavedErr(String(e)); }
+        })();
+      }, [mode]);
+
+      const ruleAction = (t) => { try { return JSON.parse(t.body_json).action || "rule"; } catch { return "rule"; } };
+
       return html`<div class="panel" style="padding: 20px; margin-bottom: 16px;">
         <div class="flex items-center justify-between mb-4">
           <div>
             <div style="font-weight: 600; font-size: 15px;">Start from a template</div>
-            <div class="text-xs text-muted">Pre-built rules for common POIS scenarios. Pick one to add it, then fine-tune.</div>
-          </div>
-          <button class="btn btn-small" onClick=${onClose} disabled=${busy}>Cancel</button>
-        </div>
-        <div class="tpl-grid">
-          ${RULE_TEMPLATES.map((t, i) => html`
-            <div class="tpl-card" key=${i}>
-              <div class="flex items-center justify-between gap-2">
-                <div class="tpl-name">${t.name}</div>
-                <span class="badge badge-${t.action}">${t.action}</span>
-              </div>
-              <div class="tpl-desc">${t.desc}</div>
-              <button class="btn btn-primary btn-small" onClick=${() => onPick(t)} disabled=${busy}>Use template</button>
+            <div class="text-xs text-muted">
+              ${mode === "builtin"
+                ? "Pre-built rules for common POIS scenarios. Pick one to add it, then fine-tune."
+                : "Your saved rule templates, plus shared and global ones. Defaults are starred and listed first."}
             </div>
-          `)}
-          <div class="tpl-card">
-            <div class="tpl-name">Blank rule</div>
-            <div class="tpl-desc">Start from an empty catch-all rule and build it yourself.</div>
-            <button class="btn btn-small" onClick=${onBlank} disabled=${busy}>Create blank</button>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="seg-control">
+              <button class=${"seg-btn " + (mode === "builtin" ? "active" : "")} onClick=${() => setMode("builtin")}>Built-in</button>
+              <button class=${"seg-btn " + (mode === "saved" ? "active" : "")} onClick=${() => setMode("saved")}>Saved templates</button>
+            </div>
+            <button class="btn btn-small" onClick=${onClose} disabled=${busy}>Cancel</button>
           </div>
         </div>
+
+        ${mode === "builtin" ? html`
+          <div class="tpl-grid">
+            ${RULE_TEMPLATES.map((t, i) => html`
+              <div class="tpl-card" key=${i}>
+                <div class="flex items-center justify-between gap-2">
+                  <div class="tpl-name">${t.name}</div>
+                  <span class="badge badge-${t.action}">${t.action}</span>
+                </div>
+                <div class="tpl-desc">${t.desc}</div>
+                <button class="btn btn-primary btn-small" onClick=${() => onPick(t)} disabled=${busy}>Use template</button>
+              </div>
+            `)}
+            <div class="tpl-card">
+              <div class="tpl-name">Blank rule</div>
+              <div class="tpl-desc">Start from an empty catch-all rule and build it yourself.</div>
+              <button class="btn btn-small" onClick=${onBlank} disabled=${busy}>Create blank</button>
+            </div>
+          </div>
+        ` : savedErr ? html`<div class="text-error">${savedErr}</div>`
+          : saved === null ? html`<div class="text-muted">Loading saved templates…</div>`
+          : saved.length === 0 ? html`
+            <div class="builder-note">No saved rule templates yet. Use “Save as template” on a rule (optionally tick “Save to default templates”) and it will show up here.</div>
+          ` : html`
+            <div class="tpl-grid">
+              ${saved.map(t => html`
+                <div class="tpl-card" key=${t.id}>
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="tpl-name">${t.is_default ? "★ " : ""}${t.name}</div>
+                    <span class="badge badge-${ruleAction(t)}">${ruleAction(t)}</span>
+                  </div>
+                  <div class="tpl-desc">${t.description || (t.is_shared ? "Shared template" : "Saved template")}</div>
+                  <button class="btn btn-primary btn-small" onClick=${() => onPickSaved(t)} disabled=${busy}>Use template</button>
+                </div>
+              `)}
+            </div>
+          `}
       </div>`;
     }
 
@@ -908,8 +954,10 @@
       const [projects, setProjects] = hooks.useState(null);
       const [projectId, setProjectId] = hooks.useState("");   // "" = Library (unfiled)
       const [shared, setShared] = hooks.useState(false);
+      const [asDefault, setAsDefault] = hooks.useState(false);
       const [busy, setBusy] = hooks.useState(false);
       const [err, setErr] = hooks.useState(null);
+      const isAdmin = (() => { try { return JSON.parse(localStorage.getItem("pois_user") || "{}").role === "admin"; } catch { return false; } })();
 
       const loadProjects = async () => {
         try { setProjects(await API.get("/projects")); } catch (e) { setErr(String(e)); }
@@ -931,6 +979,7 @@
             description: desc.trim() || null,
             project_id: projectId === "" ? null : Number(projectId),
             is_shared: shared,
+            is_default: asDefault,
           });
         } catch (e) { alert(`Save failed: ${e.message}`); setBusy(false); return; }
         setBusy(false);
@@ -963,6 +1012,10 @@
           <label class="flex items-center gap-2" style="margin-top:4px;">
             <input type="checkbox" style="width:auto" checked=${shared} onChange=${e => setShared(e.target.checked)} />
             Share with all users (they can apply it)
+          </label>
+          <label class="flex items-center gap-2" style="margin-top:8px;">
+            <input type="checkbox" style="width:auto" checked=${asDefault} onChange=${e => setAsDefault(e.target.checked)} />
+            Save to default templates ${isAdmin ? "(global — shown to all users in the rule gallery)" : "(your rule gallery)"}
           </label>
           <div class="flex gap-2 justify-end" style="margin-top:16px;">
             <button class="btn" onClick=${onClose} disabled=${busy}>Cancel</button>
@@ -1080,6 +1133,22 @@
       const addBlank = () => addFromTemplate({
         name: "New rule", match: {}, action: "noop", params: {},
       });
+
+      // Create a rule from a SAVED template by applying it into this channel
+      // (POST /templates/{id}/apply), then open the new rule for editing.
+      const addFromSavedTemplate = async (t) => {
+        setAdding(true);
+        try {
+          const created = await API.post(`/templates/${t.id}/apply`, { target_channel_id: channel.id });
+          setShowTemplates(false);
+          await fetchRules();
+          if (created && created.id) startEdit(created);
+        } catch (e) {
+          alert(`Failed to add from template: ${e.message}`);
+        } finally {
+          setAdding(false);
+        }
+      };
 
       const deleteRule = async (ruleId) => {
         if (!confirm("Delete this rule?")) return;
@@ -1233,7 +1302,7 @@
             onSave=${doSaveTemplate} />`}
 
           ${showTemplates && html`<${TemplateGallery}
-            onPick=${addFromTemplate} onBlank=${addBlank}
+            onPick=${addFromTemplate} onBlank=${addBlank} onPickSaved=${addFromSavedTemplate}
             onClose=${() => setShowTemplates(false)} busy=${adding} />`}
 
           ${rules.length === 0 && !showTemplates ? html`
