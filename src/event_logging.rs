@@ -253,32 +253,36 @@ impl EventLogger {
         qb.build_query_as::<EsamEventView>().fetch_all(&self.db).await
     }
 
-    pub async fn get_event_stats(&self) -> Result<EventStats, sqlx::Error> {
-        let total_events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM esam_events")
-            .fetch_one(&self.db)
-            .await?;
+    /// Dashboard stats, optionally scoped to the channels a caller may read
+    /// (`Some((uid, member_of))`); `None` = super-admin (all events).
+    pub async fn get_event_stats(
+        &self,
+        scope: Option<(i64, Vec<i64>)>,
+    ) -> Result<EventStats, sqlx::Error> {
+        let mut qb: sqlx::QueryBuilder<Sqlite> =
+            sqlx::QueryBuilder::new("SELECT COUNT(*) FROM esam_events WHERE 1=1");
+        push_event_scope(&mut qb, &scope);
+        let total_events: i64 = qb.build_query_scalar().fetch_one(&self.db).await?;
 
-        let last_24h_events: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM esam_events WHERE timestamp >= datetime('now', '-1 day')"
-        )
-        .fetch_one(&self.db)
-        .await?;
+        let mut qb: sqlx::QueryBuilder<Sqlite> = sqlx::QueryBuilder::new(
+            "SELECT COUNT(*) FROM esam_events WHERE timestamp >= datetime('now','-1 day')",
+        );
+        push_event_scope(&mut qb, &scope);
+        let last_24h_events: i64 = qb.build_query_scalar().fetch_one(&self.db).await?;
 
-        let action_stats: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT action, COUNT(*) as count FROM esam_events 
-             WHERE timestamp >= datetime('now', '-1 day') 
-             GROUP BY action ORDER BY count DESC"
-        )
-        .fetch_all(&self.db)
-        .await?;
+        let mut qb: sqlx::QueryBuilder<Sqlite> = sqlx::QueryBuilder::new(
+            "SELECT action, COUNT(*) as count FROM esam_events WHERE timestamp >= datetime('now','-1 day')",
+        );
+        push_event_scope(&mut qb, &scope);
+        qb.push(" GROUP BY action ORDER BY count DESC");
+        let action_stats: Vec<(String, i64)> =
+            qb.build_query_as().fetch_all(&self.db).await?;
 
-        let avg_processing_time: Option<f64> = sqlx::query_scalar(
-            "SELECT AVG(processing_time_ms) FROM esam_events 
-             WHERE timestamp >= datetime('now', '-1 day') 
-             AND processing_time_ms IS NOT NULL"
-        )
-        .fetch_one(&self.db)
-        .await?;
+        let mut qb: sqlx::QueryBuilder<Sqlite> = sqlx::QueryBuilder::new(
+            "SELECT AVG(processing_time_ms) FROM esam_events WHERE timestamp >= datetime('now','-1 day') AND processing_time_ms IS NOT NULL",
+        );
+        push_event_scope(&mut qb, &scope);
+        let avg_processing_time: Option<f64> = qb.build_query_scalar().fetch_one(&self.db).await?;
 
         Ok(EventStats {
             total_events,
@@ -286,6 +290,25 @@ impl EventLogger {
             action_counts: action_stats.into_iter().collect(),
             avg_processing_time_ms: avg_processing_time,
         })
+    }
+}
+
+/// Append the RBAC channel-read scope (`AND channel_name IN (visible channels)`)
+/// to a stats query. No-op when `scope` is None (super-admin).
+fn push_event_scope<'a>(qb: &mut sqlx::QueryBuilder<'a, Sqlite>, scope: &Option<(i64, Vec<i64>)>) {
+    if let Some((uid, member_of)) = scope {
+        qb.push(" AND channel_name IN (SELECT name FROM channels WHERE deleted_at IS NULL AND (owner_user_id = ")
+            .push_bind(*uid)
+            .push(" OR is_global = 1");
+        if !member_of.is_empty() {
+            qb.push(" OR EXISTS(SELECT 1 FROM channel_groups cg WHERE cg.channel_id = channels.id AND cg.group_id IN (");
+            let mut sep = qb.separated(", ");
+            for g in member_of {
+                sep.push_bind(*g);
+            }
+            qb.push("))");
+        }
+        qb.push("))");
     }
 }
 

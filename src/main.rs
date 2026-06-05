@@ -1,5 +1,5 @@
 // src/main.rs
-// Version: 3.10.1
+// Version: 3.10.2
 // Last Modified: 2026-03-12
 // Changes:
 //   - Issue 1: Channel routing now uses acquisitionPointIdentity from XML body as fallback
@@ -1233,19 +1233,9 @@ async fn get_event_stats(
     State(st): State<Arc<AppState>>,
     Extension(claims): Extension<jwt_auth::Claims>,
 ) -> impl IntoResponse {
-    if claims.role != "admin" {
-        // For non-admins, we'd need custom queries to filter by owned channels
-        // For now, return empty stats (this should be enhanced later)
-        return Json(serde_json::json!({
-            "total_events": 0,
-            "last_24h_events": 0,
-            "action_counts": {},
-            "avg_processing_time_ms": null
-        })).into_response();
-    }
-    
-    // Admins get full stats
-    match st.event_logger.get_event_stats().await {
+    // Stats are scoped to the channels the caller may read (None = super-admin).
+    let eff = rbac::effective(&st.db, &claims).await;
+    match st.event_logger.get_event_stats(rbac::event_scope(&eff)).await {
         Ok(stats) => Json(stats).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
