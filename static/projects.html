@@ -1,8 +1,8 @@
 <!doctype html>
 <!--
   projects.html - POIS Template Library + Projects
-  Version: 3.8.6
-  Last updated: 2026-06-04
+  Version: 3.11.0
+  Last updated: 2026-06-05
   Purpose: Browse/apply saved templates (rule + channel) and organize them into
            projects (persistent, shareable multi-channel bundles). Templates are
            created from channels.html ("Save as template" / "Add to project");
@@ -121,6 +121,78 @@
       </div>`;
     }
 
+    // ---- Share-to-groups picker (RBAC) ----
+    // Publish an existing resource to specific groups. Non-super callers see only
+    // their own groups; shares to groups they can't manage are preserved on save.
+    // Super-admins additionally get the "global" (all groups) toggle.
+    function ShareModal({ kind, id, name, onClose, onSaved }) {
+      const [st, setSt] = hooks.useState(null);
+      const [busy, setBusy] = hooks.useState(false);
+      const [err, setErr] = hooks.useState(null);
+      hooks.useEffect(() => { (async () => {
+        try {
+          const mg = await API.get("/me/groups");              // { super_admin, groups }
+          const isSuper = !!mg.super_admin;
+          const share = await API.get(`/share/${kind}/${id}`);  // { group_ids, is_global, can_write }
+          let offered = (mg.groups || []).map(g => ({ id: g.id, name: g.name, role: g.role }));
+          if (isSuper) {
+            const all = await API.get("/groups");               // [{id,name,...}]
+            offered = (all || []).map(g => ({ id: g.id, name: g.name, role: null }));
+          }
+          const offeredIds = new Set(offered.map(g => g.id));
+          const links = share.group_ids || [];
+          const checked = new Set(links.filter(g => offeredIds.has(g)));
+          const otherCount = links.filter(g => !offeredIds.has(g)).length;
+          setSt({ offered, checked, isGlobal: !!share.is_global, isSuper, canWrite: !!share.can_write, otherCount });
+        } catch (e) { setErr(String(e)); }
+      })(); }, [kind, id]);
+
+      const toggle = (gid) => setSt(s => {
+        const c = new Set(s.checked); c.has(gid) ? c.delete(gid) : c.add(gid);
+        return { ...s, checked: c };
+      });
+      const save = async () => {
+        setBusy(true);
+        const body = { group_ids: [...st.checked] };
+        if (st.isSuper) body.is_global = st.isGlobal;
+        try { await API.put(`/share/${kind}/${id}`, body); onSaved && onSaved(); onClose(); }
+        catch (e) { alert(`Save failed: ${e.message}`); setBusy(false); }
+      };
+
+      return html`<div class="modal-backdrop" onClick=${onClose}>
+        <div class="modal-card" onClick=${e => e.stopPropagation()}>
+          <div style="font-weight:600;font-size:15px;margin-bottom:4px;">Share ${kind}</div>
+          <div class="text-xs text-muted" style="margin-bottom:12px;">${name}</div>
+          ${err && html`<div class="text-error" style="margin-bottom:8px;">${err}</div>`}
+          ${!st && !err && html`<div class="text-muted">Loading…</div>`}
+          ${st && html`<div>
+            ${st.isSuper && html`<label class="flex items-center gap-2" style="margin-bottom:12px;cursor:pointer;">
+              <input type="checkbox" style="width:auto" checked=${st.isGlobal} disabled=${!st.canWrite}
+                onChange=${e => setSt(s => ({ ...s, isGlobal: e.target.checked }))} />
+              <span>Global — visible to all groups (national)</span>
+            </label>`}
+            <div class="text-xs text-muted" style="margin-bottom:6px;">Groups</div>
+            ${st.offered.length === 0
+              ? html`<div class="text-xs text-muted">You belong to no groups.</div>`
+              : st.offered.map(g => html`<label key=${g.id} class="flex items-center gap-2"
+                  style=${"padding:6px 0;cursor:pointer;" + (st.isSuper && st.isGlobal ? "opacity:.5;" : "")}>
+                  <input type="checkbox" style="width:auto" checked=${st.checked.has(g.id)} disabled=${!st.canWrite}
+                    onChange=${() => toggle(g.id)} />
+                  <span>${g.name}${g.role === "admin" ? html` <span class="text-xs text-muted">(admin)</span>` : ""}</span>
+                </label>`)}
+            ${st.otherCount > 0 && html`<div class="text-xs text-muted" style="margin-top:8px;">
+              Also shared to ${st.otherCount} group${st.otherCount === 1 ? "" : "s"} you don't manage (kept).</div>`}
+            ${!st.canWrite && html`<div class="text-xs text-muted" style="margin-top:8px;">
+              You can view sharing but not change it.</div>`}
+          </div>`}
+          <div class="flex gap-2 justify-end" style="margin-top:16px;">
+            <button class="btn" onClick=${onClose} disabled=${busy}>Close</button>
+            ${st && st.canWrite && html`<button class="btn btn-primary" onClick=${save} disabled=${busy}>${busy ? "Saving…" : "Save"}</button>`}
+          </div>
+        </div>
+      </div>`;
+    }
+
     // ---- Channel picker modal (for applying a rule template) ----
     function ApplyRuleModal({ onClose, onApply }) {
       const [channels, setChannels] = hooks.useState(null);
@@ -177,6 +249,7 @@
     function TemplateRow({ t, projects, isOwner, onChanged }) {
       const [applyRule, setApplyRule] = hooks.useState(false);
       const [moving, setMoving] = hooks.useState(false);
+      const [sharing, setSharing] = hooks.useState(false);
       const [busy, setBusy] = hooks.useState(false);
 
       const applyChannel = async () => {
@@ -202,13 +275,6 @@
         try { await API.put(`/templates/${t.id}`, { project_id: projectId }); onChanged(); }
         catch (e) { alert(`Move failed: ${e.message}`); setBusy(false); }
       };
-      // Sharing is now org-wide visibility (is_global), a super-admin action.
-      const toggleShare = async () => {
-        setBusy(true);
-        try { await API.put(`/templates/${t.id}`, { is_global: !t.is_global }); onChanged(); }
-        catch (e) { alert(`Failed: ${e.message}`); setBusy(false); }
-      };
-      const isSuper = me().role === "admin";
       const toggleDefault = async () => {
         setBusy(true);
         try { await API.put(`/templates/${t.id}`, { is_default: !t.is_default }); onChanged(); }
@@ -237,13 +303,15 @@
             : html`<button class="btn btn-primary btn-small" disabled=${busy} onClick=${() => setApplyRule(true)}>Apply…</button>`}
           ${isOwner && html`<${RowMenu} items=${[
             { label: 'Move', onClick: () => setMoving(true) },
-            ...(isSuper ? [{ label: t.is_global ? 'Unshare (make private)' : 'Share globally', onClick: toggleShare }] : []),
+            { label: 'Sharing…', onClick: () => setSharing(true) },
             ...(t.kind === "rule" ? [{ label: t.is_default ? 'Unset default' : 'Make default', onClick: toggleDefault }] : []),
             { label: 'Delete', danger: true, onClick: del },
           ]} />`}
         </div>
         ${applyRule && html`<${ApplyRuleModal} onClose=${() => setApplyRule(false)} onApply=${applyRuleInto} />`}
         ${moving && html`<${MoveModal} projects=${projects} current=${t.project_id} onClose=${() => setMoving(false)} onMove=${move} />`}
+        ${sharing && html`<${ShareModal} kind="template" id=${t.id} name=${t.name}
+          onClose=${() => setSharing(false)} onSaved=${() => { setSharing(false); onChanged(); }} />`}
       </div>`;
     }
 
@@ -295,6 +363,7 @@
       const [err, setErr] = hooks.useState(null);
       const [tick, setTick] = hooks.useState(0);
       const [showAddProject, setShowAddProject] = hooks.useState(false);
+      const [shareProj, setShareProj] = hooks.useState(null);
       const refresh = () => setTick(t => t + 1);
 
       const loadProjects = hooks.useCallback(async () => {
@@ -322,9 +391,6 @@
       const renameProject = async (p) => {
         const name = prompt("Rename project:", p.name); if (!name || name === p.name) return;
         try { await API.put(`/projects/${p.id}`, { name }); refresh(); } catch (e) { alert(e.message); }
-      };
-      const shareProject = async (p) => {
-        try { await API.put(`/projects/${p.id}`, { is_global: !p.is_global }); refresh(); } catch (e) { alert(e.message); }
       };
       const deleteProject = async (p) => {
         if (!confirm(`Delete project "${p.name}"? Its templates are kept and moved to the Library.`)) return;
@@ -392,7 +458,7 @@
                   <div class="flex gap-2" style="align-items:center; justify-content:flex-end;">
                     <button class="btn btn-primary btn-small" onClick=${() => applyProject(selProject)}>Apply project</button>
                     ${ownerOf(selProject) && html`<${RowMenu} items=${[
-                      ...(isAdmin ? [{ label: selProject.is_global ? 'Unshare (make private)' : 'Share globally', onClick: () => shareProject(selProject) }] : []),
+                      { label: 'Sharing…', onClick: () => setShareProj(selProject) },
                       { label: 'Rename', onClick: () => renameProject(selProject) },
                       { label: 'Delete', danger: true, onClick: () => deleteProject(selProject) },
                     ]} />`}
@@ -415,6 +481,8 @@
             </div>
           </div>
         </div>
+        ${shareProj && html`<${ShareModal} kind="project" id=${shareProj.id} name=${shareProj.name}
+          onClose=${() => setShareProj(null)} onSaved=${() => { setShareProj(null); refresh(); }} />`}
       </div>`;
     }
 

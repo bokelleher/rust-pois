@@ -1,5 +1,5 @@
 // src/main.rs
-// Version: 3.10.4
+// Version: 3.11.0
 // Last Modified: 2026-03-12
 // Changes:
 //   - Issue 1: Channel routing now uses acquisitionPointIdentity from XML body as fallback
@@ -225,6 +225,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/groups/{id}", get(rbac::get_group).put(rbac::update_group).delete(rbac::delete_group))
         .route("/api/groups/{id}/members", get(rbac::list_members).post(rbac::add_member))
         .route("/api/groups/{id}/members/{user_id}", delete(rbac::remove_member))
+        // Generic "share to specific groups" picker (channel|project|template)
+        .route("/api/share/{kind}/{id}", get(rbac::get_share).put(rbac::set_share))
         .with_state(state.clone())
         .route_layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),
@@ -771,13 +773,11 @@ async fn update_channel(
     .await;
 
     // Re-publish to the supplied groups (super-admin any; others only own groups).
+    // Scoped merge preserves any shares to groups outside the caller's reach.
     if let Some(gids) = p.group_ids {
         if eff.super_admin || gids.iter().all(|g| eff.member_of.contains(g)) {
-            let _ = sqlx::query("DELETE FROM channel_groups WHERE channel_id = ?")
-                .bind(id)
-                .execute(&st.db)
-                .await;
-            rbac::link_groups(&st.db, "channel_groups", "channel_id", id, &gids).await;
+            let scope = if eff.super_admin { None } else { Some(eff.member_of.as_slice()) };
+            rbac::set_groups_scoped(&st.db, "channel_groups", "channel_id", id, &gids, scope).await;
         }
     }
     resp(r)

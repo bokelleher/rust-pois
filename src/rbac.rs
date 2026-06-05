@@ -222,6 +222,48 @@ pub async fn resource_group_ids(
     .unwrap_or_default()
 }
 
+/// Re-publish resource `id` to `desired`, scoped to what the caller may manage.
+///
+/// `manageable` defines the caller's reach:
+///   - `None`        — full control (super-admin): the link set becomes exactly
+///                     `desired`.
+///   - `Some(scope)` — only links to groups IN `scope` are replaced (set to
+///                     `desired`, which must already be a subset of `scope`);
+///                     links to groups OUTSIDE `scope` are PRESERVED untouched.
+///
+/// The scoped form stops a group-admin from clobbering a resource's shares to
+/// groups they can't even see (the picker only offers groups they belong to).
+pub async fn set_groups_scoped(
+    db: &Pool<Sqlite>,
+    link_table: &str,
+    link_col: &str,
+    id: i64,
+    desired: &[i64],
+    manageable: Option<&[i64]>,
+) {
+    match manageable {
+        None => {
+            let _ = sqlx::query(&format!("DELETE FROM {link_table} WHERE {link_col} = ?"))
+                .bind(id)
+                .execute(db)
+                .await;
+        }
+        Some(scope) if !scope.is_empty() => {
+            let mut qb: QueryBuilder<Sqlite> =
+                QueryBuilder::new(format!("DELETE FROM {link_table} WHERE {link_col} = "));
+            qb.push_bind(id).push(" AND group_id IN (");
+            let mut sep = qb.separated(", ");
+            for g in scope {
+                sep.push_bind(*g);
+            }
+            qb.push(")");
+            let _ = qb.build().execute(db).await;
+        }
+        Some(_) => { /* empty scope: nothing in-scope to remove */ }
+    }
+    link_groups(db, link_table, link_col, id, desired).await;
+}
+
 /// Events are scoped by the channel (resolved from `channel_name`) the caller may
 /// read. Returns None for super-admins (no restriction).
 pub fn event_scope(eff: &Eff) -> Option<(i64, Vec<i64>)> {
@@ -532,4 +574,132 @@ pub async fn remove_member(
         .await
         .map(|_| ());
     resp(r)
+}
+
+// --------------------------- resource sharing ----------------------------
+//
+// A single generic endpoint pair drives the "share to specific groups" picker
+// for all three shareable entities. The `kind` path segment maps to the
+// resource's (table, link_table, link_col); only this allowlist is accepted.
+
+/// Resolve a share `kind` to its (table, link_table, link_col). None = unknown.
+fn share_tables(kind: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    match kind {
+        "channel" => Some(("channels", "channel_groups", "channel_id")),
+        "project" => Some(("projects", "project_groups", "project_id")),
+        "template" => Some(("templates", "template_groups", "template_id")),
+        _ => None,
+    }
+}
+
+/// Current sharing of a resource, for the picker.
+#[derive(Serialize)]
+pub struct ShareState {
+    pub kind: String,
+    pub id: i64,
+    /// All groups the resource is currently published to (super-set of what a
+    /// non-super caller can manage — out-of-scope links are preserved on save).
+    pub group_ids: Vec<i64>,
+    pub is_global: bool,
+    /// Whether the caller may actually change the sharing (gates the Save button).
+    pub can_write: bool,
+}
+
+async fn build_share_state(
+    db: &Pool<Sqlite>,
+    eff: &Eff,
+    kind: &str,
+    table: &str,
+    link_table: &str,
+    link_col: &str,
+    id: i64,
+) -> ShareState {
+    let group_ids = resource_group_ids(db, link_table, link_col, id).await;
+    let is_global: i64 = sqlx::query_scalar(&format!(
+        "SELECT is_global FROM {table} WHERE id = ? AND deleted_at IS NULL"
+    ))
+    .bind(id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(0);
+    let can_write = can_write(db, eff, table, link_table, link_col, id).await;
+    ShareState {
+        kind: kind.to_string(),
+        id,
+        group_ids,
+        is_global: is_global != 0,
+        can_write,
+    }
+}
+
+/// GET /api/share/{kind}/{id} — current sharing (group links + is_global).
+/// Visible to anyone who may READ the resource; `can_write` tells the UI whether
+/// the Save button should be live.
+pub async fn get_share(
+    State(st): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((kind, id)): Path<(String, i64)>,
+) -> impl IntoResponse {
+    let Some((table, link_table, link_col)) = share_tables(&kind) else {
+        return (StatusCode::BAD_REQUEST, "Unknown share kind").into_response();
+    };
+    let eff = effective(&st.db, &claims).await;
+    if !can_read(&st.db, &eff, table, link_table, link_col, id).await {
+        return (StatusCode::FORBIDDEN, "Not allowed to view this resource").into_response();
+    }
+    let state = build_share_state(&st.db, &eff, &kind, table, link_table, link_col, id).await;
+    Json(state).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct SetShare {
+    /// The groups (within the caller's reach) the resource should be shared to.
+    #[serde(default)]
+    pub group_ids: Vec<i64>,
+    /// Org-wide visibility (super-admin only; ignored otherwise).
+    #[serde(default)]
+    pub is_global: Option<bool>,
+}
+
+/// PUT /api/share/{kind}/{id} — set sharing (scoped merge). WRITE required.
+pub async fn set_share(
+    State(st): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((kind, id)): Path<(String, i64)>,
+    Json(p): Json<SetShare>,
+) -> impl IntoResponse {
+    let Some((table, link_table, link_col)) = share_tables(&kind) else {
+        return (StatusCode::BAD_REQUEST, "Unknown share kind").into_response();
+    };
+    let eff = effective(&st.db, &claims).await;
+    if !can_write(&st.db, &eff, table, link_table, link_col, id).await {
+        return (StatusCode::FORBIDDEN, "Not allowed to change sharing").into_response();
+    }
+    // Non-super callers may only target groups they belong to.
+    if !eff.super_admin && !p.group_ids.iter().all(|g| eff.member_of.contains(g)) {
+        return (StatusCode::FORBIDDEN, "Cannot share to a group you don't belong to")
+            .into_response();
+    }
+    // Only super-admins toggle org-wide visibility.
+    if let (Some(g), true) = (p.is_global, eff.super_admin) {
+        let _ = sqlx::query(&format!(
+            "UPDATE {table} SET is_global = ?, \
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') \
+             WHERE id = ? AND deleted_at IS NULL"
+        ))
+        .bind(g as i64)
+        .bind(id)
+        .execute(&st.db)
+        .await;
+    }
+    let manageable = if eff.super_admin {
+        None
+    } else {
+        Some(eff.member_of.as_slice())
+    };
+    set_groups_scoped(&st.db, link_table, link_col, id, &p.group_ids, manageable).await;
+    let state = build_share_state(&st.db, &eff, &kind, table, link_table, link_col, id).await;
+    Json(state).into_response()
 }

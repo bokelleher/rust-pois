@@ -1,9 +1,13 @@
 <!doctype html>
 <!--
   channels.html - POIS Admin Panel (formerly admin.html)
-  Version: 3.10.1
-  Last updated: 2026-06-04
-  Changes: Added "Save as template" on each rule and "Save as template / Add to
+  Version: 3.11.0
+  Last updated: 2026-06-05
+  Changes: (3.11.0) "Sharing…" on each channel's ⋮ menu opens a group picker to
+           publish the channel to specific groups (multi-select; super-admins
+           also get the global/all-groups toggle). Shares to groups the caller
+           can't manage are preserved.
+           Added "Save as template" on each rule and "Save as template / Add to
            project" on each channel, feeding the new Projects template library
            (src/template_library.rs, static/projects.html).
            (3.6.0) Replaced raw MATCH/PARAMS JSON textareas with a visual rules builder
@@ -565,10 +569,83 @@
       </div>`;
     }
 
+    // ---- Share-to-groups picker (RBAC) ----
+    // Publish an existing resource to specific groups. Non-super callers see only
+    // their own groups; shares to groups they can't manage are preserved on save.
+    // Super-admins additionally get the "global" (all groups) toggle.
+    function ShareModal({ kind, id, name, onClose, onSaved }) {
+      const [st, setSt] = hooks.useState(null);
+      const [busy, setBusy] = hooks.useState(false);
+      const [err, setErr] = hooks.useState(null);
+      hooks.useEffect(() => { (async () => {
+        try {
+          const mg = await API.get("/me/groups");              // { super_admin, groups }
+          const isSuper = !!mg.super_admin;
+          const share = await API.get(`/share/${kind}/${id}`);  // { group_ids, is_global, can_write }
+          let offered = (mg.groups || []).map(g => ({ id: g.id, name: g.name, role: g.role }));
+          if (isSuper) {
+            const all = await API.get("/groups");               // [{id,name,...}]
+            offered = (all || []).map(g => ({ id: g.id, name: g.name, role: null }));
+          }
+          const offeredIds = new Set(offered.map(g => g.id));
+          const links = share.group_ids || [];
+          const checked = new Set(links.filter(g => offeredIds.has(g)));
+          const otherCount = links.filter(g => !offeredIds.has(g)).length;
+          setSt({ offered, checked, isGlobal: !!share.is_global, isSuper, canWrite: !!share.can_write, otherCount });
+        } catch (e) { setErr(String(e)); }
+      })(); }, [kind, id]);
+
+      const toggle = (gid) => setSt(s => {
+        const c = new Set(s.checked); c.has(gid) ? c.delete(gid) : c.add(gid);
+        return { ...s, checked: c };
+      });
+      const save = async () => {
+        setBusy(true);
+        const body = { group_ids: [...st.checked] };
+        if (st.isSuper) body.is_global = st.isGlobal;
+        try { await API.put(`/share/${kind}/${id}`, body); onSaved && onSaved(); onClose(); }
+        catch (e) { alert(`Save failed: ${e.message}`); setBusy(false); }
+      };
+
+      return html`<div class="modal-backdrop" onClick=${onClose}>
+        <div class="modal-card" onClick=${e => e.stopPropagation()}>
+          <div style="font-weight:600;font-size:15px;margin-bottom:4px;">Share ${kind}</div>
+          <div class="text-xs text-muted" style="margin-bottom:12px;">${name}</div>
+          ${err && html`<div class="text-error" style="margin-bottom:8px;">${err}</div>`}
+          ${!st && !err && html`<div class="text-muted">Loading…</div>`}
+          ${st && html`<div>
+            ${st.isSuper && html`<label class="flex items-center gap-2" style="margin-bottom:12px;cursor:pointer;">
+              <input type="checkbox" style="width:auto" checked=${st.isGlobal} disabled=${!st.canWrite}
+                onChange=${e => setSt(s => ({ ...s, isGlobal: e.target.checked }))} />
+              <span>Global — visible to all groups (national)</span>
+            </label>`}
+            <div class="text-xs text-muted" style="margin-bottom:6px;">Groups</div>
+            ${st.offered.length === 0
+              ? html`<div class="text-xs text-muted">You belong to no groups.</div>`
+              : st.offered.map(g => html`<label key=${g.id} class="flex items-center gap-2"
+                  style=${"padding:6px 0;cursor:pointer;" + (st.isSuper && st.isGlobal ? "opacity:.5;" : "")}>
+                  <input type="checkbox" style="width:auto" checked=${st.checked.has(g.id)} disabled=${!st.canWrite}
+                    onChange=${() => toggle(g.id)} />
+                  <span>${g.name}${g.role === "admin" ? html` <span class="text-xs text-muted">(admin)</span>` : ""}</span>
+                </label>`)}
+            ${st.otherCount > 0 && html`<div class="text-xs text-muted" style="margin-top:8px;">
+              Also shared to ${st.otherCount} group${st.otherCount === 1 ? "" : "s"} you don't manage (kept).</div>`}
+            ${!st.canWrite && html`<div class="text-xs text-muted" style="margin-top:8px;">
+              You can view sharing but not change it.</div>`}
+          </div>`}
+          <div class="flex gap-2 justify-end" style="margin-top:16px;">
+            <button class="btn" onClick=${onClose} disabled=${busy}>Close</button>
+            ${st && st.canWrite && html`<button class="btn btn-primary" onClick=${save} disabled=${busy}>${busy ? "Saving…" : "Save"}</button>`}
+          </div>
+        </div>
+      </div>`;
+    }
+
     function Channels({ onSelect, selected }) {
       const [data, setData] = hooks.useState(null);
       const [err, setErr] = hooks.useState(null);
       const [showAdd, setShowAdd] = hooks.useState(false);
+      const [shareCh, setShareCh] = hooks.useState(null);
 
       hooks.useEffect(() => {
         (async () => {
@@ -618,11 +695,14 @@
                 </div>
                 <${RowMenu} items=${[
                   { label: ch.enabled ? 'Disable' : 'Enable', onClick: () => toggle(ch) },
+                  { label: 'Sharing…', onClick: () => setShareCh(ch) },
                   { label: 'Delete', danger: true, onClick: () => deleteChannel(ch) },
                 ]} />
               </div>
             `)}
           </div>
+          ${shareCh && html`<${ShareModal} kind="channel" id=${shareCh.id} name=${shareCh.name}
+            onClose=${() => setShareCh(null)} onSaved=${() => location.reload()} />`}
         </div>
       `;
     }

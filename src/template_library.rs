@@ -206,11 +206,8 @@ pub async fn update_project(
     .await;
     if let Some(gids) = p.group_ids {
         if eff.super_admin || gids.iter().all(|g| eff.member_of.contains(g)) {
-            let _ = sqlx::query("DELETE FROM project_groups WHERE project_id = ?")
-                .bind(id)
-                .execute(&st.db)
-                .await;
-            rbac::link_groups(&st.db, "project_groups", "project_id", id, &gids).await;
+            let scope = if eff.super_admin { None } else { Some(eff.member_of.as_slice()) };
+            rbac::set_groups_scoped(&st.db, "project_groups", "project_id", id, &gids, scope).await;
         }
     }
     resp(r)
@@ -635,13 +632,11 @@ pub async fn update_template(
     .fetch_one(&st.db)
     .await;
     // Re-publish to the supplied groups (super any; others only own groups).
+    // Scoped merge preserves shares to groups outside the caller's reach.
     if let Some(gids) = p.group_ids {
         if eff.super_admin || gids.iter().all(|g| eff.member_of.contains(g)) {
-            let _ = sqlx::query("DELETE FROM template_groups WHERE template_id = ?")
-                .bind(id)
-                .execute(&st.db)
-                .await;
-            rbac::link_groups(&st.db, "template_groups", "template_id", id, &gids).await;
+            let scope = if eff.super_admin { None } else { Some(eff.member_of.as_slice()) };
+            rbac::set_groups_scoped(&st.db, "template_groups", "template_id", id, &gids, scope).await;
         }
     }
     resp(r)
