@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   channels.html - POIS Admin Panel (formerly admin.html)
-  Version: 3.8.5
+  Version: 3.8.6
   Last updated: 2026-06-04
   Changes: Added "Save as template" on each rule and "Save as template / Add to
            project" on each channel, feeding the new Projects template library
@@ -568,14 +568,10 @@
                   <div class="font-medium">${ch.name}</div>
                   <div class="text-xs text-muted">${ch.enabled ? 'Enabled' : 'Disabled'}</div>
                 </div>
-                <div class="flex gap-2">
-                  <button class="btn btn-small" onClick=${(e) => { e.stopPropagation(); toggle(ch); }}>
-                    ${ch.enabled ? 'Disable' : 'Enable'}
-                  </button>
-                  <button class="btn btn-small text-error" onClick=${(e) => { e.stopPropagation(); deleteChannel(ch); }}>
-                    Delete
-                  </button>
-                </div>
+                <${RowMenu} items=${[
+                  { label: ch.enabled ? 'Disable' : 'Enable', onClick: () => toggle(ch) },
+                  { label: 'Delete', danger: true, onClick: () => deleteChannel(ch) },
+                ]} />
               </div>
             `)}
           </div>
@@ -983,11 +979,12 @@
       }, [open]);
       return html`<div class="row-menu" ref=${ref}>
         <button class="btn btn-small kebab-btn" title="Actions" aria-label="Actions"
-          aria-haspopup="true" aria-expanded=${open} onClick=${() => setOpen(o => !o)}>⋮</button>
+          aria-haspopup="true" aria-expanded=${open}
+          onClick=${(e) => { e.stopPropagation(); setOpen(o => !o); }}>⋮</button>
         ${open && html`<div class="row-menu-dropdown" role="menu">
           ${items.map((it, i) => html`<button role="menuitem" key=${i}
             class=${"row-menu-item" + (it.danger ? " text-error" : "")}
-            onClick=${() => { setOpen(false); it.onClick(); }}>${it.label}</button>`)}
+            onClick=${(e) => { e.stopPropagation(); setOpen(false); it.onClick(); }}>${it.label}</button>`)}
         </div>`}
       </div>`;
     }

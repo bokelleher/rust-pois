@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   projects.html - POIS Template Library + Projects
-  Version: 3.8.0
+  Version: 3.8.6
   Last updated: 2026-06-04
   Purpose: Browse/apply saved templates (rule + channel) and organize them into
            projects (persistent, shareable multi-channel bundles). Templates are
@@ -40,6 +40,16 @@
     .modal-card { background:var(--bg-elevated, #1b1b27); border:1px solid var(--border);
                   border-radius:12px; padding:22px; width:min(440px,92vw); }
     .meta-line { font-size:11px; color:var(--text-secondary); margin-top:6px; }
+    .row-menu { position:relative; display:inline-block; }
+    .kebab-btn { padding:6px 12px; font-size:18px; line-height:1; font-weight:700; }
+    .row-menu-dropdown { position:absolute; right:0; top:calc(100% + 4px); z-index:50;
+                         min-width:170px; padding:4px; display:flex; flex-direction:column;
+                         background:var(--bg-elevated, #1b1b27); border:1px solid var(--border);
+                         border-radius:10px; box-shadow:0 10px 28px rgba(0,0,0,0.45); }
+    .row-menu-item { text-align:left; background:transparent; border:0; border-radius:6px;
+                     padding:9px 12px; font-size:13px; color:var(--text-primary); cursor:pointer; }
+    .row-menu-item:hover { background:var(--field-bg-hover); }
+    .row-menu-item.text-error { color:var(--error, #f87171); }
   </style>
   <script type="module">
     import { h, render } from "https://esm.sh/preact@10.24.3";
@@ -84,6 +94,31 @@
         return `Action: ${b.action ?? "?"}`;
       }
       return "";
+    }
+
+    // ---- Kebab (⋮) actions menu ----
+    // Collapses a row's secondary actions into a dropdown. items: [{label, onClick, danger?}].
+    function RowMenu({ items }) {
+      const [open, setOpen] = hooks.useState(false);
+      const ref = hooks.useRef(null);
+      hooks.useEffect(() => {
+        if (!open) return;
+        const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        const onEsc = (e) => { if (e.key === "Escape") setOpen(false); };
+        document.addEventListener("mousedown", onDoc);
+        document.addEventListener("keydown", onEsc);
+        return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onEsc); };
+      }, [open]);
+      return html`<div class="row-menu" ref=${ref}>
+        <button class="btn btn-small kebab-btn" title="Actions" aria-label="Actions"
+          aria-haspopup="true" aria-expanded=${open}
+          onClick=${(e) => { e.stopPropagation(); setOpen(o => !o); }}>⋮</button>
+        ${open && html`<div class="row-menu-dropdown" role="menu">
+          ${items.map((it, i) => html`<button role="menuitem" key=${i}
+            class=${"row-menu-item" + (it.danger ? " text-error" : "")}
+            onClick=${(e) => { e.stopPropagation(); setOpen(false); it.onClick(); }}>${it.label}</button>`)}
+        </div>`}
+      </div>`;
     }
 
     // ---- Channel picker modal (for applying a rule template) ----
@@ -194,14 +229,16 @@
           </div>
           <div class="tmpl-desc">${t.description || bodySummary(t)}</div>
         </div>
-        <div class="flex gap-2" style="flex-shrink:0; flex-wrap:wrap; justify-content:flex-end;">
+        <div class="flex gap-2" style="flex-shrink:0; align-items:center; justify-content:flex-end;">
           ${t.kind === "channel"
             ? html`<button class="btn btn-primary btn-small" disabled=${busy} onClick=${applyChannel}>Apply</button>`
             : html`<button class="btn btn-primary btn-small" disabled=${busy} onClick=${() => setApplyRule(true)}>Apply…</button>`}
-          ${isOwner && html`<button class="btn btn-small" disabled=${busy} onClick=${() => setMoving(true)}>Move</button>`}
-          ${isOwner && html`<button class="btn btn-small" disabled=${busy} onClick=${toggleShare}>${t.is_shared ? "Unshare" : "Share"}</button>`}
-          ${isOwner && t.kind === "rule" && html`<button class="btn btn-small" disabled=${busy} onClick=${toggleDefault}>${t.is_default ? "Unset default" : "Make default"}</button>`}
-          ${isOwner && html`<button class="btn btn-small text-error" disabled=${busy} onClick=${del}>Delete</button>`}
+          ${isOwner && html`<${RowMenu} items=${[
+            { label: 'Move', onClick: () => setMoving(true) },
+            { label: t.is_shared ? 'Unshare' : 'Share', onClick: toggleShare },
+            ...(t.kind === "rule" ? [{ label: t.is_default ? 'Unset default' : 'Make default', onClick: toggleDefault }] : []),
+            { label: 'Delete', danger: true, onClick: del },
+          ]} />`}
         </div>
         ${applyRule && html`<${ApplyRuleModal} onClose=${() => setApplyRule(false)} onApply=${applyRuleInto} />`}
         ${moving && html`<${MoveModal} projects=${projects} current=${t.project_id} onClose=${() => setMoving(false)} onMove=${move} />`}
@@ -312,11 +349,13 @@
                     </div>
                     <div class="text-xs text-muted">${selProject.description || "Channel templates in this project. Apply the project to recreate them all."}</div>
                   </div>
-                  <div class="flex gap-2" style="flex-wrap:wrap; justify-content:flex-end;">
+                  <div class="flex gap-2" style="align-items:center; justify-content:flex-end;">
                     <button class="btn btn-primary btn-small" onClick=${() => applyProject(selProject)}>Apply project</button>
-                    ${ownerOf(selProject) && html`<button class="btn btn-small" onClick=${() => shareProject(selProject)}>${selProject.is_shared ? "Unshare" : "Share"}</button>`}
-                    ${ownerOf(selProject) && html`<button class="btn btn-small" onClick=${() => renameProject(selProject)}>Rename</button>`}
-                    ${ownerOf(selProject) && html`<button class="btn btn-small text-error" onClick=${() => deleteProject(selProject)}>Delete</button>`}
+                    ${ownerOf(selProject) && html`<${RowMenu} items=${[
+                      { label: selProject.is_shared ? 'Unshare' : 'Share', onClick: () => shareProject(selProject) },
+                      { label: 'Rename', onClick: () => renameProject(selProject) },
+                      { label: 'Delete', danger: true, onClick: () => deleteProject(selProject) },
+                    ]} />`}
                   </div>
                 </div>
               ` : html`<div class="text-muted">Loading…</div>`}
