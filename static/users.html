@@ -66,7 +66,15 @@
             Administrator
           </label>
         </div>
-        
+
+        <div class="form-group" id="groupGroup">
+          <label for="modalGroup">Group (membership)</label>
+          <select id="modalGroup">
+            <option value="">— none —</option>
+          </select>
+          <div class="text-xs text-muted" style="margin-top:4px;">Adds the new user to this group as a member. Manage further membership on the Groups page.</div>
+        </div>
+
         <div class="form-group">
           <label>
             <input type="checkbox" id="modalIsActive" checked>
@@ -143,6 +151,8 @@
         passwordGroup.style.display = 'block';
         document.getElementById('modalPassword').required = true;
         document.getElementById('modalIsActive').checked = true;
+        document.getElementById('groupGroup').style.display = 'block';
+        document.getElementById('modalGroup').value = '';
       } else {
         modalTitle.textContent = 'Edit User';
         document.getElementById('saveUserBtn').textContent = 'Save Changes';
@@ -152,6 +162,8 @@
         document.getElementById('modalIsActive').checked = user.enabled;
         passwordGroup.style.display = 'none';
         document.getElementById('modalPassword').required = false;
+        // Membership is managed on the Groups page; hide for edits.
+        document.getElementById('groupGroup').style.display = 'none';
       }
       
       userModal.style.display = 'flex';
@@ -186,9 +198,12 @@
           });
         } else {
           // Create user
+          const groupVal = document.getElementById('modalGroup').value;
+          const body = { username, password, role: isAdmin ? "admin" : "user", email: email };
+          if (groupVal) body.group_id = Number(groupVal);
           response = await fetchAPI(`${API_BASE}/users`, {
             method: 'POST',
-            body: JSON.stringify({ username, password, role: isAdmin ? "admin" : "user", email: email })
+            body: JSON.stringify(body)
           });
         }
         
@@ -319,19 +334,32 @@
       }
     }
     
+    // Populate the "Group (membership)" select in the create-user modal.
+    async function populateGroups() {
+      try {
+        const response = await fetchAPI(`${API_BASE}/groups`);
+        if (!response.ok) return;
+        const groups = await response.json();
+        const sel = document.getElementById('modalGroup');
+        sel.innerHTML = '<option value="">— none —</option>' +
+          groups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('');
+      } catch (e) { /* non-fatal: leave the select with just "none" */ }
+    }
+
     // Utility function
     function escapeHtml(text) {
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
     }
-    
+
     // Initialize
     window.addEventListener('load', function() {
       if (requireAuth()) {
         loadCurrentUser().then(isAdmin => {
           if (isAdmin) {
             loadUsers();
+            populateGroups();
           }
         });
       }

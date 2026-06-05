@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   channels.html - POIS Admin Panel (formerly admin.html)
-  Version: 3.8.6
+  Version: 3.10.1
   Last updated: 2026-06-04
   Changes: Added "Save as template" on each rule and "Save as template / Add to
            project" on each channel, feeding the new Projects template library
@@ -512,9 +512,63 @@
     //  Components
     // ============================================================
 
+    // ---- New-channel modal with a group picker (RBAC) ----
+    // A non-super user in >1 group must choose; a single-group user is preset;
+    // a super-admin may target any group, all groups (global), or none.
+    function AddChannelModal({ onClose, onCreated }) {
+      const [name, setName] = hooks.useState("");
+      const [info, setInfo] = hooks.useState(null); // { super_admin, groups:[{id,name,role}] }
+      const [gsel, setGsel] = hooks.useState("");
+      const [busy, setBusy] = hooks.useState(false);
+      const [err, setErr] = hooks.useState(null);
+      hooks.useEffect(() => { (async () => {
+        try {
+          const g = await API.get("/me/groups");
+          setInfo(g);
+          if (!g.super_admin && (g.groups || []).length === 1) setGsel(String(g.groups[0].id));
+        } catch (e) { setErr(String(e)); }
+      })(); }, []);
+      const isSuper = info && info.super_admin;
+      const groups = info ? (info.groups || []) : [];
+      const create = async () => {
+        if (!name.trim()) { alert("Channel name is required."); return; }
+        if (!isSuper && !gsel) { alert("Choose a group for the channel."); return; }
+        const body = { name: name.trim() };
+        if (gsel === "global") body.is_global = true;
+        else if (gsel) body.group_ids = [Number(gsel)];
+        setBusy(true);
+        try { await API.post("/channels", body); onCreated(); }
+        catch (e) { alert(`Create failed: ${e.message}`); setBusy(false); return; }
+        onClose();
+      };
+      return html`<div class="modal-backdrop" onClick=${onClose}>
+        <div class="modal-card" onClick=${e => e.stopPropagation()}>
+          <div style="font-weight:600;font-size:15px;margin-bottom:12px;">New channel</div>
+          ${err && html`<div class="text-error" style="margin-bottom:8px;">${err}</div>`}
+          <div class="form-group"><label>Name</label>
+            <input value=${name} onInput=${e => setName(e.target.value)} placeholder="e.g. WXYZ-Primary" /></div>
+          <div class="form-group"><label>Group</label>
+            <select value=${gsel} onChange=${e => setGsel(e.target.value)}>
+              <option value="">${isSuper ? "— none (visible to super-admin only) —" : "— choose a group —"}</option>
+              ${groups.map(g => html`<option value=${String(g.id)}>${g.name}</option>`)}
+              ${isSuper ? html`<option value="global">Global (all groups / national)</option>` : ""}
+            </select>
+            <div class="text-xs text-muted" style="margin-top:4px;">${isSuper
+              ? "Publish to a group, all groups (global), or none."
+              : "The channel is visible to this group."}</div>
+          </div>
+          <div class="flex gap-2 justify-end" style="margin-top:16px;">
+            <button class="btn" onClick=${onClose} disabled=${busy}>Cancel</button>
+            <button class="btn btn-primary" onClick=${create} disabled=${busy}>${busy ? "Creating…" : "Create"}</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
     function Channels({ onSelect, selected }) {
       const [data, setData] = hooks.useState(null);
       const [err, setErr] = hooks.useState(null);
+      const [showAdd, setShowAdd] = hooks.useState(false);
 
       hooks.useEffect(() => {
         (async () => {
@@ -528,13 +582,6 @@
 
       if (err) return html`<div class="p-4 text-error">${err}</div>`;
       if (!data) return html`<div class="p-4 text-muted">Loading…</div>`;
-
-      const add = async () => {
-        const name = prompt("Channel name?") || "";
-        if (!name) return;
-        await API.post("/channels", { name });
-        location.reload();
-      };
 
       const toggle = async (ch) => {
         await API.put(`/channels/${ch.id}`, {
@@ -559,8 +606,9 @@
         <div class="p-4">
           <div class="flex items-center justify-between mb-4">
             <div class="font-semibold text-sm text-muted" style="text-transform: uppercase; letter-spacing: 0.5px;">Channels</div>
-            <button class="btn btn-primary btn-small" onClick=${add}>+ Add</button>
+            <button class="btn btn-primary btn-small" onClick=${() => setShowAdd(true)}>+ Add</button>
           </div>
+          ${showAdd && html`<${AddChannelModal} onClose=${() => setShowAdd(false)} onCreated=${() => location.reload()} />`}
           <div class="channel-list">
             ${data.map(ch => html`
               <div class="channel-item ${selected?.id === ch.id ? 'active' : ''}" onClick=${() => onSelect(ch)}>
