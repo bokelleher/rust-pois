@@ -1,13 +1,19 @@
 <!doctype html>
 <!--
   docs.html - Documentation (User Guide + Admin Guide)
-  Version: 3.12.1
+  Version: 3.12.2
   Last updated: 2026-06-05
-  Changes: (3.12.0) Split into a User Guide and an Admin Guide via audience tabs.
+  Changes: (3.12.2) Refreshed the User Guide API reference for the v3.12.x model:
+           channels carry owner_user_id / is_global / timezone (managed by numeric id,
+           not name); accurate Authentication (JWT login + API tokens); corrected
+           Channels / Rules / Events request+response shapes (enabled/is_global are
+           0/1 ints, match_json/params_json are objects on the way in and strings on
+           the way out, reorder takes ordered_ids, events stats use last_24h_events /
+           action_counts, since is a timestamp lower bound); a new Projects & Templates
+           section; a "Using the web UI" section; and updated code examples.
+           (3.12.0) Split into a User Guide and an Admin Guide via audience tabs.
            The Admin Guide (Groups & RBAC, Users & Passwords incl. forced first-login
            change, Resource Sharing, SESAME) is revealed only to admins/group-admins.
-           NOTE: the User Guide API reference is still the pre-RBAC content and is due
-           a content refresh (tracked separately).
            (3.6.0) Refreshed for the rule-engine action set (replace/blackout/regionalize/
            shorten/extend/fill/slate/tracking-only), correct ESAM BinaryData
            request/response + <pois:Decision> metadata, accurate Rules API routes
@@ -298,7 +304,7 @@
   <main class="docs-container">
     <div class="docs-header">
       <h1>POIS Documentation</h1>
-      <p class="text-secondary">Placement Opportunity Information Service v3.12.1</p>
+      <p class="text-secondary">Placement Opportunity Information Service v3.12.2</p>
     </div>
 
     <!-- Audience tabs (Admin tab is revealed only to admins by JS) -->
@@ -311,10 +317,12 @@
     <div class="docs-nav" data-audience="user">
       <a href="#overview">Overview</a>
       <a href="#authentication">Authentication</a>
+      <a href="#web-ui">Using the Web UI</a>
       <a href="#use-cases">Use Cases</a>
       <a href="#esam">ESAM Endpoint</a>
       <a href="#channels">Channels API</a>
       <a href="#rules">Rules API</a>
+      <a href="#projects">Projects &amp; Templates</a>
       <a href="#events">Events API</a>
       <a href="#examples">Code Examples</a>
       <a href="#swagger">OpenAPI Spec</a>
@@ -345,25 +353,110 @@
         <li><strong>SESAME security (SCTE 130-9)</strong> - Optional HMAC auth, channel-scoped authorization, and AES-256-GCM payload encryption over the ESAM exchange (see below)</li>
         <li><strong>SCTE-35 tools</strong> - Build / decode / validate (base64, hex, or binary input) — see the Tools page</li>
         <li><strong>Multi-Channel + Event Logging + RESTful API</strong> - Independent rule sets per channel, full event history, and management endpoints</li>
+        <li><strong>Projects &amp; Templates</strong> - Capture a channel (or a single rule) as a reusable template, group templates into a project, and apply them to spin up new channels</li>
       </ul>
+      <p style="margin-top:16px"><strong>Multi-tenancy.</strong> Channels, rules, events, projects, and templates are
+        scoped by group membership. Every <code>/api/*</code> response is filtered to what you are
+        allowed to see, so two stations using the same server never see each other's resources.
+        You can manage what you own and any resource shared to a group you administer. The group
+        and sharing administration endpoints live in the <strong>Admin Guide</strong> (visible to
+        admins); this guide covers the day-to-day user and integrator surface.</p>
     </div>
 
     <!-- Authentication -->
     <div id="authentication" class="section">
       <h2>Authentication</h2>
-      <p>All API endpoints (except ESAM) require Bearer token authentication:</p>
-      
+      <p>Every management endpoint (everything under <code>/api/*</code>, except <code>/api/auth/login</code>)
+        requires a Bearer token:</p>
+
       <div class="code-block">
-        <code>Authorization: Bearer your-token-here</code>
+        <code>Authorization: Bearer &lt;token&gt;</code>
       </div>
 
-      <p>The ESAM endpoint (<code>/esam</code>) uses its own protection: by default it is unauthenticated (regular SCTE 130-3 ESAM), but per-channel <strong>SESAME</strong> (SCTE 130-9) can require a minimum security tier — HMAC-SHA256 auth (Tier 1), channel-scoped authorization (Tier 2), and AES-256-GCM payload encryption (Tier 3) — carried in HTTP headers with no ESAM XML schema change. Responses are signed (and, for Tier 3, encrypted) regardless, so a consumer can verify the POIS decision wasn't forged.</p>
+      <h3>Logging in (session token)</h3>
+      <p>The primary way to get a token is to log in with your username and password. The response
+        carries a JSON Web Token (your session token) plus your profile, including the groups you
+        belong to and your per-group role.</p>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/auth/login</span>
+        </div>
+        <p class="endpoint-description">Authenticate and receive a session token. This endpoint is public (no Bearer token needed).</p>
+        <h4>Request Body</h4>
+        <div class="code-block">
+          <code>{ "username": "wanf.op", "password": "••••••••" }</code>
+        </div>
+        <h4>Response</h4>
+        <div class="code-block">
+          <code>{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": {
+    "id": 7,
+    "username": "wanf.op",
+    "role": "user",
+    "enabled": true,
+    "email": null,
+    "created_at": "2026-05-01T12:00:00Z",
+    "last_login": "2026-06-05T09:30:00Z",
+    "must_change_password": false,
+    "groups": [ { "id": 3, "name": "WANF-Atlanta", "role": "member" } ]
+  }
+}</code>
+        </div>
+      </div>
+      <p>Send <code>Authorization: Bearer &lt;token&gt;</code> on every subsequent request. To check who
+        you are (and refresh your group list), call <code>GET /api/auth/me</code>, which returns the
+        same <code>user</code> object.</p>
+      <p class="text-muted" style="font-size:13px"><strong>First-login note.</strong> If your account
+        was just provisioned (or an admin reset your password), <code>must_change_password</code> is
+        <code>true</code> and the server returns <code>403</code> on every endpoint except
+        <code>POST /api/auth/change-password</code> until you set your own password. See
+        <a href="/static/change-password.html">Change password</a>.</p>
 
-      <h3>Getting a Token</h3>
-      <p>Tokens are managed through the web interface or API:</p>
+      <h3>API tokens (long-lived)</h3>
+      <p>For unattended integrations you can mint a named API token instead of logging in
+        interactively. Manage these on the <a href="/static/tokens.html">Tokens page</a> or via the API:</p>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/tokens</span>
+        </div>
+        <p class="endpoint-description">List your tokens, or create one: <code>{ "name": "my-integration", "expires_in_days": 90 }</code> (omit <code>expires_in_days</code> for no expiry). The plaintext token is returned once, at creation. Revoke with <code>DELETE /api/tokens/{id}</code>.</p>
+      </div>
+      <p class="text-muted" style="font-size:13px">Both token types are sent the same way (<code>Authorization: Bearer …</code>) and resolve to your identity and groups live on each request. If you only need short-lived access, the login session token is the simplest path.</p>
+
+      <h3>ESAM is separate</h3>
+      <p>The ESAM endpoint (<code>/esam</code>) does not use Bearer tokens. By default it is
+        unauthenticated (regular SCTE 130-3 ESAM); per-channel <strong>SESAME</strong> (SCTE 130-9)
+        can instead require a minimum security tier — HMAC-SHA256 auth (Tier 1), channel-scoped
+        authorization (Tier 2), and AES-256-GCM payload encryption (Tier 3) — carried in HTTP
+        headers with no ESAM XML schema change. Responses are signed (and, for Tier 3, encrypted)
+        regardless, so a consumer can verify the POIS decision wasn't forged. SESAME configuration
+        is covered in the Admin Guide.</p>
+    </div>
+
+    <!-- Using the Web UI -->
+    <div id="web-ui" class="section">
+      <span class="audience-label user">For operators</span>
+      <h2>Using the Web UI</h2>
+      <p>Most day-to-day tasks need no API calls. After logging in you can do everything below from
+        the browser; the pages call the same endpoints documented here and honor the same group scoping.</p>
       <ul>
-        <li>Web UI: <a href="/static/tokens.html">Tokens Page</a></li>
-        <li>API: <code>POST /api/tokens</code></li>
+        <li><strong><a href="/static/channels.html">Channels &amp; Rules</a></strong> - create channels,
+          add and reorder rules with the rule editor (drag to reorder), and toggle a channel on or off.
+          When you create a channel you pick which of your groups it belongs to (if you are in more than one).</li>
+        <li><strong><a href="/static/events.html">Event Monitor</a></strong> - browse processed ESAM events,
+          filter by channel / action / time, and free-text search by acquisition signal ID, source IP,
+          SCTE-35 command, or UPID. The SESAME column shows the achieved security tier per event.</li>
+        <li><strong><a href="/static/projects.html">Projects &amp; Templates</a></strong> - save a channel or a
+          single rule as a reusable template, organize templates into projects, and apply a template or a
+          whole project to spin up new channels.</li>
+        <li><strong><a href="/static/tools.html">SCTE-35 Tools</a></strong> - build, decode, and validate
+          SCTE-35 payloads (base64, hex, or binary) without sending a live signal.</li>
+        <li><strong><a href="/static/change-password.html">Your password</a></strong> - change your own
+          password at any time from the account menu.</li>
       </ul>
     </div>
 
@@ -380,26 +473,26 @@
         </div>
         
         <div class="use-case-scenario">
-          <strong>Scenario:</strong> Your playout system sends program_end signals, but your ad insertion system expects splice_insert for ad breaks.
+          <strong>Scenario:</strong> Your playout system marks the end of a program with a Program End segmentation descriptor (type 0x11), but your ad insertion system expects a splice_insert ad-out for breaks.
         </div>
-        
-        <p><strong>Solution:</strong> Create a rule that transforms program_end to splice_insert with a 60-second break duration:</p>
-        
+
+        <p><strong>Solution:</strong> Match the Program End descriptor and <code>replace</code> it with a freshly built 60-second splice_insert ad-out:</p>
+
         <div class="rule-config">
           <div class="rule-label">Name:</div>
           <div class="rule-value">Program End → 60s Ad Break</div>
-          
+
           <div class="rule-label">Action:</div>
           <div class="rule-value">replace</div>
-          
+
           <div class="rule-label">Match:</div>
-          <div class="rule-value">{"anyOf":[{"scte35.command":"program_end"}]}</div>
-          
+          <div class="rule-value">{"anyOf":[{"scte35.segmentation_type_id":"0x11"}]}</div>
+
           <div class="rule-label">Parameters:</div>
-          <div class="rule-value">{"command":"splice_insert","duration_ticks":5400000,"pts_adjustment":0}</div>
+          <div class="rule-value">{"build":{"command":"splice_insert_out","duration_s":60}}</div>
         </div>
-        
-        <p><strong>Result:</strong> Every program_end signal is automatically converted to a 60-second ad opportunity.</p>
+
+        <p><strong>Result:</strong> Every Program End signal is converted to a 60-second ad opportunity.</p>
       </div>
 
       <!-- Use Case 2 -->
@@ -426,10 +519,10 @@
           <div class="rule-value">delete</div>
           
           <div class="rule-label">Match:</div>
-          <div class="rule-value">{"anyOf":[{"acquisition_signal_id":"test-*"}]}</div>
+          <div class="rule-value">{"anyOf":[{"acquisitionSignalID":"test-*"}]}</div>
         </div>
-        
-        <p><strong>Result:</strong> All signals with IDs starting with "test-" are silently dropped before reaching downstream systems.</p>
+
+        <p><strong>Result:</strong> All signals with IDs starting with "test-" are dropped (no BinaryData emitted) before reaching downstream systems.</p>
       </div>
 
       <!-- Use Case 3 -->
@@ -442,54 +535,54 @@
         <div class="use-case-scenario">
           <strong>Scenario:</strong> Your network requires all ad breaks to be exactly 90 seconds, but upstream signals vary between 60-120 seconds.
         </div>
-        
-        <p><strong>Solution:</strong> Create a rule that normalizes all splice_insert durations to 90 seconds:</p>
-        
+
+        <p><strong>Solution:</strong> Condition the incoming cue in place with <code>shorten</code> (or <code>fill</code>), setting the break duration to 90 seconds. The break duration is rewritten and the SCTE-35 length and CRC are recomputed:</p>
+
         <div class="rule-config">
           <div class="rule-label">Name:</div>
           <div class="rule-value">Normalize to 90s Breaks</div>
-          
+
           <div class="rule-label">Action:</div>
-          <div class="rule-value">replace</div>
-          
+          <div class="rule-value">shorten</div>
+
           <div class="rule-label">Match:</div>
           <div class="rule-value">{"anyOf":[{"scte35.command":"splice_insert"}]}</div>
-          
+
           <div class="rule-label">Parameters:</div>
-          <div class="rule-value">{"command":"splice_insert","duration_ticks":8100000}</div>
+          <div class="rule-value">{"to_duration_s":90}</div>
         </div>
-        
-        <p><strong>Result:</strong> All splice_insert signals are rewritten to have exactly 90 seconds duration (8.1M ticks at 90kHz).</p>
+
+        <p><strong>Result:</strong> Every splice_insert break is set to exactly 90 seconds.</p>
       </div>
 
       <!-- Use Case 4 -->
       <div class="use-case">
         <div class="use-case-header">
           <div class="use-case-number">4</div>
-          <div class="use-case-title">Add PTS Adjustment for Encoding Delay</div>
+          <div class="use-case-title">Black Out a Regional Avail</div>
         </div>
-        
+
         <div class="use-case-scenario">
-          <strong>Scenario:</strong> Your encoding pipeline introduces a 2-second delay, and SCTE-35 timing needs to be adjusted to compensate.
+          <strong>Scenario:</strong> A national feed carries an ad avail that must be regionally restricted (no web delivery, regional blackout enforced) on your affiliate.
         </div>
-        
-        <p><strong>Solution:</strong> Create a rule that adds 180,000 ticks (2 seconds at 90kHz) to all signals:</p>
-        
+
+        <p><strong>Solution:</strong> Use <code>blackout</code> to set the delivery-restriction flags on the incoming cue in place (lengths and CRC are recomputed):</p>
+
         <div class="rule-config">
           <div class="rule-label">Name:</div>
-          <div class="rule-value">Add 2s Encoding Delay</div>
-          
+          <div class="rule-value">Regional Blackout</div>
+
           <div class="rule-label">Action:</div>
-          <div class="rule-value">replace</div>
-          
+          <div class="rule-value">blackout</div>
+
           <div class="rule-label">Match:</div>
-          <div class="rule-value">{"anyOf":[{}]}</div>
-          
+          <div class="rule-value">{"anyOf":[{"scte35.segmentation_type_id":"0x34"}]}</div>
+
           <div class="rule-label">Parameters:</div>
-          <div class="rule-value">{"pts_adjustment":180000}</div>
+          <div class="rule-value">{"restrictions":{"web_delivery_allowed":false,"no_regional_blackout":false,"archive_allowed":true,"device_restrictions":0}}</div>
         </div>
-        
-        <p><strong>Result:</strong> All SCTE-35 signals have their timing adjusted by 2 seconds to synchronize with the encoding delay.</p>
+
+        <p><strong>Result:</strong> Each Provider Placement Opportunity (0x34) carries restriction flags so downstream packagers enforce the blackout. The friendly action is also echoed in <code>&lt;pois:Decision&gt;</code>.</p>
       </div>
 
       <!-- Use Case 5 -->
@@ -508,23 +601,23 @@
         <div class="rule-config">
           <div class="rule-label">Channel A:</div>
           <div class="rule-value">sports-live</div>
-          
+
           <div class="rule-label">Rule:</div>
-          <div class="rule-value">Convert all to 30s breaks (AdServer1 format)</div>
-          
+          <div class="rule-value">replace — build a 30s splice_insert ad-out (AdServer1 format)</div>
+
           <div class="rule-label">Parameters:</div>
-          <div class="rule-value">{"command":"splice_insert","duration_ticks":2700000}</div>
+          <div class="rule-value">{"build":{"command":"splice_insert_out","duration_s":30}}</div>
         </div>
-        
+
         <div class="rule-config">
           <div class="rule-label">Channel B:</div>
           <div class="rule-value">news-24x7</div>
-          
+
           <div class="rule-label">Rule:</div>
-          <div class="rule-value">Convert all to program_start/program_end (AdServer2 format)</div>
-          
+          <div class="rule-value">replace — build a time_signal with a Program Start descriptor (AdServer2 format)</div>
+
           <div class="rule-label">Parameters:</div>
-          <div class="rule-value">{"command":"program_start"}</div>
+          <div class="rule-value">{"build":{"command":"time_signal","segmentation_type_id":"0x10"}}</div>
         </div>
         
         <p><strong>Result:</strong> Each channel independently transforms signals according to its downstream ad server requirements.</p>
@@ -611,46 +704,38 @@ POST /esam?channel=news-24x7</code>
     <!-- Channels API -->
     <div id="channels" class="section">
       <h2>Channels API</h2>
-      
+      <p>A channel owns an independent rule set. The list is scoped to the channels you may see
+        (owned, global, or shared to one of your groups). <strong>Note on identifiers:</strong> the
+        ESAM endpoint addresses channels by their unique <em>name</em>, but the management API
+        addresses a single channel by its numeric <code>id</code>. Channel names are globally unique.</p>
+      <p class="text-muted" style="font-size:13px"><code>enabled</code> and <code>is_global</code> are
+        returned as integers (<code>0</code>/<code>1</code>). <code>owner_user_id</code> is the id of the
+        creating user (may be <code>null</code> for seeded channels). There is no single-channel
+        <code>GET</code>; read a channel from the list response.</p>
+
       <!-- List Channels -->
       <div class="endpoint">
         <div class="endpoint-header">
           <span class="method method-get">GET</span>
           <span class="endpoint-path">/api/channels</span>
         </div>
-        <p class="endpoint-description">List all channels</p>
-        
+        <p class="endpoint-description">List the channels you can see (ordered by name)</p>
+
         <h4>Response</h4>
         <div class="code-block">
           <code>[
   {
-    "id": 1,
-    "name": "live-sports",
-    "enabled": true,
-    "owner_id": 1,
-    "created_at": "2025-11-01T10:00:00Z"
+    "id": 15,
+    "name": "WANF-Primary",
+    "enabled": 1,
+    "timezone": "UTC",
+    "owner_user_id": 3,
+    "deleted_at": null,
+    "is_global": 0,
+    "created_at": "2026-05-01T10:00:00Z",
+    "updated_at": "2026-05-01T10:00:00Z"
   }
 ]</code>
-        </div>
-      </div>
-
-      <!-- Get Channel -->
-      <div class="endpoint">
-        <div class="endpoint-header">
-          <span class="method method-get">GET</span>
-          <span class="endpoint-path">/api/channels/{channel_name}</span>
-        </div>
-        <p class="endpoint-description">Get channel details</p>
-        
-        <h4>Response</h4>
-        <div class="code-block">
-          <code>{
-  "id": 1,
-  "name": "live-sports",
-  "enabled": true,
-  "owner_id": 1,
-  "created_at": "2025-11-01T10:00:00Z"
-}</code>
         </div>
       </div>
 
@@ -660,52 +745,65 @@ POST /esam?channel=news-24x7</code>
           <span class="method method-post">POST</span>
           <span class="endpoint-path">/api/channels</span>
         </div>
-        <p class="endpoint-description">Create a new channel</p>
-        
+        <p class="endpoint-description">Create a new channel and publish it to one or more of your groups</p>
+
         <h4>Request Body</h4>
+        <table class="param-table">
+          <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+          <tr><td><span class="param-name">name</span></td><td>string</td><td>Required. Globally unique.</td></tr>
+          <tr><td><span class="param-name">enabled</span></td><td>boolean</td><td>Optional (default <code>true</code>).</td></tr>
+          <tr><td><span class="param-name">timezone</span></td><td>string</td><td>Optional (default <code>"UTC"</code>).</td></tr>
+          <tr><td><span class="param-name">group_ids</span></td><td>number[]</td><td>Groups to publish to. Optional if you belong to exactly one group (it is used automatically); required if you belong to several. Must be groups you belong to.</td></tr>
+          <tr><td><span class="param-name">is_global</span></td><td>boolean</td><td>Super-admin only; makes the channel visible to all groups.</td></tr>
+        </table>
         <div class="code-block">
           <code>{
-  "name": "live-sports",
-  "enabled": true
+  "name": "WANF-Primary",
+  "enabled": true,
+  "timezone": "America/New_York",
+  "group_ids": [3]
 }</code>
         </div>
 
         <h4>Response</h4>
-        <div class="code-block">
-          <code>{
-  "id": 1,
-  "name": "live-sports",
-  "enabled": true,
-  "owner_id": 1,
-  "created_at": "2025-11-01T10:00:00Z"
-}</code>
-        </div>
+        <p>The created channel object (same shape as the list items above).</p>
       </div>
 
       <!-- Update Channel -->
       <div class="endpoint">
         <div class="endpoint-header">
           <span class="method method-put">PUT</span>
-          <span class="endpoint-path">/api/channels/{channel_name}</span>
+          <span class="endpoint-path">/api/channels/{id}</span>
         </div>
-        <p class="endpoint-description">Update channel settings</p>
-        
+        <p class="endpoint-description">Update a channel by numeric id (requires write access to the channel)</p>
+
         <h4>Request Body</h4>
+        <p>All fields optional except <code>name</code>; supply only what you want to change.
+          <code>group_ids</code> re-publishes the channel (a scoped merge: shares to groups you do not
+          manage are preserved). <code>is_global</code> is honored for super-admins only.</p>
         <div class="code-block">
           <code>{
+  "name": "WANF-Primary",
   "enabled": false
 }</code>
         </div>
+        <h4>Response</h4>
+        <p>The updated channel object.</p>
       </div>
 
       <!-- Delete Channel -->
       <div class="endpoint">
         <div class="endpoint-header">
           <span class="method method-delete">DELETE</span>
-          <span class="endpoint-path">/api/channels/{channel_name}</span>
+          <span class="endpoint-path">/api/channels/{id}</span>
         </div>
-        <p class="endpoint-description">Delete a channel and all its rules</p>
+        <p class="endpoint-description">Soft-delete a channel by numeric id (and disable it); requires write access</p>
       </div>
+
+      <h3>Sharing a channel</h3>
+      <p>To change which groups a channel is shared with (or toggle global visibility), use the
+        generic sharing endpoint <code>GET/PUT /api/share/channel/{id}</code>. It is documented in the
+        Admin Guide and is available to anyone with write access to the resource.</p>
     </div>
 
     <!-- Rules API -->
@@ -718,24 +816,28 @@ POST /esam?channel=news-24x7</code>
           <span class="method method-get">GET</span>
           <span class="endpoint-path">/api/channels/{channel_id}/rules</span>
         </div>
-        <p class="endpoint-description">List all rules for a channel (ordered by priority)</p>
-        
+        <p class="endpoint-description">List all rules for a channel, by numeric channel id (ordered by priority). Requires read access to the channel.</p>
+
         <h4>Response</h4>
         <div class="code-block">
           <code>[
   {
     "id": 1,
-    "channel_id": 1,
+    "channel_id": 15,
     "name": "Delete splice_insert",
     "priority": 10,
-    "enabled": true,
-    "action": "delete",
+    "enabled": 1,
     "match_json": "{\"anyOf\":[{\"scte35.command\":\"splice_insert\"}]}",
+    "action": "delete",
     "params_json": "{}",
-    "created_at": "2025-11-01T10:00:00Z"
+    "owner_user_id": 3,
+    "deleted_at": null,
+    "created_at": "2026-05-01T10:00:00Z",
+    "updated_at": "2026-05-01T10:00:00Z"
   }
 ]</code>
         </div>
+        <p class="text-muted" style="font-size:13px"><code>enabled</code> is an integer (<code>0</code>/<code>1</code>). <code>match_json</code> and <code>params_json</code> are returned as JSON <em>strings</em> (see the create-rule note below).</p>
       </div>
 
       <!-- Create Rule -->
@@ -744,19 +846,23 @@ POST /esam?channel=news-24x7</code>
           <span class="method method-post">POST</span>
           <span class="endpoint-path">/api/channels/{channel_id}/rules</span>
         </div>
-        <p class="endpoint-description">Create a new rule (priority -1 appends at end, spaced by 10)</p>
-        
+        <p class="endpoint-description">Create a new rule on a channel, by numeric channel id (priority -1 appends at end, spaced by 10). Requires write access to the channel.</p>
+
         <h4>Request Body</h4>
         <div class="code-block">
           <code>{
   "name": "Delete splice_insert",
-  "priority": 10,
+  "priority": -1,
   "enabled": true,
   "action": "delete",
-  "match_json": "{\"anyOf\":[{\"scte35.command\":\"splice_insert\"}]}",
-  "params_json": "{}"
+  "match_json": { "anyOf": [ { "scte35.command": "splice_insert" } ] },
+  "params_json": {}
 }</code>
         </div>
+        <p class="text-muted" style="font-size:13px"><strong>Important:</strong> on the way in,
+          <code>match_json</code> and <code>params_json</code> are JSON <em>objects</em> (not stringified
+          JSON). The server stores them as strings, so list/get responses return them as strings. Pass
+          <code>priority: -1</code> to append the rule at the end.</p>
 
         <h4>Rule Actions</h4>
         <p>The <code>action</code> is a friendly label; on the ESAM wire it maps to a standard verb and the effect is carried in the conditioned SCTE-35 (plus <code>&lt;pois:Decision&gt;</code> metadata).</p>
@@ -771,8 +877,9 @@ POST /esam?channel=news-24x7</code>
           <tr><td><span class="param-name">delete</span></td><td>delete</td><td>Drop the signal (no BinaryData emitted)</td></tr>
           <tr><td><span class="param-name">blackout</span></td><td>replace</td><td>Set delivery-restriction flags on the incoming cue</td></tr>
           <tr><td><span class="param-name">regionalize</span></td><td>replace</td><td>Rewrite the incoming UPID (regional/affiliate targeting)</td></tr>
-          <tr><td><span class="param-name">shorten</span> / <span class="param-name">extend</span></td><td>replace</td><td>Set the break duration (break_duration / segmentation_duration)</td></tr>
-          <tr><td><span class="param-name">fill</span></td><td>replace</td><td>Pad the break to a target duration (filler is a packager hint)</td></tr>
+          <tr><td><span class="param-name">shorten</span></td><td>replace</td><td>Set the incoming break to a target duration (<code>to_duration_s</code>)</td></tr>
+          <tr><td><span class="param-name">extend</span></td><td>replace</td><td>Add to the incoming break duration (<code>duration_s</code>, additive)</td></tr>
+          <tr><td><span class="param-name">fill</span></td><td>replace</td><td>Set the break to a target duration (<code>to_duration_s</code>; filler is a packager hint)</td></tr>
           <tr><td><span class="param-name">slate</span></td><td>noop</td><td>Pass through + signal the MCR/packager to insert a slate</td></tr>
           <tr><td><span class="param-name">tracking-only</span></td><td>noop</td><td>Pass through + report only (no ad decisioning)</td></tr>
         </table>
@@ -819,9 +926,11 @@ POST /esam?channel=news-24x7</code>
 {"restrictions":{"web_delivery_allowed":false,"no_regional_blackout":false,
                  "archive_allowed":true,"device_restrictions":0}}
 
-// shorten / extend — set break duration (seconds);  fill — pad to a target
-{"duration_s":15}
+// shorten / fill — SET the break to a target duration (seconds)
 {"to_duration_s":30,"filler":"house"}
+
+// extend — ADD seconds to the incoming break duration (additive)
+{"duration_s":15}
 
 // slate — packager hint;   noop / delete / tracking-only — no params
 {"asset":"slate-1","duration_s":10}
@@ -835,7 +944,7 @@ POST /esam?channel=news-24x7</code>
           <span class="method method-put">PUT</span>
           <span class="endpoint-path">/api/rules/{rule_id}</span>
         </div>
-        <p class="endpoint-description">Update an existing rule (full upsert body, same fields as create)</p>
+        <p class="endpoint-description">Update an existing rule (full body, same fields as create). Requires write access to the rule's channel.</p>
       </div>
 
       <!-- Delete Rule -->
@@ -844,7 +953,7 @@ POST /esam?channel=news-24x7</code>
           <span class="method method-delete">DELETE</span>
           <span class="endpoint-path">/api/rules/{rule_id}</span>
         </div>
-        <p class="endpoint-description">Delete a rule (soft delete)</p>
+        <p class="endpoint-description">Soft-delete a rule. Requires write access to the rule's channel.</p>
       </div>
 
       <!-- Reorder Rules -->
@@ -853,7 +962,187 @@ POST /esam?channel=news-24x7</code>
           <span class="method method-post">POST</span>
           <span class="endpoint-path">/api/rules/reorder</span>
         </div>
-        <p class="endpoint-description">Reorder rules by priority — body: <code>{"ids":[3,1,2]}</code> (reassigns priorities 0,10,20,…)</p>
+        <p class="endpoint-description">Reorder rules by priority — body: <code>{"ordered_ids":[3,1,2]}</code> (reassigns priorities 0,10,20,… in that order). All ids must belong to one channel you can write; returns <code>204 No Content</code>.</p>
+      </div>
+    </div>
+
+    <!-- Projects & Templates -->
+    <div id="projects" class="section">
+      <h2>Projects &amp; Templates</h2>
+      <p>A <strong>template</strong> captures a single rule (<code>kind: "rule"</code>) or a whole
+        channel and its rules (<code>kind: "channel"</code>) as a reusable snapshot. A
+        <strong>project</strong> groups templates together. Applying a channel template (or a project)
+        spins up new channels; applying a rule template appends the rule to an existing channel. Like
+        everything else, projects and templates are group-scoped, and their list/detail responses carry
+        a <code>group_ids</code> array indicating which groups they are shared to.</p>
+
+      <h3>Projects</h3>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/projects</span>
+        </div>
+        <p class="endpoint-description">List the projects you can see (ordered by name), or create one.</p>
+        <h4>List Response</h4>
+        <div class="code-block">
+          <code>[
+  {
+    "id": 1,
+    "name": "Station Starter",
+    "description": "Baseline channels for a new affiliate",
+    "is_shared": 0,
+    "is_global": 0,
+    "owner_user_id": 3,
+    "deleted_at": null,
+    "created_at": "2026-05-10T10:00:00Z",
+    "updated_at": "2026-05-10T10:00:00Z",
+    "group_ids": [3]
+  }
+]</code>
+        </div>
+        <h4>Create Request Body</h4>
+        <div class="code-block">
+          <code>{
+  "name": "Station Starter",
+  "description": "Baseline channels for a new affiliate",
+  "group_ids": [3]
+}</code>
+        </div>
+        <p class="text-muted" style="font-size:13px"><code>group_ids</code> defaults to your own group(s) when omitted. <code>is_global</code> (super-admin only) makes the project visible to all groups.</p>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="method method-put">PUT</span>
+          <span class="method method-delete">DELETE</span>
+          <span class="endpoint-path">/api/projects/{id}</span>
+        </div>
+        <p class="endpoint-description"><code>GET</code> returns the project plus its member templates; <code>PUT</code> edits metadata / re-shares (<code>{ name?, description?, group_ids?, is_global? }</code>); <code>DELETE</code> soft-deletes the project (its templates survive, unfiled). Edit/delete require write access.</p>
+        <h4>GET Response</h4>
+        <div class="code-block">
+          <code>{
+  "project": { "id": 1, "name": "Station Starter", "...": "...", "group_ids": [3] },
+  "templates": [
+    { "id": 5, "name": "WANF-Primary", "kind": "channel", "project_id": 1, "group_ids": [3], "...": "..." }
+  ]
+}</code>
+        </div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/projects/{id}/apply</span>
+        </div>
+        <p class="endpoint-description">Instantiate every channel template in the project as a new channel (names are made unique). New channels land in your own group(s). Requires read access to the project; no request body.</p>
+        <h4>Response</h4>
+        <div class="code-block">
+          <code>{
+  "project_id": 1,
+  "channels_created": 2,
+  "created": [
+    { "template_id": 5, "channel_id": 21, "channel_name": "WANF-Primary", "rules_created": 4 }
+  ],
+  "errors": []
+}</code>
+        </div>
+      </div>
+
+      <h3>Templates</h3>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="endpoint-path">/api/templates</span>
+        </div>
+        <p class="endpoint-description">List the templates you can see (featured first, then by kind and name), each annotated with <code>group_ids</code>.</p>
+        <h4>Query Parameters</h4>
+        <table class="param-table">
+          <tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+          <tr><td><span class="param-name">project_id</span></td><td>integer</td><td>Only templates filed in this project</td></tr>
+          <tr><td><span class="param-name">unfiled</span></td><td>boolean</td><td><code>true</code> = only templates not in any project</td></tr>
+          <tr><td><span class="param-name">kind</span></td><td>string</td><td><code>rule</code> or <code>channel</code></td></tr>
+          <tr><td><span class="param-name">default</span></td><td>boolean</td><td><code>true</code> = only featured/default starter templates</td></tr>
+        </table>
+        <h4>Response</h4>
+        <div class="code-block">
+          <code>[
+  {
+    "id": 5,
+    "name": "Blackout 0x34",
+    "kind": "rule",
+    "description": null,
+    "project_id": 1,
+    "body_json": "{...captured rule/channel...}",
+    "is_shared": 0,
+    "is_default": 0,
+    "is_global": 0,
+    "owner_user_id": 3,
+    "deleted_at": null,
+    "created_at": "2026-05-10T10:00:00Z",
+    "updated_at": "2026-05-10T10:00:00Z",
+    "group_ids": [3]
+  }
+]</code>
+        </div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="method method-put">PUT</span>
+          <span class="method method-delete">DELETE</span>
+          <span class="endpoint-path">/api/templates/{id}</span>
+        </div>
+        <p class="endpoint-description">Fetch one template, edit its metadata (<code>{ name?, description?, project_id?, is_default?, group_ids?, is_global? }</code> — send <code>project_id: null</code> to unfile), or soft-delete it. Edit/delete require write access.</p>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/templates/from-rule/{rule_id}</span>
+        </div>
+        <p class="endpoint-description">Capture an existing rule as a <code>rule</code> template. Requires read access to the rule's channel.</p>
+        <h4>Request Body (all optional)</h4>
+        <div class="code-block">
+          <code>{
+  "name": "Blackout 0x34",
+  "project_id": 1,
+  "description": "Regional blackout starter",
+  "group_ids": [3]
+}</code>
+        </div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/templates/from-channel/{channel_id}</span>
+        </div>
+        <p class="endpoint-description">Capture a channel and all its rules as a <code>channel</code> template. Same optional body as from-rule. Requires read access to the channel.</p>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/templates/{id}/apply</span>
+        </div>
+        <p class="endpoint-description">Apply a template. For a <code>channel</code> template a new channel is created (name made unique) in your group(s). For a <code>rule</code> template the rule is appended to <code>target_channel_id</code> (required), which you must be able to write.</p>
+        <h4>Request Body</h4>
+        <div class="code-block">
+          <code>// rule template -> append to a channel
+{ "target_channel_id": 15, "name": "Optional new rule name" }
+
+// channel template -> new channel
+{ "name": "Optional new channel name" }</code>
+        </div>
+        <h4>Channel-apply Response</h4>
+        <div class="code-block">
+          <code>{ "channel_id": 21, "channel_name": "WANF-Primary-2", "rules_created": 4 }</code>
+        </div>
       </div>
     </div>
 
@@ -1280,7 +1569,7 @@ docker run -p 80:8080 -e SWAGGER_JSON=/openapi.yaml \
 
     <!-- Footer -->
     <div style="text-align: center; margin-top: 80px; padding: 40px 0; border-top: 1px solid var(--border);">
-      <p class="text-secondary">POIS v3.12.1 | <a href="https://github.com/bokelleher/rust-pois" target="_blank">GitHub</a> | <a href="/static/events.html">Event Monitor</a></p>
+      <p class="text-secondary">POIS v3.12.2 | <a href="https://github.com/bokelleher/rust-pois" target="_blank">GitHub</a> | <a href="/static/events.html">Event Monitor</a></p>
     </div>
   </main>
 
