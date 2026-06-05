@@ -1728,7 +1728,7 @@ dependencies = [
 
 [[package]]
 name = "pois-esam-server"
-version = "3.12.3"
+version = "3.12.4"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1744,7 +1744,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
- "sesame",
+ "sesame-esam",
  "sha2",
  "sqlx",
  "time",
@@ -2152,9 +2152,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "sesame"
-version = "0.1.0"
-source = "git+https://github.com/bokelleher/sesame-sdk?rev=122d0f19c04497058b3994f098f62f3695f1cf51#122d0f19c04497058b3994f098f62f3695f1cf51"
+name = "sesame-esam"
+version = "0.1.2"
+source = "git+https://github.com/bokelleher/sesame-sdk?tag=v0.1.2#84db950ba44e16a527a3ebff177b85551a8547f1"
 dependencies = [
  "aes-gcm",
  "hmac",

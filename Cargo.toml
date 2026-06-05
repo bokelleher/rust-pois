@@ -1,6 +1,6 @@
 [package]
 name = "pois-esam-server"
-version = "3.12.3"
+version = "3.12.4"
 edition = "2021"
 
 [dependencies]
@@ -44,7 +44,12 @@ anyhow = "1.0.86"
 # DB/axum deps; brings its own RustCrypto stack (aes-gcm/hmac/sha2/…). rust-pois
 # consumes it via the `pois_esam_server::sesame` re-export in src/lib.rs. Keep
 # DEFAULT features (incl. `rng`) on — we use sign_response + random_iv.
-sesame = { git = "https://github.com/bokelleher/sesame-sdk", rev = "122d0f19c04497058b3994f098f62f3695f1cf51" }
+# Pinned to the released tag v0.1.2. The crates.io package was renamed
+# `sesame` -> `sesame-esam` (the `[lib] name` stays `sesame`), so `package` is
+# set explicitly while the local crate name stays `sesame`. v0.1.2's src/ is
+# byte-identical to the former rev 122d0f1 (only Cargo.toml/README/LICENSE/example
+# changed), so this is a provenance update with no wire/behavior change.
+sesame = { git = "https://github.com/bokelleher/sesame-sdk", tag = "v0.1.2", package = "sesame-esam" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
