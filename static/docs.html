@@ -1,9 +1,14 @@
 <!doctype html>
 <!--
-  docs.html - API Documentation
-  Version: 3.6.0
-  Last updated: 2026-06-02
-  Changes: Refreshed for the rule-engine action set (replace/blackout/regionalize/
+  docs.html - Documentation (User Guide + Admin Guide)
+  Version: 3.12.1
+  Last updated: 2026-06-05
+  Changes: (3.12.0) Split into a User Guide and an Admin Guide via audience tabs.
+           The Admin Guide (Groups & RBAC, Users & Passwords incl. forced first-login
+           change, Resource Sharing, SESAME) is revealed only to admins/group-admins.
+           NOTE: the User Guide API reference is still the pre-RBAC content and is due
+           a content refresh (tracked separately).
+           (3.6.0) Refreshed for the rule-engine action set (replace/blackout/regionalize/
            shorten/extend/fill/slate/tracking-only), correct ESAM BinaryData
            request/response + <pois:Decision> metadata, accurate Rules API routes
            and params (build / scte35_b64 / rewrite_upid / restrictions / duration),
@@ -58,6 +63,46 @@
       background: rgba(139, 92, 246, 0.2);
       border-color: var(--primary);
     }
+
+    /* User / Admin audience tabs */
+    .docs-tabs {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-bottom: 28px;
+    }
+    .docs-tab {
+      padding: 10px 22px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--text-secondary);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .docs-tab:hover { border-color: var(--primary); color: var(--text-primary); }
+    .docs-tab.active {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+      border-color: transparent;
+      color: #fff;
+    }
+    .audience-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 3px 10px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+    .audience-label.user  { background: rgba(16,185,129,0.16); color:#6ee7b7; border:1px solid rgba(16,185,129,0.35); }
+    .audience-label.admin { background: rgba(245,158,11,0.16); color:#fcd34d; border:1px solid rgba(245,158,11,0.35); }
+    /* Toggled by JS: body gets .show-user or .show-admin */
+    body.show-user  [data-audience="admin"] { display: none; }
+    body.show-admin [data-audience="user"]  { display: none; }
     
     .section {
       margin-bottom: 60px;
@@ -220,10 +265,10 @@
 
     .use-case-scenario {
       background: rgba(139, 92, 246, 0.1);
-      border-left: 3px solid var(--primary);
+      border: 1px solid rgba(139, 92, 246, 0.3);
       padding: 12px 16px;
       margin: 16px 0;
-      border-radius: 4px;
+      border-radius: 8px;
     }
 
     .rule-config {
@@ -252,11 +297,18 @@
 
   <main class="docs-container">
     <div class="docs-header">
-      <h1>POIS API Documentation</h1>
-      <p class="text-secondary">Placement Opportunity Insertion Service v2.1.0</p>
+      <h1>POIS Documentation</h1>
+      <p class="text-secondary">Placement Opportunity Information Service v3.12.1</p>
     </div>
 
-    <div class="docs-nav">
+    <!-- Audience tabs (Admin tab is revealed only to admins by JS) -->
+    <div class="docs-tabs">
+      <button class="docs-tab active" data-tab="user">User Guide</button>
+      <button class="docs-tab" data-tab="admin" id="adminTab" style="display:none;">Admin Guide</button>
+    </div>
+
+    <!-- USER nav -->
+    <div class="docs-nav" data-audience="user">
       <a href="#overview">Overview</a>
       <a href="#authentication">Authentication</a>
       <a href="#use-cases">Use Cases</a>
@@ -268,8 +320,21 @@
       <a href="#swagger">OpenAPI Spec</a>
     </div>
 
+    <!-- ADMIN nav -->
+    <div class="docs-nav" data-audience="admin">
+      <a href="#admin-overview">Admin Overview</a>
+      <a href="#groups-rbac">Groups &amp; RBAC</a>
+      <a href="#user-management">Users &amp; Passwords</a>
+      <a href="#sharing">Resource Sharing</a>
+      <a href="#sesame-admin">SESAME Security</a>
+    </div>
+
+    <!-- ================= USER GUIDE ================= -->
+    <div data-audience="user">
+
     <!-- Overview -->
     <div id="overview" class="section">
+      <span class="audience-label user">For users &amp; integrators</span>
       <h2>Overview</h2>
       <p>POIS is an ESAM (Event Signaling and Management, SCTE 130-3) server that processes SCTE-35 signals and applies rule-based conditioning. It provides:</p>
       <ul>
@@ -1034,9 +1099,188 @@ docker run -p 80:8080 -e SWAGGER_JSON=/openapi.yaml \
       </div>
     </div>
 
+    </div><!-- /USER GUIDE -->
+
+    <!-- ================= ADMIN GUIDE ================= -->
+    <div data-audience="admin">
+
+    <!-- Admin Overview -->
+    <div id="admin-overview" class="section">
+      <span class="audience-label admin">For administrators</span>
+      <h2>Admin Overview</h2>
+      <p>POIS is multi-tenant. Resources (channels, projects, templates) are owned by a
+        user and shared to <strong>groups</strong>; rules and ESAM events inherit their
+        channel's groups. Two kinds of elevated access exist:</p>
+      <ul>
+        <li><strong>Super-admin</strong> (<code>users.role = "admin"</code>) — bypasses all
+          group checks; manages groups, users, and org-wide (global) visibility.</li>
+        <li><strong>Group-admin</strong> (<code>group_members.role = "admin"</code> for a
+          group) — manages membership and content within that group only. This is a
+          per-membership role, not a user role.</li>
+      </ul>
+      <p>The access model (super-admin bypasses everything):</p>
+      <ul>
+        <li><strong>Read</strong> a resource ⇔ you own it, OR it is global, OR it is shared
+          to a group you are a <em>member</em> of.</li>
+        <li><strong>Write</strong> (edit / delete / share) ⇔ you own it, OR you are a
+          <em>group-admin</em> of a group it is shared to.</li>
+      </ul>
+    </div>
+
+    <!-- Groups & RBAC -->
+    <div id="groups-rbac" class="section">
+      <span class="audience-label admin">For administrators</span>
+      <h2>Groups &amp; RBAC</h2>
+      <p>A group is a tenant boundary (e.g. a station or a national channel). Membership
+        carries a per-group role of <code>admin</code> or <code>member</code>. Identity is
+        resolved live from the database on every request, so membership changes take effect
+        immediately (no need to re-issue tokens).</p>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="endpoint-path">/api/me/groups</span>
+        </div>
+        <p class="endpoint-description">The caller's own groups + per-group role, and whether they are a super-admin. Used by the UI to gate admin features.</p>
+        <h4>Response</h4>
+        <div class="code-block">
+          <code>{
+  "super_admin": false,
+  "groups": [ { "id": 3, "name": "WANF-Atlanta", "role": "admin" } ]
+}</code>
+        </div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="endpoint-path">/api/groups</span>
+          <span class="method method-post">POST</span>
+        </div>
+        <p class="endpoint-description">List groups (super-admin: all; otherwise your groups). <code>POST</code> creates a group (super-admin only). <code>{ name, description? }</code></p>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="method method-put">PUT</span>
+          <span class="method method-delete">DELETE</span>
+          <span class="endpoint-path">/api/groups/{id}</span>
+        </div>
+        <p class="endpoint-description">Get a group + members (member), rename / edit (group-admin), or soft-delete (super-admin).</p>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/groups/{id}/members</span>
+        </div>
+        <p class="endpoint-description">List members, or add / change a member's role (group-admin). <code>{ user_id, role: "admin" | "member" }</code>. Remove with <code>DELETE /api/groups/{id}/members/{user_id}</code>.</p>
+      </div>
+    </div>
+
+    <!-- Users & Passwords -->
+    <div id="user-management" class="section">
+      <span class="audience-label admin">For administrators</span>
+      <h2>Users &amp; Passwords</h2>
+      <p>Super-admins manage all users; group-admins manage users within the groups they
+        administer (created users are auto-added to that group with role <code>user</code> —
+        a group-admin can never mint a super-admin).</p>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/users</span>
+        </div>
+        <p class="endpoint-description">List users in scope, or provision a new one. <code>{ username, password, role, email?, group_id? }</code>. A provisioned account is created with a temporary password and <code>must_change_password</code> set.</p>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-put">PUT</span>
+          <span class="method method-delete">DELETE</span>
+          <span class="endpoint-path">/api/users/{id}</span>
+        </div>
+        <p class="endpoint-description">Update role / enabled / email / password (admin reset re-arms <code>must_change_password</code>), or delete (super-admin; the bootstrap admin id 1 is protected).</p>
+      </div>
+
+      <h3>Forced password change on first login</h3>
+      <p>When an account is flagged <code>must_change_password</code> (every API-provisioned
+        account, and any account whose password an admin resets), the server blocks
+        <strong>every</strong> endpoint with <code>403</code> except the change-password one
+        until the user sets their own password. API tokens are exempt.</p>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-post">POST</span>
+          <span class="endpoint-path">/api/auth/change-password</span>
+        </div>
+        <p class="endpoint-description">Set a new password. <code>{ current_password, new_password }</code>. The new password must differ from the current one and be at least 8 characters; success clears the forced-change flag.</p>
+      </div>
+    </div>
+
+    <!-- Resource Sharing -->
+    <div id="sharing" class="section">
+      <span class="audience-label admin">For administrators</span>
+      <h2>Resource Sharing</h2>
+      <p>Share an existing channel, project, or template to specific groups. A non-super
+        caller may only target groups they belong to; shares to groups outside their reach
+        are preserved (a scoped merge), so a group-admin can never clobber another tenant's
+        access. Only super-admins may toggle org-wide (global) visibility.</p>
+
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method method-get">GET</span>
+          <span class="method method-put">PUT</span>
+          <span class="endpoint-path">/api/share/{kind}/{id}</span>
+        </div>
+        <p class="endpoint-description"><code>kind</code> is <code>channel</code>, <code>project</code>, or <code>template</code>. <code>GET</code> returns current sharing; <code>PUT</code> applies it.</p>
+        <h4>GET Response</h4>
+        <div class="code-block">
+          <code>{
+  "kind": "channel",
+  "id": 15,
+  "group_ids": [3],
+  "is_global": false,
+  "can_write": true
+}</code>
+        </div>
+        <h4>PUT Request Body</h4>
+        <div class="code-block">
+          <code>{
+  "group_ids": [3, 5],
+  "is_global": false
+}</code>
+        </div>
+      </div>
+    </div>
+
+    <!-- SESAME Security -->
+    <div id="sesame-admin" class="section">
+      <span class="audience-label admin">For administrators</span>
+      <h2>SESAME Security (SCTE 130-9)</h2>
+      <p>SESAME secures the ESAM exchange. It is configured per deployment via
+        <code>POIS_SESAME_*</code> environment variables (key material in
+        <code>POIS_SESAME_KEYS</code>) and enforced per channel via
+        <code>channels.sesame_min_tier</code>:</p>
+      <ul>
+        <li><strong>Tier 1</strong> — HMAC-SHA256 request authentication.</li>
+        <li><strong>Tier 2</strong> — channel-scoped authorization (a key may only act on its channels).</li>
+        <li><strong>Tier 3</strong> — AES-256-GCM payload encryption (encrypt-then-MAC).</li>
+      </ul>
+      <p>Responses are always signed (and, at Tier 3, encrypted) so a consumer can verify
+        the POIS decision was not forged. A channel with a minimum tier rejects requests
+        below it with <code>401</code>. The achieved tier is recorded per event and shown in
+        the Event Monitor's SESAME column. With no <code>POIS_SESAME_*</code> config the
+        ESAM path is unauthenticated (legacy SCTE 130-3 behavior).</p>
+    </div>
+
+    </div><!-- /ADMIN GUIDE -->
+
     <!-- Footer -->
     <div style="text-align: center; margin-top: 80px; padding: 40px 0; border-top: 1px solid var(--border);">
-      <p class="text-secondary">POIS v2.1.0 | <a href="https://github.com/bokelleher/rust-pois" target="_blank">GitHub</a> | <a href="/static/events.html">Event Monitor</a></p>
+      <p class="text-secondary">POIS v3.12.1 | <a href="https://github.com/bokelleher/rust-pois" target="_blank">GitHub</a> | <a href="/static/events.html">Event Monitor</a></p>
     </div>
   </main>
 
@@ -1070,6 +1314,34 @@ docker run -p 80:8080 -e SWAGGER_JSON=/openapi.yaml \
         }
       });
     });
+
+    // ---- User / Admin audience tabs ----
+    (function () {
+      const body = document.body;
+      const tabs = Array.from(document.querySelectorAll('.docs-tab'));
+      function show(which) {
+        body.classList.toggle('show-admin', which === 'admin');
+        body.classList.toggle('show-user', which !== 'admin');
+        tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === which));
+        try { localStorage.setItem('pois_docs_tab', which); } catch (e) {}
+      }
+      tabs.forEach(t => t.addEventListener('click', () => show(t.dataset.tab)));
+
+      // Reveal the Admin Guide tab only to admins (super-admin or any group-admin).
+      let isAdmin = false;
+      try {
+        const u = JSON.parse(localStorage.getItem('pois_user') || '{}');
+        isAdmin = u.role === 'admin' ||
+          (Array.isArray(u.groups) && u.groups.some(g => g.role === 'admin'));
+      } catch (e) {}
+      const adminTab = document.getElementById('adminTab');
+      if (isAdmin && adminTab) adminTab.style.display = '';
+
+      // Default view: remember the last choice, but never land a non-admin on admin.
+      let initial = 'user';
+      try { if (localStorage.getItem('pois_docs_tab') === 'admin' && isAdmin) initial = 'admin'; } catch (e) {}
+      show(initial);
+    })();
   </script>
 </body>
 </html>
