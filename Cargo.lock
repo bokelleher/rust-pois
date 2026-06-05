@@ -1728,7 +1728,7 @@ dependencies = [
 
 [[package]]
 name = "pois-esam-server"
-version = "3.10.3"
+version = "3.10.4"
 dependencies = [
  "anyhow",
  "argon2",

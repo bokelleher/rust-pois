@@ -609,13 +609,15 @@ pub async fn update_template(
         None => cur.project_id,
     };
     let is_default = p.is_default.map(|b| b as i64).unwrap_or(cur.is_default);
-    // Only super-admins toggle org-wide visibility; a super default stays global.
+    // Only super-admins change org-wide visibility.
     let mut is_global = if eff.super_admin {
         p.is_global.map(|b| b as i64).unwrap_or(cur.is_global)
     } else {
         cur.is_global
     };
-    if is_default == 1 && eff.super_admin {
+    // Turning a template INTO a default makes it org-wide visible — but don't
+    // re-force it on every edit, so a super-admin can still unshare a default.
+    if p.is_default == Some(true) && eff.super_admin {
         is_global = 1;
     }
 
