@@ -202,11 +202,13 @@
         try { await API.put(`/templates/${t.id}`, { project_id: projectId }); onChanged(); }
         catch (e) { alert(`Move failed: ${e.message}`); setBusy(false); }
       };
+      // Sharing is now org-wide visibility (is_global), a super-admin action.
       const toggleShare = async () => {
         setBusy(true);
-        try { await API.put(`/templates/${t.id}`, { is_shared: !t.is_shared }); onChanged(); }
+        try { await API.put(`/templates/${t.id}`, { is_global: !t.is_global }); onChanged(); }
         catch (e) { alert(`Failed: ${e.message}`); setBusy(false); }
       };
+      const isSuper = me().role === "admin";
       const toggleDefault = async () => {
         setBusy(true);
         try { await API.put(`/templates/${t.id}`, { is_default: !t.is_default }); onChanged(); }
@@ -225,7 +227,7 @@
             <span class="tmpl-name">${t.name}</span>
             <${KindBadge} kind=${t.kind} />
             ${t.is_default ? html`<span class="kind-badge default-badge">★ default</span>` : ""}
-            ${t.is_shared ? html`<span class="kind-badge shared-badge">shared</span>` : ""}
+            ${t.is_global ? html`<span class="kind-badge shared-badge">global</span>` : ""}
           </div>
           <div class="tmpl-desc">${t.description || bodySummary(t)}</div>
         </div>
@@ -235,7 +237,7 @@
             : html`<button class="btn btn-primary btn-small" disabled=${busy} onClick=${() => setApplyRule(true)}>Apply…</button>`}
           ${isOwner && html`<${RowMenu} items=${[
             { label: 'Move', onClick: () => setMoving(true) },
-            { label: t.is_shared ? 'Unshare' : 'Share', onClick: toggleShare },
+            ...(isSuper ? [{ label: t.is_global ? 'Unshare (make private)' : 'Share globally', onClick: toggleShare }] : []),
             ...(t.kind === "rule" ? [{ label: t.is_default ? 'Unset default' : 'Make default', onClick: toggleDefault }] : []),
             { label: 'Delete', danger: true, onClick: del },
           ]} />`}
@@ -322,7 +324,7 @@
         try { await API.put(`/projects/${p.id}`, { name }); refresh(); } catch (e) { alert(e.message); }
       };
       const shareProject = async (p) => {
-        try { await API.put(`/projects/${p.id}`, { is_shared: !p.is_shared }); refresh(); } catch (e) { alert(e.message); }
+        try { await API.put(`/projects/${p.id}`, { is_global: !p.is_global }); refresh(); } catch (e) { alert(e.message); }
       };
       const deleteProject = async (p) => {
         if (!confirm(`Delete project "${p.name}"? Its templates are kept and moved to the Library.`)) return;
@@ -364,7 +366,7 @@
                   <div class="proj-item ${sel.type === 'project' && sel.id === p.id ? 'active' : ''}"
                        onClick=${() => setSel({ type: "project", id: p.id })} key=${p.id}>
                     <span class="pname">${p.name}</span>
-                    ${p.is_shared ? html`<span class="kind-badge shared-badge">shared</span>` : ""}
+                    ${p.is_global ? html`<span class="kind-badge shared-badge">global</span>` : ""}
                   </div>`)}
             </div>
           </div>
@@ -383,14 +385,14 @@
                   <div>
                     <div class="flex items-center gap-2">
                       <div style="font-weight:600; font-size:16px;">${selProject.name}</div>
-                      ${selProject.is_shared ? html`<span class="kind-badge shared-badge">shared</span>` : ""}
+                      ${selProject.is_global ? html`<span class="kind-badge shared-badge">global</span>` : ""}
                     </div>
                     <div class="text-xs text-muted">${selProject.description || "Channel templates in this project. Apply the project to recreate them all."}</div>
                   </div>
                   <div class="flex gap-2" style="align-items:center; justify-content:flex-end;">
                     <button class="btn btn-primary btn-small" onClick=${() => applyProject(selProject)}>Apply project</button>
                     ${ownerOf(selProject) && html`<${RowMenu} items=${[
-                      { label: selProject.is_shared ? 'Unshare' : 'Share', onClick: () => shareProject(selProject) },
+                      ...(isAdmin ? [{ label: selProject.is_global ? 'Unshare (make private)' : 'Share globally', onClick: () => shareProject(selProject) }] : []),
                       { label: 'Rename', onClick: () => renameProject(selProject) },
                       { label: 'Delete', danger: true, onClick: () => deleteProject(selProject) },
                     ]} />`}
