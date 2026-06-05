@@ -124,6 +124,7 @@ pub async fn login(
 ) -> impl IntoResponse {
     match auth_state.auth_service.authenticate(&req.username, &req.password).await {
         Ok((user, token)) => {
+            let uid = user.id;
             let response = LoginResponse {
                 token,
                 user: UserResponse {
@@ -136,7 +137,14 @@ pub async fn login(
                     last_login: user.last_login,
                 },
             };
-            (StatusCode::OK, Json(response)).into_response()
+            // Attach the caller's group memberships onto the user object so the
+            // frontend can gate on them (rbac groups, Phase 1).
+            let groups = crate::rbac::groups_brief(&auth_state.db, uid).await;
+            let mut v = serde_json::to_value(&response).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(u) = v.get_mut("user").and_then(|u| u.as_object_mut()) {
+                u.insert("groups".to_string(), serde_json::json!(groups));
+            }
+            (StatusCode::OK, Json(v)).into_response()
         }
         Err(e) => (
             StatusCode::UNAUTHORIZED,
@@ -167,6 +175,7 @@ pub async fn get_current_user(
         .await
     {
         Ok(Some(user)) => {
+            let uid = user.id;
             let response = UserResponse {
                 id: user.id,
                 username: user.username,
@@ -176,7 +185,13 @@ pub async fn get_current_user(
                 created_at: user.created_at,
                 last_login: user.last_login,
             };
-            (StatusCode::OK, Json(response)).into_response()
+            // Attach group memberships for client-side gating (rbac Phase 1).
+            let groups = crate::rbac::groups_brief(&auth_state.db, uid).await;
+            let mut v = serde_json::to_value(&response).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(o) = v.as_object_mut() {
+                o.insert("groups".to_string(), serde_json::json!(groups));
+            }
+            (StatusCode::OK, Json(v)).into_response()
         }
         Ok(None) => (
             StatusCode::NOT_FOUND,

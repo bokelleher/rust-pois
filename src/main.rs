@@ -1,5 +1,5 @@
 // src/main.rs
-// Version: 3.8.6
+// Version: 3.9.0
 // Last Modified: 2026-03-12
 // Changes:
 //   - Issue 1: Channel routing now uses acquisitionPointIdentity from XML body as fallback
@@ -31,6 +31,7 @@ mod auth_handlers; // Auth API endpoints
 mod tools_api; // SCTE-35 Tools API
 mod sesame_axum; // SESAME (SCTE 130-9) Axum adapter
 mod template_library; // Template library + projects
+mod rbac; // Groups + RBAC (identity resolution, group/membership management)
 
 use axum::{
     body::{Body, Bytes},
@@ -218,6 +219,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/templates/from-rule/{rule_id}", post(template_library::save_rule_template))
         .route("/api/templates/from-channel/{channel_id}", post(template_library::save_channel_template))
         .route("/api/templates/{id}/apply", post(template_library::apply_template))
+        // Groups + RBAC (Phase 1)
+        .route("/api/me/groups", get(rbac::my_groups))
+        .route("/api/groups", get(rbac::list_groups).post(rbac::create_group))
+        .route("/api/groups/{id}", get(rbac::get_group).put(rbac::update_group).delete(rbac::delete_group))
+        .route("/api/groups/{id}/members", get(rbac::list_members).post(rbac::add_member))
+        .route("/api/groups/{id}/members/{user_id}", delete(rbac::remove_member))
         .with_state(state.clone())
         .route_layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),

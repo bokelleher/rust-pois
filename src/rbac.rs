@@ -1,0 +1,359 @@
+// src/rbac.rs
+//! Groups + RBAC primitives and group/membership management (Phase 1).
+//!
+//! Identity is resolved from the DB per request (NOT baked into the JWT) so
+//! membership changes and long-lived API tokens never go stale. `Eff` is the
+//! effective identity used by scoping checks:
+//!   - super_admin (users.role == "admin") bypasses all group checks.
+//!   - member_of / admin_of are the group ids the caller belongs to / administers.
+//!
+//! This phase is additive: it manages groups + membership and exposes identity to
+//! the frontend. It does NOT yet change channel/rule/template/project/event scoping
+//! (later phases consume `Eff`).
+
+use std::sync::Arc;
+
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Extension, Json,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use sqlx::{Pool, Sqlite};
+
+use crate::jwt_auth::Claims;
+use crate::AppState;
+
+// ------------------------------- helpers ---------------------------------
+
+fn resp<T: Serialize, E: std::fmt::Display>(r: Result<T, E>) -> Response {
+    match r {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
+}
+
+// --------------------------- effective identity --------------------------
+
+/// The caller's effective identity for group-scoped authorization.
+pub struct Eff {
+    pub uid: i64,
+    pub super_admin: bool,
+    pub member_of: Vec<i64>,
+    pub admin_of: Vec<i64>,
+}
+
+impl Eff {
+    /// May administer (write) within group `gid`.
+    pub fn is_group_admin(&self, gid: i64) -> bool {
+        self.super_admin || self.admin_of.contains(&gid)
+    }
+    /// May see (read) within group `gid`.
+    pub fn is_member(&self, gid: i64) -> bool {
+        self.super_admin || self.member_of.contains(&gid)
+    }
+}
+
+/// Resolve the caller's effective identity from `group_members` (one query).
+pub async fn effective(db: &Pool<Sqlite>, claims: &Claims) -> Eff {
+    let uid: i64 = claims.sub.parse().unwrap_or(0);
+    let super_admin = claims.role == "admin";
+    let rows: Vec<(i64, String)> =
+        sqlx::query_as("SELECT group_id, role FROM group_members WHERE user_id = ?")
+            .bind(uid)
+            .fetch_all(db)
+            .await
+            .unwrap_or_default();
+    let mut member_of = Vec::new();
+    let mut admin_of = Vec::new();
+    for (gid, role) in rows {
+        member_of.push(gid);
+        if role == "admin" {
+            admin_of.push(gid);
+        }
+    }
+    Eff { uid, super_admin, member_of, admin_of }
+}
+
+// -------------------------------- models ---------------------------------
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct Group {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub deleted_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct MemberRow {
+    pub user_id: i64,
+    pub username: String,
+    pub role: String,
+}
+
+/// {id, name, role} brief used in /api/auth/me and login responses.
+#[derive(Serialize, sqlx::FromRow)]
+pub struct GroupBrief {
+    pub id: i64,
+    pub name: String,
+    pub role: String,
+}
+
+#[derive(Deserialize)]
+pub struct UpsertGroup {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateGroupMeta {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct AddMember {
+    pub user_id: i64,
+    #[serde(default)]
+    pub role: Option<String>, // 'admin' | 'member' (default 'member')
+}
+
+/// The groups a user belongs to (id, name, per-group role) for client gating.
+pub async fn groups_brief(db: &Pool<Sqlite>, user_id: i64) -> Vec<GroupBrief> {
+    sqlx::query_as::<_, GroupBrief>(
+        "SELECT g.id, g.name, gm.role \
+         FROM groups g JOIN group_members gm ON gm.group_id = g.id \
+         WHERE gm.user_id = ? AND g.deleted_at IS NULL ORDER BY g.name",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default()
+}
+
+// ------------------------------- handlers --------------------------------
+
+/// GET /api/me/groups — the caller's effective identity for the UI.
+pub async fn my_groups(
+    State(st): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+) -> impl IntoResponse {
+    let eff = effective(&st.db, &claims).await;
+    let groups = groups_brief(&st.db, eff.uid).await;
+    Json(json!({ "super_admin": eff.super_admin, "groups": groups })).into_response()
+}
+
+/// GET /api/groups — super-admin: all; otherwise the caller's groups.
+pub async fn list_groups(
+    State(st): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+) -> impl IntoResponse {
+    let eff = effective(&st.db, &claims).await;
+    let rows: Result<Vec<Group>, _> = if eff.super_admin {
+        sqlx::query_as("SELECT * FROM groups WHERE deleted_at IS NULL ORDER BY name")
+            .fetch_all(&st.db)
+            .await
+    } else {
+        sqlx::query_as(
+            "SELECT g.* FROM groups g JOIN group_members gm ON gm.group_id = g.id \
+             WHERE gm.user_id = ? AND g.deleted_at IS NULL ORDER BY g.name",
+        )
+        .bind(eff.uid)
+        .fetch_all(&st.db)
+        .await
+    };
+    resp(rows)
+}
+
+/// POST /api/groups — super-admin only.
+pub async fn create_group(
+    State(st): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Json(p): Json<UpsertGroup>,
+) -> impl IntoResponse {
+    let eff = effective(&st.db, &claims).await;
+    if !eff.super_admin {
+        return (StatusCode::FORBIDDEN, "Super-admin required").into_response();
+    }
+    let r = sqlx::query_as::<_, Group>(
+        "INSERT INTO groups(name, description) VALUES(?, ?) RETURNING *",
+    )
+    .bind(p.name)
+    .bind(p.description)
+    .fetch_one(&st.db)
+    .await;
+    resp(r)
+}
+
+/// GET /api/groups/{id} — super-admin or a member; returns the group + members.
+pub async fn get_group(
+    State(st): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let eff = effective(&st.db, &claims).await;
+    if !eff.is_member(id) {
+        return (StatusCode::FORBIDDEN, "Not a member of this group").into_response();
+    }
+    let group: Option<Group> =
+        sqlx::query_as("SELECT * FROM groups WHERE id = ? AND deleted_at IS NULL")
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await
+            .ok()
+            .flatten();
+    let Some(group) = group else {
+        return (StatusCode::NOT_FOUND, "Group not found").into_response();
+    };
+    let members: Vec<MemberRow> = sqlx::query_as(
+        "SELECT gm.user_id, u.username, gm.role \
+         FROM group_members gm JOIN users u ON u.id = gm.user_id \
+         WHERE gm.group_id = ? ORDER BY u.username",
+    )
+    .bind(id)
+    .fetch_all(&st.db)
+    .await
+    .unwrap_or_default();
+    Json(json!({ "group": group, "members": members })).into_response()
+}
+
+/// PUT /api/groups/{id} — super-admin or a group-admin of this group.
+pub async fn update_group(
+    State(st): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<i64>,
+    Json(p): Json<UpdateGroupMeta>,
+) -> impl IntoResponse {
+    let eff = effective(&st.db, &claims).await;
+    if !eff.is_group_admin(id) {
+        return (StatusCode::FORBIDDEN, "Group-admin required").into_response();
+    }
+    let r = sqlx::query_as::<_, Group>(
+        "UPDATE groups SET name = COALESCE(?, name), description = COALESCE(?, description), \
+           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') \
+         WHERE id = ? AND deleted_at IS NULL RETURNING *",
+    )
+    .bind(p.name)
+    .bind(p.description)
+    .bind(id)
+    .fetch_one(&st.db)
+    .await;
+    resp(r)
+}
+
+/// DELETE /api/groups/{id} — super-admin only (soft delete).
+pub async fn delete_group(
+    State(st): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let eff = effective(&st.db, &claims).await;
+    if !eff.super_admin {
+        return (StatusCode::FORBIDDEN, "Super-admin required").into_response();
+    }
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    let r = sqlx::query("UPDATE groups SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL")
+        .bind(&now)
+        .bind(id)
+        .execute(&st.db)
+        .await
+        .map(|_| ());
+    resp(r)
+}
+
+/// GET /api/groups/{id}/members — super-admin or a member.
+pub async fn list_members(
+    State(st): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let eff = effective(&st.db, &claims).await;
+    if !eff.is_member(id) {
+        return (StatusCode::FORBIDDEN, "Not a member of this group").into_response();
+    }
+    let rows = sqlx::query_as::<_, MemberRow>(
+        "SELECT gm.user_id, u.username, gm.role \
+         FROM group_members gm JOIN users u ON u.id = gm.user_id \
+         WHERE gm.group_id = ? ORDER BY u.username",
+    )
+    .bind(id)
+    .fetch_all(&st.db)
+    .await;
+    resp(rows)
+}
+
+/// POST /api/groups/{id}/members — super-admin or a group-admin of this group.
+/// Adds (or updates the role of) an existing user. Role is 'admin' | 'member'.
+pub async fn add_member(
+    State(st): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<i64>,
+    Json(p): Json<AddMember>,
+) -> impl IntoResponse {
+    let eff = effective(&st.db, &claims).await;
+    if !eff.is_group_admin(id) {
+        return (StatusCode::FORBIDDEN, "Group-admin required").into_response();
+    }
+    let role = p.role.unwrap_or_else(|| "member".to_string());
+    if role != "admin" && role != "member" {
+        return (StatusCode::BAD_REQUEST, "role must be 'admin' or 'member'").into_response();
+    }
+    // Group must exist (and not be soft-deleted); target user must exist.
+    let group_ok: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM groups WHERE id = ? AND deleted_at IS NULL")
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await
+            .ok()
+            .flatten();
+    if group_ok.is_none() {
+        return (StatusCode::NOT_FOUND, "Group not found").into_response();
+    }
+    let user_ok: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM users WHERE id = ?")
+        .bind(p.user_id)
+        .fetch_optional(&st.db)
+        .await
+        .ok()
+        .flatten();
+    if user_ok.is_none() {
+        return (StatusCode::NOT_FOUND, "User not found").into_response();
+    }
+    let r = sqlx::query(
+        "INSERT INTO group_members(group_id, user_id, role) VALUES(?, ?, ?) \
+         ON CONFLICT(group_id, user_id) DO UPDATE SET role = excluded.role",
+    )
+    .bind(id)
+    .bind(p.user_id)
+    .bind(&role)
+    .execute(&st.db)
+    .await
+    .map(|_| ());
+    resp(r)
+}
+
+/// DELETE /api/groups/{id}/members/{user_id} — super-admin or a group-admin.
+pub async fn remove_member(
+    State(st): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((id, user_id)): Path<(i64, i64)>,
+) -> impl IntoResponse {
+    let eff = effective(&st.db, &claims).await;
+    if !eff.is_group_admin(id) {
+        return (StatusCode::FORBIDDEN, "Group-admin required").into_response();
+    }
+    let r = sqlx::query("DELETE FROM group_members WHERE group_id = ? AND user_id = ?")
+        .bind(id)
+        .bind(user_id)
+        .execute(&st.db)
+        .await
+        .map(|_| ());
+    resp(r)
+}
