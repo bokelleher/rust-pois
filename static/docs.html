@@ -1,16 +1,18 @@
 <!doctype html>
 <!--
   docs.html - Documentation (User Guide + Admin Guide)
-  Version: 3.12.2
+  Version: 3.12.3
   Last updated: 2026-06-05
-  Changes: (3.12.2) Refreshed the User Guide API reference for the v3.12.x model:
-           channels carry owner_user_id / is_global / timezone (managed by numeric id,
+  Changes: (3.12.3) Completed the User Guide API-reference refresh for the v3.12.x model.
+           Channels carry owner_user_id / is_global / timezone (managed by numeric id,
            not name); accurate Authentication (JWT login + API tokens); corrected
            Channels / Rules / Events request+response shapes (enabled/is_global are
            0/1 ints, match_json/params_json are objects on the way in and strings on
            the way out, reorder takes ordered_ids, events stats use last_24h_events /
            action_counts, since is a timestamp lower bound); a new Projects & Templates
-           section; a "Using the web UI" section; and updated code examples.
+           section; a "Using the web UI" section; and code examples that use the
+           /api/auth/login -> Bearer token flow (no dev-token). This finishes the v3.12.2
+           pass, which had left the events-stats example and Code Examples section stale.
            (3.12.0) Split into a User Guide and an Admin Guide via audience tabs.
            The Admin Guide (Groups & RBAC, Users & Passwords incl. forced first-login
            change, Resource Sharing, SESAME) is revealed only to admins/group-admins.
@@ -304,7 +306,7 @@
   <main class="docs-container">
     <div class="docs-header">
       <h1>POIS Documentation</h1>
-      <p class="text-secondary">Placement Opportunity Information Service v3.12.2</p>
+      <p class="text-secondary">Placement Opportunity Information Service v3.12.3</p>
     </div>
 
     <!-- Audience tabs (Admin tab is revealed only to admins by JS) -->
@@ -1149,15 +1151,16 @@ POST /esam?channel=news-24x7</code>
     <!-- Events API -->
     <div id="events" class="section">
       <h2>Events API</h2>
-      
+      <p>Every ESAM exchange is logged. Event queries are scoped to channels you may read.</p>
+
       <!-- List Events -->
       <div class="endpoint">
         <div class="endpoint-header">
           <span class="method method-get">GET</span>
           <span class="endpoint-path">/api/events</span>
         </div>
-        <p class="endpoint-description">Query processed events</p>
-        
+        <p class="endpoint-description">Query processed events (newest first)</p>
+
         <h4>Query Parameters</h4>
         <table class="param-table">
           <tr>
@@ -1170,13 +1173,13 @@ POST /esam?channel=news-24x7</code>
             <td><span class="param-name">limit</span></td>
             <td>integer</td>
             <td>100</td>
-            <td>Number of events (max 1000)</td>
+            <td>Number of events to return</td>
           </tr>
           <tr>
             <td><span class="param-name">offset</span></td>
             <td>integer</td>
             <td>0</td>
-            <td>Skip this many events</td>
+            <td>Skip this many events (pagination)</td>
           </tr>
           <tr>
             <td><span class="param-name">channel</span></td>
@@ -1188,15 +1191,48 @@ POST /esam?channel=news-24x7</code>
             <td><span class="param-name">action</span></td>
             <td>string</td>
             <td>-</td>
-            <td>Filter by action (noop, delete, replace)</td>
+            <td>Filter by the rule action recorded on the event (e.g. <code>noop</code>, <code>replace</code>, <code>delete</code>, <code>blackout</code>, <code>shorten</code>, <code>tracking-only</code>)</td>
           </tr>
           <tr>
             <td><span class="param-name">since</span></td>
             <td>string</td>
             <td>-</td>
-            <td>Time period (1h, 24h, 7d, 30d)</td>
+            <td>Lower bound on the event timestamp (ISO-8601 / SQL datetime, e.g. <code>2026-06-05T00:00:00Z</code>). Events with <code>timestamp &gt;= since</code> are returned.</td>
+          </tr>
+          <tr>
+            <td><span class="param-name">search</span></td>
+            <td>string</td>
+            <td>-</td>
+            <td>Free-text match across acquisition signal ID, source IP, SCTE-35 command, and UPID (an ASCII term is also matched against the hex-encoded UPID)</td>
           </tr>
         </table>
+
+        <h4>Response</h4>
+        <div class="code-block">
+          <code>[
+  {
+    "id": 123,
+    "timestamp": "2026-06-05T20:00:00Z",
+    "channel_name": "WANF-Primary",
+    "acquisition_signal_id": "test-001",
+    "utc_point": "2026-06-05T20:00:00Z",
+    "source_ip": "203.0.113.7",
+    "scte35_command": "splice_insert",
+    "scte35_type_id": "52",
+    "scte35_upid": "0x0C:41424344",
+    "scte35_b64": "/DBLAAAAAAAAAP/wEAUAAAAB...",
+    "matched_rule_id": 7,
+    "matched_rule_name": "Regional Blackout",
+    "action": "blackout",
+    "processing_time_ms": 2,
+    "response_status": 200,
+    "error_message": null,
+    "sesame_tier": 3,
+    "channel_timezone": "America/New_York",
+    "rule_priority": 10
+  }
+]</code>
+        </div>
       </div>
 
       <!-- Get Event Detail -->
@@ -1205,21 +1241,8 @@ POST /esam?channel=news-24x7</code>
           <span class="method method-get">GET</span>
           <span class="endpoint-path">/api/events/{event_id}</span>
         </div>
-        <p class="endpoint-description">Get full event details including raw XML</p>
-        
-        <h4>Response</h4>
-        <div class="code-block">
-          <code>{
-  "id": 123,
-  "timestamp": "2025-11-05T20:00:00Z",
-  "channel_name": "live-sports",
-  "acquisition_signal_id": "test-001",
-  "action": "replace",
-  "matched_rule_name": "Program End → 60s Ad",
-  "raw_esam_request": "&lt;SignalProcessingEvent&gt;...&lt;/SignalProcessingEvent&gt;",
-  "raw_esam_response": "&lt;SignalProcessingNotification&gt;...&lt;/SignalProcessingNotification&gt;"
-}</code>
-        </div>
+        <p class="endpoint-description">Get one event by id (same fields as a list item). Requires read access to the event's channel.</p>
+        <p class="text-muted" style="font-size:13px">The decoded SCTE-35 (command / type / UPID / base64) and the achieved <code>sesame_tier</code> are returned; the full raw request/response XML is captured on the server only when raw-payload storage is enabled by the operator and is not exposed through this endpoint.</p>
       </div>
 
       <!-- Get Statistics -->
@@ -1228,19 +1251,19 @@ POST /esam?channel=news-24x7</code>
           <span class="method method-get">GET</span>
           <span class="endpoint-path">/api/events/stats</span>
         </div>
-        <p class="endpoint-description">Get aggregate event statistics</p>
-        
+        <p class="endpoint-description">Aggregate statistics, scoped to the channels you may read. The action breakdown and average cover the last 24 hours.</p>
+
         <h4>Response</h4>
         <div class="code-block">
           <code>{
   "total_events": 1234,
-  "events_last_24h": 567,
-  "avg_processing_time_ms": 1.5,
-  "by_action": {
+  "last_24h_events": 567,
+  "action_counts": {
     "noop": 800,
-    "delete": 200,
+    "blackout": 200,
     "replace": 234
-  }
+  },
+  "avg_processing_time_ms": 1.5
 }</code>
         </div>
       </div>
@@ -1251,49 +1274,60 @@ POST /esam?channel=news-24x7</code>
       <h2>Code Examples</h2>
       
       <h3>cURL Examples</h3>
-      
-      <h4>Send ESAM Request</h4>
+
+      <h4>Log in (get a token)</h4>
       <div class="code-block">
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <code>curl -X POST "http://localhost:3090/esam?channel=live-sports" \
-  -H "Content-Type: application/xml" \
-  -d '&lt;?xml version="1.0"?&gt;
-&lt;SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
-  &lt;AcquiredSignal acquisitionSignalID="test-001"&gt;
-    &lt;UTCPoint utcPoint="2025-11-05T20:00:00Z"/&gt;
-  &lt;/AcquiredSignal&gt;
-&lt;/SignalProcessingEvent&gt;'</code>
+        <code># Log in and capture the session token into $TOKEN (needs jq)
+TOKEN=$(curl -s -X POST "http://localhost:3090/api/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"wanf.op","password":"your-password"}' | jq -r .token)</code>
       </div>
 
       <h4>Create Channel</h4>
       <div class="code-block">
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
         <code>curl -X POST "http://localhost:3090/api/channels" \
-  -H "Authorization: Bearer dev-token" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"live-sports","enabled":true}'</code>
+  -d '{"name":"WANF-Primary","enabled":true,"group_ids":[3]}'</code>
       </div>
 
       <h4>Create Rule</h4>
       <div class="code-block">
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <code>curl -X POST "http://localhost:3090/api/channels/1/rules" \
-  -H "Authorization: Bearer dev-token" \
+        <code># channel id 15 from the create-channel response; match_json/params_json are objects
+curl -X POST "http://localhost:3090/api/channels/15/rules" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Delete splice_insert",
-    "priority": 10,
+    "priority": -1,
     "action": "delete",
-    "match_json": "{\"anyOf\":[{\"scte35.command\":\"splice_insert\"}]}",
-    "params_json": "{}"
+    "match_json": { "anyOf": [ { "scte35.command": "splice_insert" } ] },
+    "params_json": {}
   }'</code>
       </div>
 
       <h4>Get Events</h4>
       <div class="code-block">
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <code>curl -H "Authorization: Bearer dev-token" \
-  "http://localhost:3090/api/events?channel=live-sports&limit=10"</code>
+        <code>curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:3090/api/events?channel=WANF-Primary&limit=10"</code>
+      </div>
+
+      <h4>Send ESAM Request (no token; addressed by channel name)</h4>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <code>curl -X POST "http://localhost:3090/esam?channel=WANF-Primary" \
+  -H "Content-Type: application/xml" \
+  -d '&lt;?xml version="1.0"?&gt;
+&lt;SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
+  &lt;AcquiredSignal acquisitionSignalID="test-001" acquisitionPointIdentity="WANF-Primary"&gt;
+    &lt;UTCPoint utcPoint="2026-06-05T20:00:00Z"/&gt;
+    &lt;BinaryData signalType="SCTE35"&gt;/DAhAAAAAAAAAP/wEAUAAAAAf+//AAAAAH4AAAAAAAA1FwHt&lt;/BinaryData&gt;
+  &lt;/AcquiredSignal&gt;
+&lt;/SignalProcessingEvent&gt;'</code>
       </div>
 
       <h3>Rust Examples</h3>
@@ -1307,54 +1341,59 @@ use serde_json::json;
 async fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
     let client = reqwest::Client::new();
     let base_url = "http://localhost:3090";
-    let token = "dev-token";
 
-    // Create channel
-    let response = client
+    // 1) Log in to get a session token
+    let login = client
+        .post(&format!("{}/api/auth/login", base_url))
+        .json(&json!({ "username": "wanf.op", "password": "your-password" }))
+        .send()
+        .await?
+        .json::&lt;serde_json::Value&gt;()
+        .await?;
+    let token = login["token"].as_str().unwrap_or_default().to_string();
+
+    // 2) Create a channel in your group (group_ids optional if you're in one group)
+    let channel = client
         .post(&format!("{}/api/channels", base_url))
         .header("Authorization", format!("Bearer {}", token))
-        .json(&json!({
-            "name": "live-sports",
-            "enabled": true
-        }))
+        .json(&json!({ "name": "WANF-Primary", "enabled": true, "group_ids": [3] }))
         .send()
+        .await?
+        .json::&lt;serde_json::Value&gt;()
         .await?;
-    
-    println!("Channel created: {:?}", response.json::&lt;serde_json::Value&gt;().await?);
+    let channel_id = channel["id"].as_i64().unwrap_or_default();
+    println!("Channel created: {}", channel_id);
 
-    // Create rule
+    // 3) Create a rule (match_json / params_json are JSON objects)
     let rule = json!({
         "name": "Delete splice_insert",
-        "priority": 10,
+        "priority": -1,
         "action": "delete",
-        "match_json": r#"{"anyOf":[{"scte35.command":"splice_insert"}]}"#,
-        "params_json": "{}"
+        "match_json": { "anyOf": [ { "scte35.command": "splice_insert" } ] },
+        "params_json": {}
     });
-    
     let response = client
-        .post(&format!("{}/api/channels/1/rules", base_url))
+        .post(&format!("{}/api/channels/{}/rules", base_url, channel_id))
         .header("Authorization", format!("Bearer {}", token))
         .json(&rule)
         .send()
         .await?;
-    
     println!("Rule created: {:?}", response.json::&lt;serde_json::Value&gt;().await?);
 
-    // Send ESAM request
+    // 4) Send an ESAM request (channel addressed by name; no token)
     let esam_xml = r#"&lt;?xml version="1.0"?&gt;
 &lt;SignalProcessingEvent xmlns="urn:cablelabs:iptvservices:esam:xsd:signal:1"&gt;
-  &lt;AcquiredSignal acquisitionSignalID="test-001"&gt;
-    &lt;UTCPoint utcPoint="2025-11-05T20:00:00Z"/&gt;
+  &lt;AcquiredSignal acquisitionSignalID="test-001" acquisitionPointIdentity="WANF-Primary"&gt;
+    &lt;UTCPoint utcPoint="2026-06-05T20:00:00Z"/&gt;
+    &lt;BinaryData signalType="SCTE35"&gt;/DAhAAAAAAAAAP/wEAUAAAAAf+//AAAAAH4AAAAAAAA1FwHt&lt;/BinaryData&gt;
   &lt;/AcquiredSignal&gt;
 &lt;/SignalProcessingEvent&gt;"#;
-
     let response = client
-        .post(&format!("{}/esam?channel=live-sports", base_url))
+        .post(&format!("{}/esam?channel=WANF-Primary", base_url))
         .header("Content-Type", "application/xml")
         .body(esam_xml)
         .send()
         .await?;
-    
     println!("ESAM response: {}", response.text().await?);
 
     Ok(())
@@ -1569,7 +1608,7 @@ docker run -p 80:8080 -e SWAGGER_JSON=/openapi.yaml \
 
     <!-- Footer -->
     <div style="text-align: center; margin-top: 80px; padding: 40px 0; border-top: 1px solid var(--border);">
-      <p class="text-secondary">POIS v3.12.2 | <a href="https://github.com/bokelleher/rust-pois" target="_blank">GitHub</a> | <a href="/static/events.html">Event Monitor</a></p>
+      <p class="text-secondary">POIS v3.12.3 | <a href="https://github.com/bokelleher/rust-pois" target="_blank">GitHub</a> | <a href="/static/events.html">Event Monitor</a></p>
     </div>
   </main>
 
