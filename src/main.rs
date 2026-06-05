@@ -1,5 +1,5 @@
 // src/main.rs
-// Version: 3.8.4
+// Version: 3.8.5
 // Last Modified: 2026-03-12
 // Changes:
 //   - Issue 1: Channel routing now uses acquisitionPointIdentity from XML body as fallback

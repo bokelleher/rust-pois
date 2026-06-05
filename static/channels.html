@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   channels.html - POIS Admin Panel (formerly admin.html)
-  Version: 3.8.4
+  Version: 3.8.5
   Last updated: 2026-06-04
   Changes: Added "Save as template" on each rule and "Save as template / Add to
            project" on each channel, feeding the new Projects template library
@@ -69,6 +69,18 @@
                       align-items:center; justify-content:center; z-index:1000; }
     .modal-card { background:var(--bg-elevated, #1b1b27); border:1px solid var(--border);
                   border-radius:12px; padding:22px; width:min(440px,92vw); }
+
+    /* ---- Kebab (⋮) row-actions menu ---- */
+    .row-menu { position:relative; display:inline-block; }
+    .kebab-btn { padding:6px 12px; font-size:18px; line-height:1; font-weight:700; }
+    .row-menu-dropdown { position:absolute; right:0; top:calc(100% + 4px); z-index:50;
+                         min-width:170px; padding:4px; display:flex; flex-direction:column;
+                         background:var(--bg-elevated, #1b1b27); border:1px solid var(--border);
+                         border-radius:10px; box-shadow:0 10px 28px rgba(0,0,0,0.45); }
+    .row-menu-item { text-align:left; background:transparent; border:0; border-radius:6px;
+                     padding:9px 12px; font-size:13px; color:var(--text-primary); cursor:pointer; }
+    .row-menu-item:hover { background:var(--field-bg-hover); }
+    .row-menu-item.text-error { color:var(--error, #f87171); }
   </style>
   <script type="module">
     import { h, render } from "https://esm.sh/preact@10.24.3";
@@ -956,6 +968,30 @@
       </div>`;
     }
 
+    // ---- Kebab (⋮) actions menu ----
+    // Collapses a row's actions into a dropdown. items: [{label, onClick, danger?}].
+    function RowMenu({ items }) {
+      const [open, setOpen] = hooks.useState(false);
+      const ref = hooks.useRef(null);
+      hooks.useEffect(() => {
+        if (!open) return;
+        const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        const onEsc = (e) => { if (e.key === "Escape") setOpen(false); };
+        document.addEventListener("mousedown", onDoc);
+        document.addEventListener("keydown", onEsc);
+        return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onEsc); };
+      }, [open]);
+      return html`<div class="row-menu" ref=${ref}>
+        <button class="btn btn-small kebab-btn" title="Actions" aria-label="Actions"
+          aria-haspopup="true" aria-expanded=${open} onClick=${() => setOpen(o => !o)}>⋮</button>
+        ${open && html`<div class="row-menu-dropdown" role="menu">
+          ${items.map((it, i) => html`<button role="menuitem" key=${i}
+            class=${"row-menu-item" + (it.danger ? " text-error" : "")}
+            onClick=${() => { setOpen(false); it.onClick(); }}>${it.label}</button>`)}
+        </div>`}
+      </div>`;
+    }
+
     // ---- Save-as-template / Add-to-project modal ----
     // Used for both a single rule (POST /templates/from-rule/{id}) and a whole
     // channel incl. its rules (POST /templates/from-channel/{id}). The project
@@ -1399,15 +1435,12 @@
                           <h3 style="font-size: 18px; font-weight: 600; color: var(--text-primary); margin: 0; ${rule.enabled === 0 ? 'opacity:0.55;' : ''}">
                             ${rule.name} ${rule.enabled === 0 ? html`<span class="badge badge-neutral" style="margin-left:8px;">disabled</span>` : ''}
                           </h3>
-                          <div style="display: flex; gap: 8px;">
-                            <button class="btn btn-small" onClick=${() => toggleRule(rule)}>
-                              ${rule.enabled !== 0 ? 'Disable' : 'Enable'}
-                            </button>
-                            <button class="btn btn-small" onClick=${() => startEdit(rule)}>Edit</button>
-                            <button class="btn btn-small" title="Save this rule as a reusable template"
-                              onClick=${() => setSaveTarget({ kind: "rule", rule })}>Save as template</button>
-                            <button class="btn btn-small text-error" onClick=${() => deleteRule(rule.id)}>Delete</button>
-                          </div>
+                          <${RowMenu} items=${[
+                            { label: rule.enabled !== 0 ? 'Disable' : 'Enable', onClick: () => toggleRule(rule) },
+                            { label: 'Edit', onClick: () => startEdit(rule) },
+                            { label: 'Save as template', onClick: () => setSaveTarget({ kind: "rule", rule }) },
+                            { label: 'Delete', danger: true, onClick: () => deleteRule(rule.id) },
+                          ]} />
                         </div>
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 4px;">
                           <div>
