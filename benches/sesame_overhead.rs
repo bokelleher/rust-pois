@@ -13,7 +13,7 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 use pois_esam_server::sesame::canonical;
-use pois_esam_server::sesame::keys::{AeadKey, ChannelScope, HmacKey, KeyProvider, StaticKeyProvider};
+use pois_esam_server::sesame::keys::{AeadKey, ChannelScope, HmacKey, StaticKeyProvider};
 use pois_esam_server::sesame::message::{hex_encode, PROTOCOL_VERSION};
 use pois_esam_server::sesame::replay::{InMemoryReplayCache, ReplayCache};
 use pois_esam_server::sesame::tier1_hmac;
