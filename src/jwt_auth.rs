@@ -34,6 +34,9 @@ pub struct User {
     pub email: Option<String>,
     pub created_at: String,
     pub last_login: Option<String>,
+    /// Forced password change on first login (provisioned accounts).
+    #[serde(default)]
+    pub must_change_password: bool,
 }
 
 // API Token model matching the database schema
@@ -257,9 +260,11 @@ impl AuthService {
     pub async fn create_user(&self, username: &str, password: &str, role: &str, email: Option<&str>) -> Result<User> {
         let password_hash = PasswordService::hash_password(password)?;
 
+        // API-provisioned accounts get a temp password and must change it on first
+        // login (must_change_password = 1).
         let user: User = sqlx::query_as(
-            "INSERT INTO users (username, password_hash, role, email, enabled, created_at) 
-             VALUES (?, ?, ?, ?, 1, strftime('%Y-%m-%dT%H:%M:%fZ','now')) 
+            "INSERT INTO users (username, password_hash, role, email, enabled, must_change_password, created_at)
+             VALUES (?, ?, ?, ?, 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
              RETURNING *"
         )
         .bind(username)

@@ -1,7 +1,9 @@
 // header.js - Common header with JWT authentication
-// Version: 3.10.0
-// Last updated: 2026-06-04
-// Changes: Added Projects (template library) nav link + active-page detection.
+// Version: 3.12.0
+// Last updated: 2026-06-05
+// Changes: (3.12.0) Forced-password-change guard: redirect provisioned accounts
+//          (must_change_password) to change-password.html before any app page.
+//          Added Projects (template library) nav link + active-page detection.
 //          (3.1.0) Added settings gear icon, removed tokens from nav, admin.html → channels.html
 (function() {
   'use strict';
@@ -82,6 +84,15 @@
 
     // Require authentication for all pages except login
     if (!requireAuth()) {
+      return;
+    }
+
+    // Forced password change: a provisioned account must set its own password
+    // before reaching any app page (the backend also blocks the APIs).
+    const pendingUser = getUser();
+    if (pendingUser && pendingUser.must_change_password === true
+        && !window.location.pathname.includes('change-password.html')) {
+      window.location.href = '/static/change-password.html';
       return;
     }
 

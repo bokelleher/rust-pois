@@ -118,15 +118,23 @@ async fn change_password_internal(
         return Err(anyhow!("Current password is incorrect"));
     }
 
+    // The new password must differ from the current one (matters most for the
+    // forced first-login change off a shared temp password).
+    if PasswordService::verify_password(new_password, &current_hash)? {
+        tx.commit().await?;
+        return Err(anyhow!("New password must be different from the current one"));
+    }
+
     // Hash new password
     let new_hash = PasswordService::hash_password(new_password)?;
 
-    // Update password in users table
+    // Update password in users table; clears the forced-change flag.
     sqlx::query(
-        "UPDATE users 
-         SET password_hash = ?, 
+        "UPDATE users
+         SET password_hash = ?,
              password_changed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+             must_change_password = 0
          WHERE id = ?"
     )
     .bind(&new_hash)
@@ -152,7 +160,10 @@ async fn change_password_internal(
     Ok(())
 }
 
-/// Helper function to get password change history for a user (admin only)
+/// Helper function to get password change history for a user (admin only).
+/// Writes to `password_changes` happen on every attempt; this read side is not
+/// yet surfaced via a route (kept for a future admin audit view).
+#[allow(dead_code)]
 pub async fn get_password_history(
     db: &Pool<Sqlite>,
     user_id: i64,
@@ -173,6 +184,7 @@ pub async fn get_password_history(
     Ok(logs)
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct PasswordChangeLog {
     pub id: i64,

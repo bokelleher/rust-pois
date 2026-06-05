@@ -43,6 +43,23 @@ pub struct UserResponse {
     pub email: Option<String>,
     pub created_at: String,
     pub last_login: Option<String>,
+    /// True while the user must set their own password before using the app.
+    pub must_change_password: bool,
+}
+
+impl From<crate::jwt_auth::User> for UserResponse {
+    fn from(u: crate::jwt_auth::User) -> Self {
+        UserResponse {
+            id: u.id,
+            username: u.username,
+            role: u.role,
+            enabled: u.enabled,
+            email: u.email,
+            created_at: u.created_at,
+            last_login: u.last_login,
+            must_change_password: u.must_change_password,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,15 +166,7 @@ pub async fn login(
             let uid = user.id;
             let response = LoginResponse {
                 token,
-                user: UserResponse {
-                    id: user.id,
-                    username: user.username,
-                    role: user.role,
-                    enabled: user.enabled,
-                    email: user.email,
-                    created_at: user.created_at,
-                    last_login: user.last_login,
-                },
+                user: UserResponse::from(user),
             };
             // Attach the caller's group memberships onto the user object so the
             // frontend can gate on them (rbac groups, Phase 1).
@@ -198,15 +207,7 @@ pub async fn get_current_user(
     {
         Ok(Some(user)) => {
             let uid = user.id;
-            let response = UserResponse {
-                id: user.id,
-                username: user.username,
-                role: user.role,
-                enabled: user.enabled,
-                email: user.email,
-                created_at: user.created_at,
-                last_login: user.last_login,
-            };
+            let response = UserResponse::from(user);
             // Attach group memberships for client-side gating (rbac Phase 1).
             let groups = crate::rbac::groups_brief(&auth_state.db, uid).await;
             let mut v = serde_json::to_value(&response).unwrap_or_else(|_| serde_json::json!({}));
@@ -256,15 +257,7 @@ pub async fn list_users(
             let response: Vec<UserResponse> = users
                 .into_iter()
                 .filter(|u| scope.as_ref().map(|ids| ids.contains(&u.id)).unwrap_or(true))
-                .map(|u| UserResponse {
-                id: u.id,
-                username: u.username,
-                role: u.role,
-                enabled: u.enabled,
-                email: u.email,
-                created_at: u.created_at,
-                last_login: u.last_login,
-            }).collect();
+                .map(UserResponse::from).collect();
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(e) => (
@@ -315,15 +308,7 @@ pub async fn create_user(
                 .execute(&auth_state.db)
                 .await;
             }
-            let response = UserResponse {
-                id: user.id,
-                username: user.username,
-                role: user.role,
-                enabled: user.enabled,
-                email: user.email,
-                created_at: user.created_at,
-                last_login: user.last_login,
-            };
+            let response = UserResponse::from(user);
             (StatusCode::CREATED, Json(response)).into_response()
         }
         Err(e) => (
@@ -359,15 +344,7 @@ pub async fn get_user(
         .await
     {
         Ok(Some(user)) => {
-            let response = UserResponse {
-                id: user.id,
-                username: user.username,
-                role: user.role,
-                enabled: user.enabled,
-                email: user.email,
-                created_at: user.created_at,
-                last_login: user.last_login,
-            };
+            let response = UserResponse::from(user);
             (StatusCode::OK, Json(response)).into_response()
         }
         Ok(None) => (
@@ -437,6 +414,9 @@ pub async fn update_user(
             Ok(hash) => {
                 updates.push("password_hash = ?");
                 values.push(hash);
+                // An admin-set password is a temp credential: force the user to
+                // choose their own on next login.
+                updates.push("must_change_password = 1");
             }
             Err(e) => {
                 return (
@@ -486,15 +466,7 @@ pub async fn update_user(
 
     match query.fetch_one(&auth_state.db).await {
         Ok(user) => {
-            let response = UserResponse {
-                id: user.id,
-                username: user.username,
-                role: user.role,
-                enabled: user.enabled,
-                email: user.email,
-                created_at: user.created_at,
-                last_login: user.last_login,
-            };
+            let response = UserResponse::from(user);
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(e) => (

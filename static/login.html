@@ -195,8 +195,10 @@
           const payload = JSON.parse(atob(existingToken.split('.')[1]));
           const now = Math.floor(Date.now() / 1000);
           if (payload.exp > now) {
-            // Token still valid, redirect to events.html
-            window.location.href = '/static/events.html';
+            // Token still valid. Send forced-change users to set a new password.
+            let mustChange = false;
+            try { mustChange = JSON.parse(localStorage.getItem('pois_user') || '{}').must_change_password === true; } catch (e) {}
+            window.location.href = mustChange ? '/static/change-password.html' : '/static/events.html';
             return;
           } else {
             // Token expired, clear it
@@ -258,11 +260,12 @@
           localStorage.setItem('pois_token', data.token);
           localStorage.setItem('pois_user', JSON.stringify(data.user));
 
-          showSuccess('Login successful! Redirecting...');
+          // Provisioned accounts must set their own password before continuing.
+          const mustChange = data.user && data.user.must_change_password === true;
+          showSuccess(mustChange ? 'Password change required. Redirecting...' : 'Login successful! Redirecting...');
 
-          // Redirect to events page
           setTimeout(() => {
-            window.location.href = '/static/events.html';
+            window.location.href = mustChange ? '/static/change-password.html' : '/static/events.html';
           }, 500);
 
         } catch (error) {

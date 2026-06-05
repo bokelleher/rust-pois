@@ -1,5 +1,5 @@
 // src/main.rs
-// Version: 3.11.1
+// Version: 3.12.0
 // Last Modified: 2026-03-12
 // Changes:
 //   - Issue 1: Channel routing now uses acquisitionPointIdentity from XML body as fallback
@@ -32,6 +32,7 @@ mod tools_api; // SCTE-35 Tools API
 mod sesame_axum; // SESAME (SCTE 130-9) Axum adapter
 mod template_library; // Template library + projects
 mod rbac; // Groups + RBAC (identity resolution, group/membership management)
+mod password_change; // Self-service password change + forced first-login change
 
 use axum::{
     body::{Body, Bytes},
@@ -227,6 +228,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/groups/{id}/members/{user_id}", delete(rbac::remove_member))
         // Generic "share to specific groups" picker (channel|project|template)
         .route("/api/share/{kind}/{id}", get(rbac::get_share).put(rbac::set_share))
+        // Self-service password change (also satisfies a forced first-login change)
+        .route("/api/auth/change-password", post(password_change::change_password_handler))
         .with_state(state.clone())
         .route_layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),
@@ -317,6 +320,33 @@ async fn require_jwt_auth(
 
     match auth_state.auth_service.validate_token(token).await {
         Ok(claims) => {
+            // Forced password change: a session user flagged must_change_password is
+            // blocked from every endpoint except the change-password one until they
+            // set their own password. API tokens are exempt (automation).
+            if claims.token_type == "session"
+                && req.uri().path() != "/api/auth/change-password"
+            {
+                if let Ok(uid) = claims.sub.parse::<i64>() {
+                    let must: Option<i64> = sqlx::query_scalar(
+                        "SELECT must_change_password FROM users WHERE id = ?",
+                    )
+                    .bind(uid)
+                    .fetch_optional(&auth_state.db)
+                    .await
+                    .ok()
+                    .flatten();
+                    if must == Some(1) {
+                        return (
+                            StatusCode::FORBIDDEN,
+                            Json(serde_json::json!({
+                                "error": "Password change required",
+                                "must_change_password": true
+                            })),
+                        )
+                            .into_response();
+                    }
+                }
+            }
             // Store claims in request extensions for handlers to use
             req.extensions_mut().insert(claims);
             next.run(req).await
