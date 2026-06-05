@@ -453,7 +453,7 @@ pub async fn test_send(
 
 /// Convert a hex string (no separators) to bytes.
 fn hex_str_to_bytes(s: &str) -> Result<Vec<u8>, String> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err("Hex input has an odd number of digits".to_string());
     }
     (0..s.len())
@@ -469,6 +469,7 @@ fn hex_str_to_bytes(s: &str) -> Result<Vec<u8>, String> {
 ///   - base64:  "/DAvAAAA..."        (the ESAM/wire form)
 ///   - hex:     "FC302F...", "0xFC...", "fc 30 2f", "fc:30:2f"
 ///   - binary:  "0b11111100...", or a whitespace-grouped run of 0/1
+///
 /// Whitespace and ':' separators are ignored. When the form is ambiguous (hex
 /// digits are also valid base64), the interpretation whose first byte is the
 /// SCTE-35 table_id (0xFC) is preferred.
@@ -489,7 +490,7 @@ fn scte35_input_to_bytes(raw: &str) -> Result<Vec<u8>, String> {
         .unwrap_or(&cleaned);
     let explicit_bin = cleaned.starts_with("0b") || cleaned.starts_with("0B");
     if (explicit_bin || (bin.len() >= 16 && bin.starts_with("11111100")))
-        && bin.len() % 8 == 0
+        && bin.len().is_multiple_of(8)
         && bin.bytes().all(|b| b == b'0' || b == b'1')
     {
         return Ok(bin
@@ -506,7 +507,7 @@ fn scte35_input_to_bytes(raw: &str) -> Result<Vec<u8>, String> {
 
     // Ambiguous: try both base64 and hex, prefer a 0xFC-leading result.
     let as_b64 = B64.decode(cleaned.as_bytes()).ok().filter(|b| !b.is_empty());
-    let as_hex = if cleaned.len() % 2 == 0 && cleaned.bytes().all(|b| b.is_ascii_hexdigit()) {
+    let as_hex = if cleaned.len().is_multiple_of(2) && cleaned.bytes().all(|b| b.is_ascii_hexdigit()) {
         hex_str_to_bytes(&cleaned).ok().filter(|b| !b.is_empty())
     } else {
         None
@@ -1083,7 +1084,7 @@ fn locate_descriptor_loop(bytes: &[u8]) -> Option<(usize, usize, usize)> {
     br.read_u16(12).ok()?; // splice_command_length
     let command_type = br.read_u8(8).ok()?;
     parse_command_info(&mut br, command_type).ok()?;
-    if br.bitpos % 8 != 0 {
+    if !br.bitpos.is_multiple_of(8) {
         return None; // unexpected misalignment after the command
     }
     let dlw_off = br.bitpos / 8;
@@ -1377,7 +1378,7 @@ fn locate_break_duration(bytes: &[u8]) -> Option<usize> {
             }
         }
     }
-    if br.bitpos % 8 != 0 {
+    if !br.bitpos.is_multiple_of(8) {
         return None;
     }
     Some(br.bitpos / 8)

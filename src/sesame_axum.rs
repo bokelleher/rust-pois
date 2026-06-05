@@ -248,10 +248,8 @@ pub fn sign_outgoing(
         tier,
         enc_key_id: rt.response_enc_key_id.as_deref(),
     };
-    match sesame::sign_response(&rt.cfg, rt.provider.as_ref(), &params, response_xml, OffsetDateTime::now_utc()) {
-        Ok(signed) => Some(signed),
-        Err(_) => None, // fail open on signing only if misconfigured; logged by caller
-    }
+    // Fail open on signing only if misconfigured; the error is logged by the caller.
+    sesame::sign_response(&rt.cfg, rt.provider.as_ref(), &params, response_xml, OffsetDateTime::now_utc()).ok()
 }
 
 /// Build the final ESAM HTTP response, signing (and optionally encrypting) it

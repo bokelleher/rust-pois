@@ -17,8 +17,8 @@ pub fn rule_matches(match_json: &Value, facts: &Map<String, Value>) -> bool {
     // A clause only contributes when it is present AND satisfied. In particular,
     // an absent allOf must NOT default to true — otherwise an anyOf-only rule
     // would match every request (and e.g. a blackout rule would drop all traffic).
-    let any_ok = any_clause.map_or(false, |arr| arr.iter().any(|c| eval(c, facts)));
-    let all_ok = all_clause.map_or(false, |arr| arr.iter().all(|c| eval(c, facts)));
+    let any_ok = any_clause.is_some_and(|arr| arr.iter().any(|c| eval(c, facts)));
+    let all_ok = all_clause.is_some_and(|arr| arr.iter().all(|c| eval(c, facts)));
 
     any_ok || all_ok
 }

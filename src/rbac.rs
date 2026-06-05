@@ -251,12 +251,10 @@ pub async fn group_ids_map(
 
 /// Re-publish resource `id` to `desired`, scoped to what the caller may manage.
 ///
-/// `manageable` defines the caller's reach:
-///   - `None`        — full control (super-admin): the link set becomes exactly
-///                     `desired`.
-///   - `Some(scope)` — only links to groups IN `scope` are replaced (set to
-///                     `desired`, which must already be a subset of `scope`);
-///                     links to groups OUTSIDE `scope` are PRESERVED untouched.
+/// `manageable` defines the caller's reach. `None` (super-admin) is full control:
+/// the link set becomes exactly `desired`. `Some(scope)` replaces only the links to
+/// groups in `scope` (with `desired`, which must already be a subset of `scope`) and
+/// leaves links to groups outside `scope` untouched.
 ///
 /// The scoped form stops a group-admin from clobbering a resource's shares to
 /// groups they can't even see (the picker only offers groups they belong to).

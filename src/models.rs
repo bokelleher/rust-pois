@@ -160,8 +160,6 @@ pub struct UpdateTemplateMeta {
     #[serde(default, deserialize_with = "double_option")]
     pub project_id: Option<Option<i64>>,
     #[serde(default)]
-    pub is_shared: Option<bool>,
-    #[serde(default)]
     pub is_default: Option<bool>,
     #[serde(default)]
     pub group_ids: Option<Vec<i64>>,

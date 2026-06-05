@@ -84,6 +84,7 @@ impl EventLogger {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // cohesive event record; a params struct would not read better
     #[instrument(skip(self, facts, request_body, response_body))]
     pub async fn log_esam_event(
         &self,

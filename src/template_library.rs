@@ -1,9 +1,9 @@
 // src/template_library.rs
 //! Template library + projects.
 //!
-//! - A **template** is a reusable entity captured from a live row:
-//!     kind='rule'    -> body_json is a `backup::RuleBackup`        (applied into a channel)
-//!     kind='channel' -> body_json is a `backup::ChannelFullBackup` (channel + its rules)
+//! - A **template** is a reusable entity captured from a live row. `kind='rule'`
+//!   stores a `backup::RuleBackup` (applied into a channel); `kind='channel'` stores
+//!   a `backup::ChannelFullBackup` (a channel plus its rules).
 //! - A **project** is a persistent, shareable container bundling channel templates.
 //!
 //! Ownership/soft-delete/sharing mirror the channel & rule handlers in `main.rs`:

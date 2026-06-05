@@ -251,7 +251,7 @@ pub(crate) fn encode_upid(upid_type: u8, value: &str) -> Vec<u8> {
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
     let s = s.replace(['-', ' ', ':'], "");
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     
@@ -453,7 +453,7 @@ impl BitWriter {
 
 fn finalize_with_crc32(w: &mut BitWriter, section_length_pos: usize) -> Vec<u8> {
     // Align to byte
-    while w.bitpos % 8 != 0 {
+    while !w.bitpos.is_multiple_of(8) {
         w.u1(1);
     }
 
