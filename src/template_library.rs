@@ -30,23 +30,35 @@ use crate::models::{
     ApplyTemplate, Channel, Project, Rule, SaveTemplate, Template, UpdateProjectMeta,
     UpdateTemplateMeta, UpsertProject,
 };
+use crate::rbac;
 use crate::AppState;
 
 // ----------------------------- small helpers -----------------------------
+
+/// Groups a newly created project/template should be published to:
+///   - filed in a project  -> inherit that project's groups,
+///   - else super-admin     -> none (unlinked; share via is_global later),
+///   - else (member/g-admin) -> the saver's own groups.
+async fn default_groups(
+    db: &Pool<Sqlite>,
+    eff: &rbac::Eff,
+    inherit_project: Option<i64>,
+) -> Vec<i64> {
+    if let Some(pid) = inherit_project {
+        return rbac::resource_group_ids(db, "project_groups", "project_id", pid).await;
+    }
+    if eff.super_admin {
+        Vec::new()
+    } else {
+        eff.member_of.clone()
+    }
+}
 
 fn resp<T: serde::Serialize, E: std::fmt::Display>(r: Result<T, E>) -> Response {
     match r {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     }
-}
-
-fn uid_of(claims: &Claims) -> i64 {
-    claims.sub.parse().unwrap_or(0)
-}
-
-fn is_admin(claims: &Claims) -> bool {
-    claims.role == "admin"
 }
 
 /// Generate a channel name that does not collide with the UNIQUE `channels.name`
@@ -73,27 +85,16 @@ async fn unique_channel_name(db: &Pool<Sqlite>, base: &str) -> String {
     format!("{base} (copy 10000)")
 }
 
-/// Ensure `claims` may write to project `pid` (own it or be admin).
-/// Returns `Some(rejection_response)` if not allowed, else `None`.
+/// Ensure `eff` may write to project `pid` (group-aware). `Some(rejection)` if not.
 async fn reject_if_project_unwritable(
     db: &Pool<Sqlite>,
-    claims: &Claims,
+    eff: &rbac::Eff,
     pid: i64,
 ) -> Option<Response> {
-    if is_admin(claims) {
-        return None;
-    }
-    let owner: Option<(Option<i64>,)> =
-        sqlx::query_as("SELECT owner_user_id FROM projects WHERE id = ? AND deleted_at IS NULL")
-            .bind(pid)
-            .fetch_optional(db)
-            .await
-            .ok()
-            .flatten();
-    match owner {
-        Some((Some(o),)) if o == uid_of(claims) => None,
-        Some(_) => Some((StatusCode::FORBIDDEN, "Not your project").into_response()),
-        None => Some((StatusCode::NOT_FOUND, "Project not found").into_response()),
+    if rbac::can_write(db, eff, "projects", "project_groups", "project_id", pid).await {
+        None
+    } else {
+        Some((StatusCode::FORBIDDEN, "Not allowed to modify this project").into_response())
     }
 }
 
@@ -103,19 +104,12 @@ pub async fn list_projects(
     State(st): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
 ) -> impl IntoResponse {
-    let rows: Result<Vec<Project>, _> = if is_admin(&claims) {
-        sqlx::query_as("SELECT * FROM projects WHERE deleted_at IS NULL ORDER BY name")
-            .fetch_all(&st.db)
-            .await
-    } else {
-        sqlx::query_as(
-            "SELECT * FROM projects WHERE deleted_at IS NULL \
-             AND (owner_user_id = ? OR is_shared = 1) ORDER BY name",
-        )
-        .bind(uid_of(&claims))
-        .fetch_all(&st.db)
-        .await
-    };
+    let eff = rbac::effective(&st.db, &claims).await;
+    let mut qb: QueryBuilder<Sqlite> =
+        QueryBuilder::new("SELECT * FROM projects WHERE deleted_at IS NULL");
+    rbac::push_read_predicate(&mut qb, &eff, "projects", "project_groups", "project_id");
+    qb.push(" ORDER BY name");
+    let rows = qb.build_query_as::<Project>().fetch_all(&st.db).await;
     resp(rows)
 }
 
@@ -124,15 +118,29 @@ pub async fn create_project(
     Extension(claims): Extension<Claims>,
     Json(p): Json<UpsertProject>,
 ) -> impl IntoResponse {
+    let eff = rbac::effective(&st.db, &claims).await;
+    let is_global = (eff.super_admin && p.is_global.unwrap_or(false)) as i64;
     let r = sqlx::query_as::<_, Project>(
-        "INSERT INTO projects(name,description,owner_user_id) VALUES(?,?,?) RETURNING *",
+        "INSERT INTO projects(name,description,owner_user_id,is_global) VALUES(?,?,?,?) RETURNING *",
     )
     .bind(p.name)
     .bind(p.description)
-    .bind(uid_of(&claims))
+    .bind(eff.uid)
+    .bind(is_global)
     .fetch_one(&st.db)
     .await;
-    resp(r)
+    match r {
+        Ok(proj) => {
+            let groups = match p.group_ids {
+                Some(g) if eff.super_admin || g.iter().all(|x| eff.member_of.contains(x)) => g,
+                Some(_) => return (StatusCode::FORBIDDEN, "Cannot publish to a group you don't belong to").into_response(),
+                None => default_groups(&st.db, &eff, None).await,
+            };
+            rbac::link_groups(&st.db, "project_groups", "project_id", proj.id, &groups).await;
+            Json(proj).into_response()
+        }
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
 }
 
 pub async fn get_project(
@@ -140,6 +148,7 @@ pub async fn get_project(
     Extension(claims): Extension<Claims>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
+    let eff = rbac::effective(&st.db, &claims).await;
     let project: Option<Project> =
         sqlx::query_as("SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL")
             .bind(id)
@@ -151,11 +160,8 @@ pub async fn get_project(
     let Some(project) = project else {
         return (StatusCode::NOT_FOUND, "Project not found").into_response();
     };
-
-    // Visibility: own, shared, or admin.
-    if !is_admin(&claims) && project.is_shared == 0 && project.owner_user_id != Some(uid_of(&claims))
-    {
-        return (StatusCode::FORBIDDEN, "Not your project").into_response();
+    if !rbac::can_read(&st.db, &eff, "projects", "project_groups", "project_id", id).await {
+        return (StatusCode::FORBIDDEN, "Not allowed to view this project").into_response();
     }
 
     let members: Result<Vec<Template>, _> = sqlx::query_as(
@@ -177,23 +183,36 @@ pub async fn update_project(
     Path(id): Path<i64>,
     Json(p): Json<UpdateProjectMeta>,
 ) -> impl IntoResponse {
-    if let Some(rej) = reject_if_project_unwritable(&st.db, &claims, id).await {
+    let eff = rbac::effective(&st.db, &claims).await;
+    if let Some(rej) = reject_if_project_unwritable(&st.db, &eff, id).await {
         return rej;
     }
+    let is_global = if eff.super_admin { p.is_global.map(|b| b as i64) } else { None };
     let r = sqlx::query_as::<_, Project>(
         "UPDATE projects SET \
            name=COALESCE(?,name), \
            description=COALESCE(?,description), \
            is_shared=COALESCE(?,is_shared), \
+           is_global=COALESCE(?,is_global), \
            updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') \
          WHERE id=? AND deleted_at IS NULL RETURNING *",
     )
     .bind(p.name)
     .bind(p.description)
     .bind(p.is_shared.map(|b| b as i64))
+    .bind(is_global)
     .bind(id)
     .fetch_one(&st.db)
     .await;
+    if let Some(gids) = p.group_ids {
+        if eff.super_admin || gids.iter().all(|g| eff.member_of.contains(g)) {
+            let _ = sqlx::query("DELETE FROM project_groups WHERE project_id = ?")
+                .bind(id)
+                .execute(&st.db)
+                .await;
+            rbac::link_groups(&st.db, "project_groups", "project_id", id, &gids).await;
+        }
+    }
     resp(r)
 }
 
@@ -202,7 +221,8 @@ pub async fn delete_project(
     Extension(claims): Extension<Claims>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    if let Some(rej) = reject_if_project_unwritable(&st.db, &claims, id).await {
+    let eff = rbac::effective(&st.db, &claims).await;
+    if let Some(rej) = reject_if_project_unwritable(&st.db, &eff, id).await {
         return rej;
     }
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
@@ -229,20 +249,20 @@ pub async fn apply_project(
     Extension(claims): Extension<Claims>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    // Visibility check on the project.
-    let project: Option<Project> =
-        sqlx::query_as("SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL")
+    // Visibility check on the project (read).
+    let eff = rbac::effective(&st.db, &claims).await;
+    let exists: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM projects WHERE id = ? AND deleted_at IS NULL")
             .bind(id)
             .fetch_optional(&st.db)
             .await
             .ok()
             .flatten();
-    let Some(project) = project else {
+    if exists.is_none() {
         return (StatusCode::NOT_FOUND, "Project not found").into_response();
-    };
-    if !is_admin(&claims) && project.is_shared == 0 && project.owner_user_id != Some(uid_of(&claims))
-    {
-        return (StatusCode::FORBIDDEN, "Not your project").into_response();
+    }
+    if !rbac::can_read(&st.db, &eff, "projects", "project_groups", "project_id", id).await {
+        return (StatusCode::FORBIDDEN, "Not allowed to apply this project").into_response();
     }
 
     let members: Vec<Template> = match sqlx::query_as(
@@ -257,19 +277,25 @@ pub async fn apply_project(
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
 
-    let owner_id = uid_of(&claims);
+    let owner_id = eff.uid;
+    // New channels land in the applier's own group(s) (a station applying a
+    // national project gets the channels in their station). Super: unlinked.
+    let target_groups: Vec<i64> = if eff.super_admin { Vec::new() } else { eff.member_of.clone() };
     let mut created = Vec::new();
     let mut errors = Vec::new();
 
     for m in members {
         match serde_json::from_str::<ChannelFullBackup>(&m.body_json) {
             Ok(cfb) => match instantiate_channel_full(&st.db, &cfb, owner_id, None).await {
-                Ok((cid, cname, n_rules)) => created.push(json!({
-                    "template_id": m.id,
-                    "channel_id": cid,
-                    "channel_name": cname,
-                    "rules_created": n_rules,
-                })),
+                Ok((cid, cname, n_rules)) => {
+                    rbac::link_groups(&st.db, "channel_groups", "channel_id", cid, &target_groups).await;
+                    created.push(json!({
+                        "template_id": m.id,
+                        "channel_id": cid,
+                        "channel_name": cname,
+                        "rules_created": n_rules,
+                    }));
+                }
                 Err(e) => errors.push(format!("template {}: {}", m.id, e)),
             },
             Err(e) => errors.push(format!("template {} has invalid body: {}", m.id, e)),
@@ -305,17 +331,10 @@ pub async fn list_templates(
     Extension(claims): Extension<Claims>,
     Query(q): Query<TemplateQuery>,
 ) -> impl IntoResponse {
+    let eff = rbac::effective(&st.db, &claims).await;
     let mut qb: QueryBuilder<Sqlite> =
         QueryBuilder::new("SELECT * FROM templates WHERE deleted_at IS NULL");
-
-    if !is_admin(&claims) {
-        qb.push(" AND (owner_user_id = ")
-            .push_bind(uid_of(&claims))
-            .push(
-                " OR is_shared = 1 OR project_id IN \
-                 (SELECT id FROM projects WHERE is_shared = 1 AND deleted_at IS NULL))",
-            );
-    }
+    rbac::push_read_predicate(&mut qb, &eff, "templates", "template_groups", "template_id");
     if let Some(pid) = q.project_id {
         qb.push(" AND project_id = ").push_bind(pid);
     }
@@ -340,16 +359,17 @@ pub async fn get_template(
     Extension(claims): Extension<Claims>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    match load_visible_template(&st.db, &claims, id).await {
+    let eff = rbac::effective(&st.db, &claims).await;
+    match load_visible_template(&st.db, &eff, id).await {
         Ok(t) => Json(t).into_response(),
         Err(rej) => rej,
     }
 }
 
-/// Load a template if the caller may see it (own / shared / shared-project / admin).
+/// Load a template if the caller may read it (group-aware).
 async fn load_visible_template(
     db: &Pool<Sqlite>,
-    claims: &Claims,
+    eff: &rbac::Eff,
     id: i64,
 ) -> Result<Template, Response> {
     let t: Option<Template> =
@@ -362,46 +382,23 @@ async fn load_visible_template(
     let Some(t) = t else {
         return Err((StatusCode::NOT_FOUND, "Template not found").into_response());
     };
-    if is_admin(claims) || t.is_shared != 0 || t.owner_user_id == Some(uid_of(claims)) {
-        return Ok(t);
+    if rbac::can_read(db, eff, "templates", "template_groups", "template_id", id).await {
+        Ok(t)
+    } else {
+        Err((StatusCode::FORBIDDEN, "Not allowed to view this template").into_response())
     }
-    // Exposed via a shared project?
-    if let Some(pid) = t.project_id {
-        let shared: Option<(i64,)> = sqlx::query_as(
-            "SELECT 1 FROM projects WHERE id = ? AND is_shared = 1 AND deleted_at IS NULL",
-        )
-        .bind(pid)
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten();
-        if shared.is_some() {
-            return Ok(t);
-        }
-    }
-    Err((StatusCode::FORBIDDEN, "Not your template").into_response())
 }
 
-/// Ownership check for edit/delete: must own the template or be admin.
+/// Write check for edit/delete (group-aware). `Some(rejection)` if not allowed.
 async fn reject_if_template_unwritable(
     db: &Pool<Sqlite>,
-    claims: &Claims,
+    eff: &rbac::Eff,
     id: i64,
 ) -> Option<Response> {
-    if is_admin(claims) {
-        return None;
-    }
-    let owner: Option<(Option<i64>,)> =
-        sqlx::query_as("SELECT owner_user_id FROM templates WHERE id = ? AND deleted_at IS NULL")
-            .bind(id)
-            .fetch_optional(db)
-            .await
-            .ok()
-            .flatten();
-    match owner {
-        Some((Some(o),)) if o == uid_of(claims) => None,
-        Some(_) => Some((StatusCode::FORBIDDEN, "Not your template").into_response()),
-        None => Some((StatusCode::NOT_FOUND, "Template not found").into_response()),
+    if rbac::can_write(db, eff, "templates", "template_groups", "template_id", id).await {
+        None
+    } else {
+        Some((StatusCode::FORBIDDEN, "Not allowed to modify this template").into_response())
     }
 }
 
@@ -411,7 +408,8 @@ pub async fn save_rule_template(
     Path(rule_id): Path<i64>,
     Json(p): Json<SaveTemplate>,
 ) -> impl IntoResponse {
-    // Load the source rule (must own it unless admin).
+    let eff = rbac::effective(&st.db, &claims).await;
+    // Load the source rule; the caller must be able to READ its parent channel.
     let rule: Option<Rule> =
         sqlx::query_as("SELECT * FROM rules WHERE id = ? AND deleted_at IS NULL")
             .bind(rule_id)
@@ -422,11 +420,11 @@ pub async fn save_rule_template(
     let Some(rule) = rule else {
         return (StatusCode::NOT_FOUND, "Rule not found").into_response();
     };
-    if !is_admin(&claims) && rule.owner_user_id != Some(uid_of(&claims)) {
-        return (StatusCode::FORBIDDEN, "Not your rule").into_response();
+    if !rbac::can_read(&st.db, &eff, "channels", "channel_groups", "channel_id", rule.channel_id).await {
+        return (StatusCode::FORBIDDEN, "Not allowed to template this rule").into_response();
     }
     if let Some(pid) = p.project_id {
-        if let Some(rej) = reject_if_project_unwritable(&st.db, &claims, pid).await {
+        if let Some(rej) = reject_if_project_unwritable(&st.db, &eff, pid).await {
             return rej;
         }
     }
@@ -448,8 +446,8 @@ pub async fn save_rule_template(
     let name = p.name.unwrap_or(rule.name);
 
     insert_template(
-        &st.db, &claims, &name, "rule", p.description, p.project_id, &body_json, p.is_shared,
-        p.is_default,
+        &st.db, &eff, &name, "rule", p.description, p.project_id, &body_json, p.is_shared,
+        p.is_default, p.group_ids,
     )
     .await
 }
@@ -470,11 +468,12 @@ pub async fn save_channel_template(
     let Some(channel) = channel else {
         return (StatusCode::NOT_FOUND, "Channel not found").into_response();
     };
-    if !is_admin(&claims) && channel.owner_user_id != Some(uid_of(&claims)) {
-        return (StatusCode::FORBIDDEN, "Not your channel").into_response();
+    let eff = rbac::effective(&st.db, &claims).await;
+    if !rbac::can_read(&st.db, &eff, "channels", "channel_groups", "channel_id", channel_id).await {
+        return (StatusCode::FORBIDDEN, "Not allowed to template this channel").into_response();
     }
     if let Some(pid) = p.project_id {
-        if let Some(rej) = reject_if_project_unwritable(&st.db, &claims, pid).await {
+        if let Some(rej) = reject_if_project_unwritable(&st.db, &eff, pid).await {
             return rej;
         }
     }
@@ -520,8 +519,8 @@ pub async fn save_channel_template(
     let name = p.name.unwrap_or(channel.name);
 
     insert_template(
-        &st.db, &claims, &name, "channel", p.description, p.project_id, &body_json, p.is_shared,
-        p.is_default,
+        &st.db, &eff, &name, "channel", p.description, p.project_id, &body_json, p.is_shared,
+        p.is_default, p.group_ids,
     )
     .await
 }
@@ -529,7 +528,7 @@ pub async fn save_channel_template(
 #[allow(clippy::too_many_arguments)]
 async fn insert_template(
     db: &Pool<Sqlite>,
-    claims: &Claims,
+    eff: &rbac::Eff,
     name: &str,
     kind: &str,
     description: Option<String>,
@@ -537,25 +536,41 @@ async fn insert_template(
     body_json: &str,
     is_shared: Option<bool>,
     is_default: Option<bool>,
+    group_ids: Option<Vec<i64>>,
 ) -> Response {
     let want_default = is_default.unwrap_or(false);
-    // An admin's default template is global so every user sees it in the gallery.
-    let shared = is_shared.unwrap_or(false) || (want_default && is_admin(claims));
+    // A super-admin's "share"/"default" template is org-wide (is_global); members
+    // publish to their groups instead (links below).
+    let want_global = eff.super_admin && (is_shared.unwrap_or(false) || want_default);
     let r = sqlx::query_as::<_, Template>(
-        "INSERT INTO templates(name,kind,description,project_id,body_json,is_shared,is_default,owner_user_id) \
-         VALUES(?,?,?,?,?,?,?,?) RETURNING *",
+        "INSERT INTO templates(name,kind,description,project_id,body_json,is_shared,is_default,is_global,owner_user_id) \
+         VALUES(?,?,?,?,?,?,?,?,?) RETURNING *",
     )
     .bind(name)
     .bind(kind)
     .bind(description)
     .bind(project_id)
     .bind(body_json)
-    .bind(shared as i64)
+    .bind(want_global as i64) // keep legacy is_shared in sync with is_global
     .bind(want_default as i64)
-    .bind(uid_of(claims))
+    .bind(want_global as i64)
+    .bind(eff.uid)
     .fetch_one(db)
     .await;
-    resp(r)
+    match r {
+        Ok(t) => {
+            // Publish to groups: explicit list (validated) else the project's /
+            // saver's own groups. Super-admin globals stay unlinked.
+            let groups = match group_ids {
+                Some(g) if eff.super_admin || g.iter().all(|x| eff.member_of.contains(x)) => g,
+                Some(_) => return (StatusCode::FORBIDDEN, "Cannot publish to a group you don't belong to").into_response(),
+                None => default_groups(db, eff, project_id).await,
+            };
+            rbac::link_groups(db, "template_groups", "template_id", t.id, &groups).await;
+            Json(t).into_response()
+        }
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
 }
 
 pub async fn update_template(
@@ -564,12 +579,13 @@ pub async fn update_template(
     Path(id): Path<i64>,
     Json(p): Json<UpdateTemplateMeta>,
 ) -> impl IntoResponse {
-    if let Some(rej) = reject_if_template_unwritable(&st.db, &claims, id).await {
+    let eff = rbac::effective(&st.db, &claims).await;
+    if let Some(rej) = reject_if_template_unwritable(&st.db, &eff, id).await {
         return rej;
     }
     // If moving into a project, the caller must be able to write that project.
     if let Some(Some(pid)) = p.project_id {
-        if let Some(rej) = reject_if_project_unwritable(&st.db, &claims, pid).await {
+        if let Some(rej) = reject_if_project_unwritable(&st.db, &eff, pid).await {
             return rej;
         }
     }
@@ -593,25 +609,39 @@ pub async fn update_template(
         None => cur.project_id,
     };
     let is_default = p.is_default.map(|b| b as i64).unwrap_or(cur.is_default);
-    let mut is_shared = p.is_shared.map(|b| b as i64).unwrap_or(cur.is_shared);
-    // Keep admin defaults global so all users keep seeing them in the gallery.
-    if is_default == 1 && is_admin(&claims) {
-        is_shared = 1;
+    // Only super-admins toggle org-wide visibility; a super default stays global.
+    let mut is_global = if eff.super_admin {
+        p.is_global.map(|b| b as i64).unwrap_or(cur.is_global)
+    } else {
+        cur.is_global
+    };
+    if is_default == 1 && eff.super_admin {
+        is_global = 1;
     }
 
     let r = sqlx::query_as::<_, Template>(
-        "UPDATE templates SET name=?, description=?, project_id=?, is_shared=?, is_default=?, \
+        "UPDATE templates SET name=?, description=?, project_id=?, is_global=?, is_default=?, \
            updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') \
          WHERE id=? AND deleted_at IS NULL RETURNING *",
     )
     .bind(name)
     .bind(description)
     .bind(project_id)
-    .bind(is_shared)
+    .bind(is_global)
     .bind(is_default)
     .bind(id)
     .fetch_one(&st.db)
     .await;
+    // Re-publish to the supplied groups (super any; others only own groups).
+    if let Some(gids) = p.group_ids {
+        if eff.super_admin || gids.iter().all(|g| eff.member_of.contains(g)) {
+            let _ = sqlx::query("DELETE FROM template_groups WHERE template_id = ?")
+                .bind(id)
+                .execute(&st.db)
+                .await;
+            rbac::link_groups(&st.db, "template_groups", "template_id", id, &gids).await;
+        }
+    }
     resp(r)
 }
 
@@ -620,7 +650,8 @@ pub async fn delete_template(
     Extension(claims): Extension<Claims>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    if let Some(rej) = reject_if_template_unwritable(&st.db, &claims, id).await {
+    let eff = rbac::effective(&st.db, &claims).await;
+    if let Some(rej) = reject_if_template_unwritable(&st.db, &eff, id).await {
         return rej;
     }
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
@@ -639,11 +670,12 @@ pub async fn apply_template(
     Path(id): Path<i64>,
     Json(p): Json<ApplyTemplate>,
 ) -> impl IntoResponse {
-    let t = match load_visible_template(&st.db, &claims, id).await {
+    let eff = rbac::effective(&st.db, &claims).await;
+    let t = match load_visible_template(&st.db, &eff, id).await {
         Ok(t) => t,
         Err(rej) => return rej,
     };
-    let owner_id = uid_of(&claims);
+    let owner_id = eff.uid;
 
     match t.kind.as_str() {
         "rule" => {
@@ -654,21 +686,9 @@ pub async fn apply_template(
                 )
                     .into_response();
             };
-            // Caller must own the target channel (unless admin).
-            if !is_admin(&claims) {
-                let owner: Option<(Option<i64>,)> = sqlx::query_as(
-                    "SELECT owner_user_id FROM channels WHERE id = ? AND deleted_at IS NULL",
-                )
-                .bind(channel_id)
-                .fetch_optional(&st.db)
-                .await
-                .ok()
-                .flatten();
-                match owner {
-                    Some((Some(o),)) if o == owner_id => {}
-                    Some(_) => return (StatusCode::FORBIDDEN, "Not your channel").into_response(),
-                    None => return (StatusCode::NOT_FOUND, "Channel not found").into_response(),
-                }
+            // Caller must be able to WRITE the target channel.
+            if !rbac::can_write(&st.db, &eff, "channels", "channel_groups", "channel_id", channel_id).await {
+                return (StatusCode::FORBIDDEN, "Not allowed to add a rule to this channel").into_response();
             }
 
             let rb: RuleBackup = match serde_json::from_str(&t.body_json) {
@@ -709,12 +729,17 @@ pub async fn apply_template(
                 Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
             };
             match instantiate_channel_full(&st.db, &cfb, owner_id, p.name).await {
-                Ok((cid, cname, n_rules)) => Json(json!({
-                    "channel_id": cid,
-                    "channel_name": cname,
-                    "rules_created": n_rules,
-                }))
-                .into_response(),
+                Ok((cid, cname, n_rules)) => {
+                    // New channel lands in the applier's own group(s); super: unlinked.
+                    let groups: Vec<i64> = if eff.super_admin { Vec::new() } else { eff.member_of.clone() };
+                    rbac::link_groups(&st.db, "channel_groups", "channel_id", cid, &groups).await;
+                    Json(json!({
+                        "channel_id": cid,
+                        "channel_name": cname,
+                        "rules_created": n_rules,
+                    }))
+                    .into_response()
+                }
                 Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
             }
         }

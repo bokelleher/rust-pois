@@ -222,6 +222,27 @@ impl EventLogger {
                         .push(")");
                 }
             }
+            // RBAC: restrict to events whose channel the caller may read. Resolves
+            // channel_name -> channels (names are globally unique). None = super.
+            if let Some((uid, member_of)) = f.event_scope {
+                qb.push(
+                    " AND channel_name IN (SELECT name FROM channels WHERE deleted_at IS NULL \
+                     AND (owner_user_id = ",
+                )
+                .push_bind(uid)
+                .push(" OR is_global = 1");
+                if !member_of.is_empty() {
+                    qb.push(
+                        " OR EXISTS(SELECT 1 FROM channel_groups cg WHERE cg.channel_id = channels.id AND cg.group_id IN (",
+                    );
+                    let mut sep = qb.separated(", ");
+                    for g in &member_of {
+                        sep.push_bind(*g);
+                    }
+                    qb.push("))");
+                }
+                qb.push("))");
+            }
         }
 
         qb.push(" ORDER BY timestamp DESC LIMIT ")
@@ -320,6 +341,9 @@ pub struct EventFilters {
     /// Free-text search across acquisition signal ID, source IP, SCTE-35 command,
     /// and UPID (hex form, plus an ASCII→hex match so an ASCII UPID also matches).
     pub search: Option<String>,
+    /// RBAC scope: `Some((uid, member_of))` limits events to channels the caller
+    /// may read; `None` = super-admin (no restriction).
+    pub event_scope: Option<(i64, Vec<i64>)>,
 }
 
 #[derive(Debug, Serialize)]

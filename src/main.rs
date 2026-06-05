@@ -1,5 +1,5 @@
 // src/main.rs
-// Version: 3.9.1
+// Version: 3.10.0
 // Last Modified: 2026-03-12
 // Changes:
 //   - Issue 1: Channel routing now uses acquisitionPointIdentity from XML body as fallback
@@ -686,21 +686,12 @@ async fn list_channels(
     State(st): State<Arc<AppState>>,
     Extension(claims): Extension<jwt_auth::Claims>,
 ) -> impl IntoResponse {
-    let query = if claims.role == "admin" {
-        // Admins see all channels (including NULL-owned)
-        "SELECT * FROM channels WHERE deleted_at IS NULL ORDER BY name"
-    } else {
-        // Users see only their own channels
-        "SELECT * FROM channels WHERE deleted_at IS NULL AND owner_user_id = ? ORDER BY name"
-    };
-
-    let channels: Result<Vec<Channel>, _> = if claims.role == "admin" {
-        sqlx::query_as(query).fetch_all(&st.db).await
-    } else {
-        let user_id: i64 = claims.sub.parse().unwrap_or(0);
-        sqlx::query_as(query).bind(user_id).fetch_all(&st.db).await
-    };
-
+    let eff = rbac::effective(&st.db, &claims).await;
+    let mut qb: sqlx::QueryBuilder<Sqlite> =
+        sqlx::QueryBuilder::new("SELECT * FROM channels WHERE deleted_at IS NULL");
+    rbac::push_read_predicate(&mut qb, &eff, "channels", "channel_groups", "channel_id");
+    qb.push(" ORDER BY name");
+    let channels = qb.build_query_as::<Channel>().fetch_all(&st.db).await;
     resp(channels)
 }
 
@@ -709,20 +700,43 @@ async fn create_channel(
     Extension(claims): Extension<jwt_auth::Claims>,
     Json(p): Json<UpsertChannel>,
 ) -> impl IntoResponse {
+    let eff = rbac::effective(&st.db, &claims).await;
     let enabled = p.enabled.unwrap_or(true) as i64;
     let tz = p.timezone.unwrap_or_else(|| "UTC".into());
-    let owner_id: i64 = claims.sub.parse().unwrap_or(0);
+    let is_global = (eff.super_admin && p.is_global.unwrap_or(false)) as i64;
+
+    // Resolve the groups to publish the new channel to.
+    let mut groups: Vec<i64> = p.group_ids.unwrap_or_default();
+    if !eff.super_admin {
+        if groups.is_empty() {
+            match eff.member_of.len() {
+                1 => groups = eff.member_of.clone(),
+                0 => return (StatusCode::FORBIDDEN, "You belong to no group").into_response(),
+                _ => return (StatusCode::BAD_REQUEST, "group_ids required (you belong to multiple groups)").into_response(),
+            }
+        }
+        if !groups.iter().all(|g| eff.member_of.contains(g)) {
+            return (StatusCode::FORBIDDEN, "Cannot publish to a group you don't belong to").into_response();
+        }
+    }
 
     let r = sqlx::query_as::<_, Channel>(
-        "INSERT INTO channels(name,enabled,timezone,owner_user_id) VALUES(?,?,?,?) RETURNING *",
+        "INSERT INTO channels(name,enabled,timezone,owner_user_id,is_global) VALUES(?,?,?,?,?) RETURNING *",
     )
     .bind(p.name)
     .bind(enabled)
     .bind(tz)
-    .bind(owner_id)
+    .bind(eff.uid)
+    .bind(is_global)
     .fetch_one(&st.db)
     .await;
-    resp(r)
+    match r {
+        Ok(ch) => {
+            rbac::link_groups(&st.db, "channel_groups", "channel_id", ch.id, &groups).await;
+            Json(ch).into_response()
+        }
+        Err(e) => err(e),
+    }
 }
 
 async fn update_channel(
@@ -731,47 +745,41 @@ async fn update_channel(
     Path(id): Path<i64>,
     Json(p): Json<UpsertChannel>,
 ) -> impl IntoResponse {
-    // Check ownership
-    if claims.role != "admin" {
-        let user_id: i64 = claims.sub.parse().unwrap_or(0);
-        let owner: Option<(Option<i64>,)> = sqlx::query_as(
-            "SELECT owner_user_id FROM channels WHERE id = ? AND deleted_at IS NULL"
-        )
-        .bind(id)
-        .fetch_optional(&st.db)
-        .await
-        .ok()
-        .flatten();
-
-        match owner {
-            Some((Some(owner_id),)) if owner_id != user_id => {
-                return (StatusCode::FORBIDDEN, "Not your channel").into_response();
-            }
-            Some((None,)) => {
-                return (StatusCode::FORBIDDEN, "Cannot modify system channel").into_response();
-            }
-            None => {
-                return (StatusCode::NOT_FOUND, "Channel not found").into_response();
-            }
-            _ => {}
-        }
+    let eff = rbac::effective(&st.db, &claims).await;
+    if !rbac::can_write(&st.db, &eff, "channels", "channel_groups", "channel_id", id).await {
+        return (StatusCode::FORBIDDEN, "Not allowed to modify this channel").into_response();
     }
 
     let enabled = p.enabled.map(|b| b as i64);
     let tz = p.timezone.unwrap_or_else(|| "UTC".into());
+    // Only super-admins can toggle org-wide visibility.
+    let is_global = if eff.super_admin { p.is_global.map(|b| b as i64) } else { None };
     let r = sqlx::query_as::<_, Channel>(
-        "UPDATE channels 
-         SET name=COALESCE(?,name), enabled=COALESCE(?,enabled), timezone=?, 
-             updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') 
-         WHERE id=? AND deleted_at IS NULL 
+        "UPDATE channels
+         SET name=COALESCE(?,name), enabled=COALESCE(?,enabled), timezone=?,
+             is_global=COALESCE(?,is_global),
+             updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id=? AND deleted_at IS NULL
          RETURNING *",
     )
     .bind(Some(p.name))
     .bind(enabled)
     .bind(tz)
+    .bind(is_global)
     .bind(id)
     .fetch_one(&st.db)
     .await;
+
+    // Re-publish to the supplied groups (super-admin any; others only own groups).
+    if let Some(gids) = p.group_ids {
+        if eff.super_admin || gids.iter().all(|g| eff.member_of.contains(g)) {
+            let _ = sqlx::query("DELETE FROM channel_groups WHERE channel_id = ?")
+                .bind(id)
+                .execute(&st.db)
+                .await;
+            rbac::link_groups(&st.db, "channel_groups", "channel_id", id, &gids).await;
+        }
+    }
     resp(r)
 }
 
@@ -780,33 +788,10 @@ async fn delete_channel(
     Extension(claims): Extension<jwt_auth::Claims>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    // Check ownership
-    if claims.role != "admin" {
-        let user_id: i64 = claims.sub.parse().unwrap_or(0);
-        let owner: Option<(Option<i64>,)> = sqlx::query_as(
-            "SELECT owner_user_id FROM channels WHERE id = ? AND deleted_at IS NULL"
-        )
-        .bind(id)
-        .fetch_optional(&st.db)
-        .await
-        .ok()
-        .flatten();
-
-        match owner {
-            Some((Some(owner_id),)) if owner_id != user_id => {
-                return (StatusCode::FORBIDDEN, "Not your channel").into_response();
-            }
-            Some((None,)) => {
-                return (StatusCode::FORBIDDEN, "Cannot delete system channel").into_response();
-            }
-            None => {
-                return (StatusCode::NOT_FOUND, "Channel not found").into_response();
-            }
-            _ => {}
-        }
+    let eff = rbac::effective(&st.db, &claims).await;
+    if !rbac::can_write(&st.db, &eff, "channels", "channel_groups", "channel_id", id).await {
+        return (StatusCode::FORBIDDEN, "Not allowed to delete this channel").into_response();
     }
-
-    // Soft delete
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
     let r = sqlx::query(
         "UPDATE channels SET deleted_at=?, enabled=0 WHERE id=? AND deleted_at IS NULL"
@@ -826,35 +811,15 @@ async fn list_rules(
     Extension(claims): Extension<jwt_auth::Claims>,
     Path(channel_id): Path<i64>,
 ) -> impl IntoResponse {
-    // Check channel ownership first
-    if claims.role != "admin" {
-        let user_id: i64 = claims.sub.parse().unwrap_or(0);
-        let owner: Option<(Option<i64>,)> = sqlx::query_as(
-            "SELECT owner_user_id FROM channels WHERE id = ? AND deleted_at IS NULL"
-        )
-        .bind(channel_id)
-        .fetch_optional(&st.db)
-        .await
-        .ok()
-        .flatten();
-
-        match owner {
-            Some((Some(owner_id),)) if owner_id != user_id => {
-                return (StatusCode::FORBIDDEN, "Not your channel").into_response();
-            }
-            Some((None,)) => {
-                return (StatusCode::FORBIDDEN, "Cannot access system channel").into_response();
-            }
-            None => {
-                return (StatusCode::NOT_FOUND, "Channel not found").into_response();
-            }
-            _ => {}
-        }
+    // Rules inherit the parent channel's visibility.
+    let eff = rbac::effective(&st.db, &claims).await;
+    if !rbac::can_read(&st.db, &eff, "channels", "channel_groups", "channel_id", channel_id).await {
+        return (StatusCode::FORBIDDEN, "Not allowed to view this channel").into_response();
     }
 
     let rows = sqlx::query_as::<_, Rule>(
-        "SELECT * FROM rules 
-         WHERE channel_id=? AND deleted_at IS NULL 
+        "SELECT * FROM rules
+         WHERE channel_id=? AND deleted_at IS NULL
          ORDER BY priority",
     )
     .bind(channel_id)
@@ -869,33 +834,12 @@ async fn create_rule(
     Path(channel_id): Path<i64>,
     Json(mut p): Json<UpsertRule>,
 ) -> impl IntoResponse {
-    // Check channel ownership
-    if claims.role != "admin" {
-        let user_id: i64 = claims.sub.parse().unwrap_or(0);
-        let owner: Option<(Option<i64>,)> = sqlx::query_as(
-            "SELECT owner_user_id FROM channels WHERE id = ? AND deleted_at IS NULL"
-        )
-        .bind(channel_id)
-        .fetch_optional(&st.db)
-        .await
-        .ok()
-        .flatten();
-
-        match owner {
-            Some((Some(owner_id),)) if owner_id != user_id => {
-                return (StatusCode::FORBIDDEN, "Not your channel").into_response();
-            }
-            Some((None,)) => {
-                return (StatusCode::FORBIDDEN, "Cannot modify system channel").into_response();
-            }
-            None => {
-                return (StatusCode::NOT_FOUND, "Channel not found").into_response();
-            }
-            _ => {}
-        }
+    // Managing rules requires write access to the parent channel.
+    let eff = rbac::effective(&st.db, &claims).await;
+    if !rbac::can_write(&st.db, &eff, "channels", "channel_groups", "channel_id", channel_id).await {
+        return (StatusCode::FORBIDDEN, "Not allowed to modify this channel").into_response();
     }
-
-    let owner_id: i64 = claims.sub.parse().unwrap_or(0);
+    let owner_id: i64 = eff.uid;
 
     // space priorities by 10; append if negative
     let maxp: Option<(i64,)> = sqlx::query_as(
@@ -934,29 +878,13 @@ async fn update_rule(
     Path(id): Path<i64>,
     Json(p): Json<UpsertRule>,
 ) -> impl IntoResponse {
-    // Check ownership
-    if claims.role != "admin" {
-        let user_id: i64 = claims.sub.parse().unwrap_or(0);
-        let owner: Option<(Option<i64>,)> = sqlx::query_as(
-            "SELECT owner_user_id FROM rules WHERE id = ? AND deleted_at IS NULL"
-        )
-        .bind(id)
-        .fetch_optional(&st.db)
-        .await
-        .ok()
-        .flatten();
-
-        match owner {
-            Some((Some(owner_id),)) if owner_id != user_id => {
-                return (StatusCode::FORBIDDEN, "Not your rule").into_response();
+    let eff = rbac::effective(&st.db, &claims).await;
+    match rule_parent_channel(&st.db, id).await {
+        None => return (StatusCode::NOT_FOUND, "Rule not found").into_response(),
+        Some(cid) => {
+            if !rbac::can_write(&st.db, &eff, "channels", "channel_groups", "channel_id", cid).await {
+                return (StatusCode::FORBIDDEN, "Not allowed to modify this rule").into_response();
             }
-            Some((None,)) => {
-                return (StatusCode::FORBIDDEN, "Cannot modify system rule").into_response();
-            }
-            None => {
-                return (StatusCode::NOT_FOUND, "Rule not found").into_response();
-            }
-            _ => {}
         }
     }
 
@@ -984,29 +912,13 @@ async fn delete_rule(
     Extension(claims): Extension<jwt_auth::Claims>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    // Check ownership
-    if claims.role != "admin" {
-        let user_id: i64 = claims.sub.parse().unwrap_or(0);
-        let owner: Option<(Option<i64>,)> = sqlx::query_as(
-            "SELECT owner_user_id FROM rules WHERE id = ? AND deleted_at IS NULL"
-        )
-        .bind(id)
-        .fetch_optional(&st.db)
-        .await
-        .ok()
-        .flatten();
-
-        match owner {
-            Some((Some(owner_id),)) if owner_id != user_id => {
-                return (StatusCode::FORBIDDEN, "Not your rule").into_response();
+    let eff = rbac::effective(&st.db, &claims).await;
+    match rule_parent_channel(&st.db, id).await {
+        None => return (StatusCode::NOT_FOUND, "Rule not found").into_response(),
+        Some(cid) => {
+            if !rbac::can_write(&st.db, &eff, "channels", "channel_groups", "channel_id", cid).await {
+                return (StatusCode::FORBIDDEN, "Not allowed to delete this rule").into_response();
             }
-            Some((None,)) => {
-                return (StatusCode::FORBIDDEN, "Cannot delete system rule").into_response();
-            }
-            None => {
-                return (StatusCode::NOT_FOUND, "Rule not found").into_response();
-            }
-            _ => {}
         }
     }
 
@@ -1023,10 +935,34 @@ async fn delete_rule(
     resp(r)
 }
 
+/// The parent channel id of a (non-deleted) rule, if it exists.
+async fn rule_parent_channel(db: &Pool<Sqlite>, rule_id: i64) -> Option<i64> {
+    sqlx::query_as::<_, (i64,)>("SELECT channel_id FROM rules WHERE id = ? AND deleted_at IS NULL")
+        .bind(rule_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .map(|(c,)| c)
+}
+
 async fn reorder_rules(
     State(st): State<Arc<AppState>>,
+    Extension(claims): Extension<jwt_auth::Claims>,
     Json(p): Json<ReorderRules>,
 ) -> impl IntoResponse {
+    // All reordered rules belong to one channel; gate on its write access.
+    if let Some(&first) = p.ordered_ids.first() {
+        let eff = rbac::effective(&st.db, &claims).await;
+        match rule_parent_channel(&st.db, first).await {
+            None => return (StatusCode::NOT_FOUND, "Rule not found").into_response(),
+            Some(cid) => {
+                if !rbac::can_write(&st.db, &eff, "channels", "channel_groups", "channel_id", cid).await {
+                    return (StatusCode::FORBIDDEN, "Not allowed to reorder these rules").into_response();
+                }
+            }
+        }
+    }
     let mut tx = match st.db.begin().await {
         Ok(t) => t,
         Err(e) => return err(e),
@@ -1273,65 +1209,22 @@ async fn list_events(
 ) -> impl IntoResponse {
     let limit: i64 = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(100);
     let offset: i64 = params.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
-    
-    // For non-admins, filter events by owned channels
-    let channel_filter = if claims.role != "admin" {
-        let user_id: i64 = claims.sub.parse().unwrap_or(0);
-        let owned_channels: Vec<(String,)> = match sqlx::query_as(
-            "SELECT name FROM channels WHERE owner_user_id = ? AND deleted_at IS NULL"
-        )
-        .bind(user_id)
-        .fetch_all(&st.db)
-        .await
-        {
-            Ok(channels) => channels,
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        };
-        
-        if owned_channels.is_empty() {
-            return Json(Vec::<EsamEventView>::new()).into_response();
-        }
-        
-        params.get("channel").cloned().or_else(|| Some(owned_channels[0].0.clone()))
-    } else {
-        params.get("channel").cloned()
-    };
 
+    // RBAC: scope events to channels the caller may read (None = super-admin).
+    let eff = rbac::effective(&st.db, &claims).await;
     let filters = EventFilters {
-        channel_name: channel_filter,
+        channel_name: params.get("channel").cloned(),
         action: params.get("action").cloned(),
         since: params.get("since").cloned(),
         search: params
             .get("search")
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
+        event_scope: rbac::event_scope(&eff),
     };
 
     match st.event_logger.get_recent_events(limit, offset, Some(filters)).await {
-        Ok(events) => {
-            if claims.role != "admin" {
-                let user_id: i64 = claims.sub.parse().unwrap_or(0);
-                let owned_channel_names: Vec<String> = match sqlx::query_as(
-                    "SELECT name FROM channels WHERE owner_user_id = ? AND deleted_at IS NULL"
-                )
-                .bind(user_id)
-                .fetch_all(&st.db)
-                .await
-                {
-                    Ok(channels) => channels.into_iter().map(|(name,)| name).collect(),
-                    Err(_) => vec![],
-                };
-                
-                let filtered_events: Vec<EsamEventView> = events
-                    .into_iter()
-                    .filter(|e| owned_channel_names.contains(&e.channel_name))
-                    .collect();
-                
-                Json(filtered_events).into_response()
-            } else {
-                Json(events).into_response()
-            }
-        }
+        Ok(events) => Json(events).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -1372,21 +1265,25 @@ async fn get_event_detail(
     
     match event {
         Ok(Some(ev)) => {
-            // For non-admins, check if they own the channel
-            if claims.role != "admin" {
-                let user_id: i64 = claims.sub.parse().unwrap_or(0);
-                let owned: Option<(i64,)> = sqlx::query_as(
-                    "SELECT COUNT(*) FROM channels WHERE name = ? AND owner_user_id = ? AND deleted_at IS NULL"
+            // RBAC: must be able to read the event's channel (resolved by name).
+            let eff = rbac::effective(&st.db, &claims).await;
+            if !eff.super_admin {
+                let chan: Option<(i64,)> = sqlx::query_as(
+                    "SELECT id FROM channels WHERE name = ? AND deleted_at IS NULL"
                 )
                 .bind(&ev.channel_name)
-                .bind(user_id)
                 .fetch_optional(&st.db)
                 .await
                 .ok()
                 .flatten();
-                
-                if owned.map(|(c,)| c).unwrap_or(0) == 0 {
-                    return (StatusCode::FORBIDDEN, "Not your channel").into_response();
+                let allowed = match chan {
+                    Some((cid,)) => {
+                        rbac::can_read(&st.db, &eff, "channels", "channel_groups", "channel_id", cid).await
+                    }
+                    None => false, // channel gone -> super-admin only
+                };
+                if !allowed {
+                    return (StatusCode::FORBIDDEN, "Not allowed to view this event").into_response();
                 }
             }
             Json(ev).into_response()

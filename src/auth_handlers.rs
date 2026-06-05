@@ -51,6 +51,10 @@ pub struct CreateUserRequest {
     pub password: String,
     pub role: String,
     pub email: Option<String>,
+    /// RBAC: group to add the new user to (required for a group-admin who
+    /// administers more than one group; ignored field for super-admins unless set).
+    #[serde(default)]
+    pub group_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,6 +117,24 @@ fn require_admin(claims: &Claims) -> Result<(), (StatusCode, &'static str)> {
         return Err((StatusCode::FORBIDDEN, "Admin access required"));
     }
     Ok(())
+}
+
+/// User ids that are members of any group the caller administers.
+async fn users_in_admin_groups(
+    db: &sqlx::Pool<sqlx::Sqlite>,
+    admin_of: &[i64],
+) -> Vec<i64> {
+    if admin_of.is_empty() {
+        return Vec::new();
+    }
+    let mut qb: sqlx::QueryBuilder<sqlx::Sqlite> =
+        sqlx::QueryBuilder::new("SELECT DISTINCT user_id FROM group_members WHERE group_id IN (");
+    let mut sep = qb.separated(", ");
+    for g in admin_of {
+        sep.push_bind(*g);
+    }
+    qb.push(")");
+    qb.build_query_scalar().fetch_all(db).await.unwrap_or_default()
 }
 
 // ==================== Public Endpoints ====================
@@ -218,13 +240,23 @@ pub async fn list_users(
         Err((status, msg)) => return (status, Json(serde_json::json!({ "error": msg }))).into_response(),
     };
 
-    if let Err((status, msg)) = require_admin(&claims) {
-        return (status, Json(serde_json::json!({ "error": msg }))).into_response();
+    // Super-admins see all users; group-admins see only members of their groups.
+    let eff = crate::rbac::effective(&auth_state.db, &claims).await;
+    if !eff.super_admin && eff.admin_of.is_empty() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Admin access required" }))).into_response();
     }
+    let scope: Option<Vec<i64>> = if eff.super_admin {
+        None
+    } else {
+        Some(users_in_admin_groups(&auth_state.db, &eff.admin_of).await)
+    };
 
     match auth_state.auth_service.list_users().await {
         Ok(users) => {
-            let response: Vec<UserResponse> = users.into_iter().map(|u| UserResponse {
+            let response: Vec<UserResponse> = users
+                .into_iter()
+                .filter(|u| scope.as_ref().map(|ids| ids.contains(&u.id)).unwrap_or(true))
+                .map(|u| UserResponse {
                 id: u.id,
                 username: u.username,
                 role: u.role,
@@ -254,12 +286,35 @@ pub async fn create_user(
         Err((status, msg)) => return (status, Json(serde_json::json!({ "error": msg }))).into_response(),
     };
 
-    if let Err((status, msg)) = require_admin(&claims) {
-        return (status, Json(serde_json::json!({ "error": msg }))).into_response();
+    let eff = crate::rbac::effective(&auth_state.db, &claims).await;
+    if !eff.super_admin && eff.admin_of.is_empty() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Admin access required" }))).into_response();
     }
+    // Resolve the group the new user joins (group-admins must administer it).
+    let target_group: Option<i64> = if eff.super_admin {
+        req.group_id
+    } else {
+        match req.group_id {
+            Some(g) if eff.admin_of.contains(&g) => Some(g),
+            Some(_) => return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "You don't administer that group" }))).into_response(),
+            None if eff.admin_of.len() == 1 => Some(eff.admin_of[0]),
+            None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "group_id required (you administer multiple groups)" }))).into_response(),
+        }
+    };
+    // Group-admins may only create regular users (never super-admins).
+    let role = if eff.super_admin { req.role.clone() } else { "user".to_string() };
 
-    match auth_state.auth_service.create_user(&req.username, &req.password, &req.role, req.email.as_deref()).await {
+    match auth_state.auth_service.create_user(&req.username, &req.password, &role, req.email.as_deref()).await {
         Ok(user) => {
+            if let Some(g) = target_group {
+                let _ = sqlx::query(
+                    "INSERT OR IGNORE INTO group_members(group_id, user_id, role) VALUES(?, ?, 'member')",
+                )
+                .bind(g)
+                .bind(user.id)
+                .execute(&auth_state.db)
+                .await;
+            }
             let response = UserResponse {
                 id: user.id,
                 username: user.username,
@@ -290,8 +345,12 @@ pub async fn get_user(
         Err((status, msg)) => return (status, Json(serde_json::json!({ "error": msg }))).into_response(),
     };
 
-    if let Err((status, msg)) = require_admin(&claims) {
-        return (status, Json(serde_json::json!({ "error": msg }))).into_response();
+    let eff = crate::rbac::effective(&auth_state.db, &claims).await;
+    if !eff.super_admin {
+        let visible = users_in_admin_groups(&auth_state.db, &eff.admin_of).await;
+        if !visible.contains(&user_id) {
+            return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Not allowed" }))).into_response();
+        }
     }
 
     match sqlx::query_as::<_, crate::jwt_auth::User>("SELECT * FROM users WHERE id = ?")
@@ -336,8 +395,17 @@ pub async fn update_user(
         Err((status, msg)) => return (status, Json(serde_json::json!({ "error": msg }))).into_response(),
     };
 
-    if let Err((status, msg)) = require_admin(&claims) {
-        return (status, Json(serde_json::json!({ "error": msg }))).into_response();
+    // Super-admins manage anyone; group-admins only members of their groups, and
+    // can never grant super-admin.
+    let eff = crate::rbac::effective(&auth_state.db, &claims).await;
+    if !eff.super_admin {
+        let visible = users_in_admin_groups(&auth_state.db, &eff.admin_of).await;
+        if eff.admin_of.is_empty() || !visible.contains(&user_id) {
+            return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Not allowed" }))).into_response();
+        }
+        if req.role.as_deref() == Some("admin") {
+            return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Cannot grant super-admin" }))).into_response();
+        }
     }
 
     // Protect admin user (ID 1) from being demoted or disabled

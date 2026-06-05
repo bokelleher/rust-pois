@@ -1,5 +1,5 @@
 // header.js - Common header with JWT authentication
-// Version: 3.7.0
+// Version: 3.10.0
 // Last updated: 2026-06-04
 // Changes: Added Projects (template library) nav link + active-page detection.
 //          (3.1.0) Added settings gear icon, removed tokens from nav, admin.html → channels.html
@@ -65,6 +65,7 @@
     const path = window.location.pathname;
     if (path.includes('channels.html') || path.includes('admin.html')) return 'channels';
     if (path.includes('projects.html')) return 'projects';
+    if (path.includes('groups.html')) return 'groups';
     if (path.includes('tools.html')) return 'tools';
     if (path.includes('events.html')) return 'events';
     if (path.includes('users.html')) return 'users';
@@ -86,6 +87,8 @@
 
     const user = getUser();
     const isAdmin = user && user.role === 'admin';
+    // Group-admins (per-membership role) or super-admins can manage groups + users.
+    const isGroupAdmin = isAdmin || (user && Array.isArray(user.groups) && user.groups.some(g => g.role === 'admin'));
     const username = user ? user.username : 'User';
     const activePage = getActivePage();
 
@@ -101,6 +104,7 @@
           <a href="/static/projects.html" ${activePage === 'projects' ? 'class="active"' : ''}>Projects</a>
           <a href="/static/tools.html" ${activePage === 'tools' ? 'class="active"' : ''}>SCTE-35 Tools</a>
           <a href="/static/events.html" ${activePage === 'events' ? 'class="active"' : ''}>Event Monitor</a>
+          ${isGroupAdmin ? `<a href="/static/groups.html" ${activePage === 'groups' ? 'class="active"' : ''}>Groups</a>` : ''}
           ${isAdmin ? `<a href="/static/users.html" ${activePage === 'users' ? 'class="active"' : ''}>Users</a>` : ''}
           <a href="/static/docs.html" ${activePage === 'docs' ? 'class="active"' : ''}>Docs</a>
         </nav>

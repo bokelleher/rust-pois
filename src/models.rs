@@ -9,6 +9,8 @@ pub struct Channel {
     pub timezone: String,
     pub owner_user_id: Option<i64>,  // NEW: ownership tracking
     pub deleted_at: Option<String>,   // NEW: soft delete
+    #[serde(default)]
+    pub is_global: i64,               // RBAC: visible to all groups
     pub created_at: String,
     pub updated_at: String,
 }
@@ -18,6 +20,13 @@ pub struct UpsertChannel {
     pub name: String,
     pub enabled: Option<bool>,
     pub timezone: Option<String>,
+    /// RBAC: groups to publish this channel to (create/update). For non-super
+    /// users these must be groups they belong to; super-admins may target any.
+    #[serde(default)]
+    pub group_ids: Option<Vec<i64>>,
+    /// RBAC: visible to all groups (super-admin only).
+    #[serde(default)]
+    pub is_global: Option<bool>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow, Clone)]
@@ -65,6 +74,8 @@ pub struct Project {
     pub name: String,
     pub description: Option<String>,
     pub is_shared: i64,
+    #[serde(default)]
+    pub is_global: i64,
     pub owner_user_id: Option<i64>,
     pub deleted_at: Option<String>,
     pub created_at: String,
@@ -83,6 +94,8 @@ pub struct Template {
     pub body_json: String,
     pub is_shared: i64,
     pub is_default: i64,
+    #[serde(default)]
+    pub is_global: i64,
     pub owner_user_id: Option<i64>,
     pub deleted_at: Option<String>,
     pub created_at: String,
@@ -94,6 +107,12 @@ pub struct UpsertProject {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
+    /// RBAC: groups to publish to (super-admin any; others their own groups).
+    #[serde(default)]
+    pub group_ids: Option<Vec<i64>>,
+    /// RBAC: visible to all groups (super-admin only).
+    #[serde(default)]
+    pub is_global: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -104,6 +123,10 @@ pub struct UpdateProjectMeta {
     pub description: Option<String>,
     #[serde(default)]
     pub is_shared: Option<bool>,
+    #[serde(default)]
+    pub group_ids: Option<Vec<i64>>,
+    #[serde(default)]
+    pub is_global: Option<bool>,
 }
 
 /// Body for "save as template" / "add to project" (from-rule and from-channel).
@@ -121,6 +144,10 @@ pub struct SaveTemplate {
     /// saver is an admin this is saved global (visible to all users).
     #[serde(default)]
     pub is_default: Option<bool>,
+    /// RBAC: explicit groups to publish to (defaults to the project's groups when
+    /// filed in a project, else the saver's own groups).
+    #[serde(default)]
+    pub group_ids: Option<Vec<i64>>,
 }
 
 #[derive(Deserialize)]
@@ -136,6 +163,10 @@ pub struct UpdateTemplateMeta {
     pub is_shared: Option<bool>,
     #[serde(default)]
     pub is_default: Option<bool>,
+    #[serde(default)]
+    pub group_ids: Option<Vec<i64>>,
+    #[serde(default)]
+    pub is_global: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

@@ -23,6 +23,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{Pool, Sqlite};
 
+use sqlx::QueryBuilder;
+
 use crate::jwt_auth::Claims;
 use crate::AppState;
 
@@ -53,6 +55,180 @@ impl Eff {
     /// May see (read) within group `gid`.
     pub fn is_member(&self, gid: i64) -> bool {
         self.super_admin || self.member_of.contains(&gid)
+    }
+}
+
+// ------------------------- group-scoped predicates ------------------------
+//
+// The access model (super-admin bypasses everything):
+//   READ  a resource  <=> owner OR is_global OR shared to a group I'm a MEMBER of
+//   WRITE a resource  <=> owner OR group-ADMIN of a group it's shared to
+// These helpers are generic over the three entities via their link tables:
+//   ("channels","channel_groups","channel_id"), ("projects","project_groups",
+//   "project_id"), ("templates","template_groups","template_id").
+// `table`/`link_table`/`link_col` are internal string constants (never user
+// input); all user values are bound.
+
+/// Append the READ predicate to a QueryBuilder over `table` (e.g. a list query).
+/// No-op for super-admins (they see everything). The base query must already be
+/// inside a WHERE (we append `AND (...)`).
+pub fn push_read_predicate<'a>(
+    qb: &mut QueryBuilder<'a, Sqlite>,
+    eff: &Eff,
+    table: &str,
+    link_table: &str,
+    link_col: &str,
+) {
+    if eff.super_admin {
+        return;
+    }
+    qb.push(" AND (")
+        .push(table)
+        .push(".owner_user_id = ")
+        .push_bind(eff.uid)
+        .push(" OR ")
+        .push(table)
+        .push(".is_global = 1");
+    if !eff.member_of.is_empty() {
+        qb.push(format!(
+            " OR EXISTS(SELECT 1 FROM {link_table} lg WHERE lg.{link_col} = {table}.id AND lg.group_id IN ("
+        ));
+        let mut sep = qb.separated(", ");
+        for g in &eff.member_of {
+            sep.push_bind(*g);
+        }
+        qb.push("))");
+    }
+    qb.push(")");
+}
+
+async fn group_link_matches(
+    db: &Pool<Sqlite>,
+    link_table: &str,
+    link_col: &str,
+    id: i64,
+    groups: &[i64],
+) -> bool {
+    if groups.is_empty() {
+        return false;
+    }
+    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
+        "SELECT COUNT(*) FROM {link_table} WHERE {link_col} = "
+    ));
+    qb.push_bind(id).push(" AND group_id IN (");
+    let mut sep = qb.separated(", ");
+    for g in groups {
+        sep.push_bind(*g);
+    }
+    qb.push(")");
+    let n: i64 = qb
+        .build_query_scalar()
+        .fetch_one(db)
+        .await
+        .unwrap_or(0);
+    n > 0
+}
+
+/// True if the caller may READ resource `id` in `table`.
+pub async fn can_read(
+    db: &Pool<Sqlite>,
+    eff: &Eff,
+    table: &str,
+    link_table: &str,
+    link_col: &str,
+    id: i64,
+) -> bool {
+    if eff.super_admin {
+        return true;
+    }
+    let row: Option<(Option<i64>, i64)> = sqlx::query_as(&format!(
+        "SELECT owner_user_id, is_global FROM {table} WHERE id = ? AND deleted_at IS NULL"
+    ))
+    .bind(id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+    let Some((owner, is_global)) = row else {
+        return false;
+    };
+    if is_global != 0 || owner == Some(eff.uid) {
+        return true;
+    }
+    group_link_matches(db, link_table, link_col, id, &eff.member_of).await
+}
+
+/// True if the caller may WRITE (edit/delete/share) resource `id` in `table`.
+pub async fn can_write(
+    db: &Pool<Sqlite>,
+    eff: &Eff,
+    table: &str,
+    link_table: &str,
+    link_col: &str,
+    id: i64,
+) -> bool {
+    if eff.super_admin {
+        return true;
+    }
+    let owner: Option<(Option<i64>,)> = sqlx::query_as(&format!(
+        "SELECT owner_user_id FROM {table} WHERE id = ? AND deleted_at IS NULL"
+    ))
+    .bind(id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+    match owner {
+        None => return false, // not found
+        Some((Some(o),)) if o == eff.uid => return true,
+        _ => {}
+    }
+    group_link_matches(db, link_table, link_col, id, &eff.admin_of).await
+}
+
+/// Publish resource `id` to `group_ids` (idempotent).
+pub async fn link_groups(
+    db: &Pool<Sqlite>,
+    link_table: &str,
+    link_col: &str,
+    id: i64,
+    group_ids: &[i64],
+) {
+    for g in group_ids {
+        let _ = sqlx::query(&format!(
+            "INSERT OR IGNORE INTO {link_table}({link_col}, group_id) VALUES(?, ?)"
+        ))
+        .bind(id)
+        .bind(*g)
+        .execute(db)
+        .await;
+    }
+}
+
+/// The group ids a resource is currently published to (for responses/UI).
+pub async fn resource_group_ids(
+    db: &Pool<Sqlite>,
+    link_table: &str,
+    link_col: &str,
+    id: i64,
+) -> Vec<i64> {
+    sqlx::query_as::<_, (i64,)>(&format!(
+        "SELECT group_id FROM {link_table} WHERE {link_col} = ?"
+    ))
+    .bind(id)
+    .fetch_all(db)
+    .await
+    .map(|v| v.into_iter().map(|(g,)| g).collect())
+    .unwrap_or_default()
+}
+
+/// Events are scoped by the channel (resolved from `channel_name`) the caller may
+/// read. Returns None for super-admins (no restriction).
+pub fn event_scope(eff: &Eff) -> Option<(i64, Vec<i64>)> {
+    if eff.super_admin {
+        None
+    } else {
+        Some((eff.uid, eff.member_of.clone()))
     }
 }
 

@@ -1,0 +1,213 @@
+<!doctype html>
+<!--
+  groups.html - POIS Groups & RBAC management
+  Version: 3.10.0
+  Purpose: Super-admins create groups and assign members/roles; group-admins
+           manage their own group's membership and create user accounts. Backend
+           enforces all access (src/rbac.rs, src/auth_handlers.rs); this page only
+           surfaces the affordances the caller is allowed.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>POIS Groups</title>
+  <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    .flex-col { display:flex; flex-direction:column; }
+    .gap-2 { gap:8px; } .gap-3 { gap:12px; }
+    .grp-item { display:flex; align-items:center; justify-content:space-between; gap:8px;
+                padding:10px 12px; border:1px solid var(--border); border-radius:8px;
+                margin-bottom:8px; cursor:pointer; background:var(--field-bg); }
+    .grp-item.active { border-color:var(--primary); background:var(--field-bg-hover); }
+    .grp-item .gname { font-weight:600; font-size:13px; color:var(--text-primary); }
+    .mem-row { display:flex; align-items:center; justify-content:space-between; gap:12px;
+               padding:12px 14px; border:1px solid var(--border); border-radius:10px;
+               margin-bottom:10px; background:var(--field-bg); }
+    .role-badge { display:inline-block; border-radius:6px; padding:2px 8px; font-size:11px;
+                  font-weight:600; text-transform:uppercase; letter-spacing:.4px; }
+    .role-admin  { background:rgba(245,158,11,0.16); color:#fcd34d; border:1px solid rgba(245,158,11,0.35); }
+    .role-member { background:rgba(59,130,246,0.16); color:#93c5fd; border:1px solid rgba(59,130,246,0.35); }
+    .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex;
+                      align-items:center; justify-content:center; z-index:1000; }
+    .modal-card { background:var(--bg-elevated, #1b1b27); border:1px solid var(--border);
+                  border-radius:12px; padding:22px; width:min(440px,92vw); }
+  </style>
+  <script type="module">
+    import { h, render } from "https://esm.sh/preact@10.24.3";
+    import htm from "https://esm.sh/htm@3.1.1";
+    import * as hooks from "https://esm.sh/preact@10.24.3/hooks";
+    const html = htm.bind(h);
+
+    const API = {
+      get:(p)=>req("GET",p), post:(p,b)=>req("POST",p,b), put:(p,b)=>req("PUT",p,b), del:(p)=>req("DELETE",p)
+    };
+    async function req(method, path, body) {
+      const token = localStorage.getItem("pois_token") || "";
+      const res = await fetch(`/api${path}`, {
+        method, headers:{ "Content-Type":"application/json", "Authorization":`Bearer ${token}` },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.status === 204 ? null : res.json();
+    }
+    const me = () => { try { return JSON.parse(localStorage.getItem("pois_user") || "{}"); } catch { return {}; } };
+
+    function RoleBadge({ role }) {
+      return html`<span class="role-badge ${role === 'admin' ? 'role-admin' : 'role-member'}">${role}</span>`;
+    }
+
+    // ---- Create-account modal (super or group-admin) ----
+    function CreateAccountModal({ groupId, onClose, onDone }) {
+      const [u,setU]=hooks.useState(""), [pw,setPw]=hooks.useState(""), [em,setEm]=hooks.useState("");
+      const [role,setRole]=hooks.useState("member"), [busy,setBusy]=hooks.useState(false), [err,setErr]=hooks.useState(null);
+      const save = async () => {
+        if(!u.trim()||pw.length<8){ alert("Username required and password ≥ 8 chars."); return; }
+        setBusy(true);
+        try {
+          const nu = await API.post("/users", { username:u.trim(), password:pw, role:"user", email:em.trim()||null, group_id:groupId });
+          if (role === "admin") await API.post(`/groups/${groupId}/members`, { user_id:nu.id, role:"admin" });
+          onDone();
+        } catch(e){ setErr(String(e)); setBusy(false); return; }
+        onClose();
+      };
+      return html`<div class="modal-backdrop" onClick=${onClose}>
+        <div class="modal-card" onClick=${e=>e.stopPropagation()}>
+          <div style="font-weight:600;font-size:15px;margin-bottom:12px;">Create account in this group</div>
+          ${err && html`<div class="text-error" style="margin-bottom:8px;">${err}</div>`}
+          <div class="form-group"><label>Username</label><input value=${u} onInput=${e=>setU(e.target.value)} /></div>
+          <div class="form-group"><label>Temporary password (≥ 8 chars)</label><input type="password" value=${pw} onInput=${e=>setPw(e.target.value)} /></div>
+          <div class="form-group"><label>Email (optional)</label><input value=${em} onInput=${e=>setEm(e.target.value)} /></div>
+          <div class="form-group"><label>Role in group</label>
+            <select value=${role} onChange=${e=>setRole(e.target.value)}>
+              <option value="member">Member</option><option value="admin">Group admin</option>
+            </select></div>
+          <div class="meta-line text-xs text-muted">The account is global; relay the temp password to the user.</div>
+          <div class="flex gap-2 justify-end" style="margin-top:16px;">
+            <button class="btn" onClick=${onClose} disabled=${busy}>Cancel</button>
+            <button class="btn btn-primary" onClick=${save} disabled=${busy}>${busy?"Creating…":"Create account"}</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    // ---- Add-existing-member modal ----
+    function AddMemberModal({ groupId, onClose, onDone }) {
+      const [users,setUsers]=hooks.useState(null), [sel,setSel]=hooks.useState(""), [role,setRole]=hooks.useState("member"), [err,setErr]=hooks.useState(null);
+      hooks.useEffect(()=>{ (async()=>{ try{ setUsers(await API.get("/users")); }catch(e){ setErr(String(e)); } })(); },[]);
+      const add = async () => {
+        if(!sel) return;
+        try { await API.post(`/groups/${groupId}/members`, { user_id:Number(sel), role }); onDone(); onClose(); }
+        catch(e){ setErr(String(e)); }
+      };
+      return html`<div class="modal-backdrop" onClick=${onClose}>
+        <div class="modal-card" onClick=${e=>e.stopPropagation()}>
+          <div style="font-weight:600;font-size:15px;margin-bottom:12px;">Add existing user to group</div>
+          ${err && html`<div class="text-error" style="margin-bottom:8px;">${err}</div>`}
+          ${users==null ? html`<div class="text-muted">Loading…</div>` : html`
+            <div class="form-group"><label>User</label>
+              <select value=${sel} onChange=${e=>setSel(e.target.value)}>
+                <option value="">— choose —</option>
+                ${users.map(u=>html`<option value=${String(u.id)}>${u.username}</option>`)}
+              </select></div>
+            <div class="form-group"><label>Role</label>
+              <select value=${role} onChange=${e=>setRole(e.target.value)}>
+                <option value="member">Member</option><option value="admin">Group admin</option>
+              </select></div>`}
+          <div class="flex gap-2 justify-end" style="margin-top:16px;">
+            <button class="btn" onClick=${onClose}>Cancel</button>
+            <button class="btn btn-primary" disabled=${!sel} onClick=${add}>Add</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    function App() {
+      const user = me();
+      const isSuper = user.role === "admin";
+      const adminGroupIds = new Set((user.groups||[]).filter(g=>g.role==="admin").map(g=>g.id));
+      const canAdmin = (gid) => isSuper || adminGroupIds.has(gid);
+
+      const [groups,setGroups]=hooks.useState(null);
+      const [sel,setSel]=hooks.useState(null);          // group id
+      const [detail,setDetail]=hooks.useState(null);    // {group, members}
+      const [err,setErr]=hooks.useState(null);
+      const [tick,setTick]=hooks.useState(0);
+      const [modal,setModal]=hooks.useState(null);      // 'create' | 'add' | null
+      const refresh = () => setTick(t=>t+1);
+
+      hooks.useEffect(()=>{ (async()=>{ try{ setGroups(await API.get("/groups")); }catch(e){ setErr(String(e)); } })(); },[tick]);
+      hooks.useEffect(()=>{ (async()=>{
+        if(sel==null){ setDetail(null); return; }
+        try{ setDetail(await API.get(`/groups/${sel}`)); }catch(e){ setErr(String(e)); }
+      })(); },[sel,tick]);
+
+      const addGroup = async () => {
+        const name = prompt("Group name?"); if(!name) return;
+        try{ const g = await API.post("/groups",{name}); refresh(); setSel(g.id); }catch(e){ alert(e.message); }
+      };
+      const renameGroup = async (g) => { const name=prompt("Rename group:",g.name); if(!name||name===g.name) return;
+        try{ await API.put(`/groups/${g.id}`,{name}); refresh(); }catch(e){ alert(e.message); } };
+      const deleteGroup = async (g) => { if(!confirm(`Delete group "${g.name}"? Members and resource links are removed.`)) return;
+        try{ await API.del(`/groups/${g.id}`); if(sel===g.id) setSel(null); refresh(); }catch(e){ alert(e.message); } };
+      const setRole = async (m, role) => { try{ await API.post(`/groups/${sel}/members`,{user_id:m.user_id, role}); refresh(); }catch(e){ alert(e.message); } };
+      const removeMember = async (m) => { if(!confirm(`Remove ${m.username} from this group?`)) return;
+        try{ await API.del(`/groups/${sel}/members/${m.user_id}`); refresh(); }catch(e){ alert(e.message); } };
+
+      if (err) return html`<div class="p-4 text-error">${err}</div>`;
+      const g = detail && detail.group;
+
+      return html`<div class="min-h-screen"><div class="grid grid-cols-12">
+        <div class="col-span-3 border-r admin-sidebar"><div class="p-4">
+          <div class="flex items-center justify-between mb-4">
+            <div class="font-semibold text-sm text-muted" style="text-transform:uppercase;letter-spacing:.5px;">Groups</div>
+            ${isSuper && html`<button class="btn btn-primary btn-small" onClick=${addGroup}>+ Add</button>`}
+          </div>
+          ${groups==null ? html`<div class="text-muted">Loading…</div>`
+            : groups.length===0 ? html`<div class="text-muted text-xs">No groups.</div>`
+            : groups.map(gr=>html`
+              <div class="grp-item ${sel===gr.id?'active':''}" onClick=${()=>setSel(gr.id)} key=${gr.id}>
+                <span class="gname">${gr.name}</span>
+                ${canAdmin(gr.id) ? html`<span class="role-badge role-admin">admin</span>` : ""}
+              </div>`)}
+        </div></div>
+
+        <div class="col-span-9"><div class="p-4">
+          ${!g ? html`<div class="empty-state" style="padding:60px 20px;text-align:center;"><div class="empty-state-text">Select a group.</div></div>` : html`
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <div style="font-weight:600;font-size:16px;">${g.name}</div>
+                <div class="text-xs text-muted">${g.description || "Group membership"}</div>
+              </div>
+              <div class="flex gap-2">
+                ${canAdmin(g.id) && html`<button class="btn btn-primary btn-small" onClick=${()=>setModal('create')}>+ Create account</button>`}
+                ${canAdmin(g.id) && html`<button class="btn btn-small" onClick=${()=>setModal('add')}>Add existing</button>`}
+                ${isSuper && html`<button class="btn btn-small" onClick=${()=>renameGroup(g)}>Rename</button>`}
+                ${isSuper && html`<button class="btn btn-small text-error" onClick=${()=>deleteGroup(g)}>Delete</button>`}
+              </div>
+            </div>
+            ${(detail.members||[]).length===0 ? html`<div class="text-muted">No members yet.</div>` : html`<div>
+              ${detail.members.map(m=>html`<div class="mem-row" key=${m.user_id}>
+                <div class="flex items-center gap-2"><span class="font-medium">${m.username}</span> <${RoleBadge} role=${m.role} /></div>
+                ${canAdmin(g.id) ? html`<div class="flex gap-2">
+                  <button class="btn btn-small" onClick=${()=>setRole(m, m.role==='admin'?'member':'admin')}>${m.role==='admin'?'Make member':'Make admin'}</button>
+                  <button class="btn btn-small text-error" onClick=${()=>removeMember(m)}>Remove</button>
+                </div>` : ""}
+              </div>`)}
+            </div>`}
+            ${modal==='create' && html`<${CreateAccountModal} groupId=${g.id} onClose=${()=>setModal(null)} onDone=${refresh} />`}
+            ${modal==='add' && html`<${AddMemberModal} groupId=${g.id} onClose=${()=>setModal(null)} onDone=${refresh} />`}
+          `}
+        </div></div>
+      </div></div>`;
+    }
+
+    render(html`<${App} />`, document.body);
+  </script>
+  <script src="/static/app.js"></script>
+</head>
+<body>
+  <script src="/static/header.js"></script>
+</body>
+</html>
