@@ -222,6 +222,33 @@ pub async fn resource_group_ids(
     .unwrap_or_default()
 }
 
+/// Map each resource id to its group ids, for a set of ids (one query). Used to
+/// annotate list/detail responses so the UI can gate manage actions client-side.
+pub async fn group_ids_map(
+    db: &Pool<Sqlite>,
+    link_table: &str,
+    link_col: &str,
+    ids: &[i64],
+) -> std::collections::HashMap<i64, Vec<i64>> {
+    let mut map: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    if ids.is_empty() {
+        return map;
+    }
+    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
+        "SELECT {link_col}, group_id FROM {link_table} WHERE {link_col} IN ("
+    ));
+    let mut sep = qb.separated(", ");
+    for id in ids {
+        sep.push_bind(*id);
+    }
+    qb.push(")");
+    let rows: Vec<(i64, i64)> = qb.build_query_as().fetch_all(db).await.unwrap_or_default();
+    for (rid, gid) in rows {
+        map.entry(rid).or_default().push(gid);
+    }
+    map
+}
+
 /// Re-publish resource `id` to `desired`, scoped to what the caller may manage.
 ///
 /// `manageable` defines the caller's reach:

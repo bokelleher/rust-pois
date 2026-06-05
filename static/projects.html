@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   projects.html - POIS Template Library + Projects
-  Version: 3.11.0
+  Version: 3.11.1
   Last updated: 2026-06-05
   Purpose: Browse/apply saved templates (rule + channel) and organize them into
            projects (persistent, shareable multi-channel bundles). Templates are
@@ -246,7 +246,7 @@
       </div>`;
     }
 
-    function TemplateRow({ t, projects, isOwner, onChanged }) {
+    function TemplateRow({ t, projects, canManage, onChanged }) {
       const [applyRule, setApplyRule] = hooks.useState(false);
       const [moving, setMoving] = hooks.useState(false);
       const [sharing, setSharing] = hooks.useState(false);
@@ -301,7 +301,7 @@
           ${t.kind === "channel"
             ? html`<button class="btn btn-primary btn-small" disabled=${busy} onClick=${applyChannel}>Apply</button>`
             : html`<button class="btn btn-primary btn-small" disabled=${busy} onClick=${() => setApplyRule(true)}>Apply…</button>`}
-          ${isOwner && html`<${RowMenu} items=${[
+          ${canManage && html`<${RowMenu} items=${[
             { label: 'Move', onClick: () => setMoving(true) },
             { label: 'Sharing…', onClick: () => setSharing(true) },
             ...(t.kind === "rule" ? [{ label: t.is_default ? 'Unset default' : 'Make default', onClick: toggleDefault }] : []),
@@ -385,7 +385,11 @@
         })();
       }, [sel, tick]);
 
-      const ownerOf = (row) => isAdmin || row.owner_user_id == null || row.owner_user_id === myId;
+      // Manage = super-admin, owner, an unowned/system row, OR a group-admin of a
+      // group the row is shared to (backend can_write allows the same set).
+      const myAdminGroups = new Set((user.groups || []).filter(g => g.role === "admin").map(g => g.id));
+      const canManage = (row) => isAdmin || row.owner_user_id == null || row.owner_user_id === myId
+        || (row.group_ids || []).some(g => myAdminGroups.has(g));
 
       const addProject = () => setShowAddProject(true);
       const renameProject = async (p) => {
@@ -457,7 +461,7 @@
                   </div>
                   <div class="flex gap-2" style="align-items:center; justify-content:flex-end;">
                     <button class="btn btn-primary btn-small" onClick=${() => applyProject(selProject)}>Apply project</button>
-                    ${ownerOf(selProject) && html`<${RowMenu} items=${[
+                    ${canManage(selProject) && html`<${RowMenu} items=${[
                       { label: 'Sharing…', onClick: () => setShareProj(selProject) },
                       { label: 'Rename', onClick: () => renameProject(selProject) },
                       { label: 'Delete', danger: true, onClick: () => deleteProject(selProject) },
@@ -477,7 +481,7 @@
                   </div>`
                 : html`<div>${templates.map(t => html`
                     <${TemplateRow} key=${t.id} t=${t} projects=${projects || []}
-                      isOwner=${ownerOf(t)} onChanged=${refresh} />`)}</div>`}
+                      canManage=${canManage(t)} onChanged=${refresh} />`)}</div>`}
             </div>
           </div>
         </div>

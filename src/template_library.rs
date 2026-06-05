@@ -61,6 +61,41 @@ fn resp<T: serde::Serialize, E: std::fmt::Display>(r: Result<T, E>) -> Response 
     }
 }
 
+/// Serialize a row to JSON with its `group_ids` injected (a non-column field so
+/// the UI can gate manage actions on group-admin-of-a-shared-group, not just
+/// ownership). `groups` maps row id -> group ids.
+fn with_group_ids<T: serde::Serialize>(
+    row: &T,
+    id: i64,
+    groups: &mut std::collections::HashMap<i64, Vec<i64>>,
+) -> JsonValue {
+    let mut v = serde_json::to_value(row).unwrap_or_else(|_| json!({}));
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert("group_ids".into(), json!(groups.remove(&id).unwrap_or_default()));
+    }
+    v
+}
+
+/// Projects as JSON, each annotated with its `group_ids` (one query).
+async fn projects_json(db: &Pool<Sqlite>, projects: Vec<Project>) -> JsonValue {
+    let ids: Vec<i64> = projects.iter().map(|p| p.id).collect();
+    let mut m = rbac::group_ids_map(db, "project_groups", "project_id", &ids).await;
+    json!(projects
+        .iter()
+        .map(|p| with_group_ids(p, p.id, &mut m))
+        .collect::<Vec<_>>())
+}
+
+/// Templates as JSON, each annotated with its `group_ids` (one query).
+async fn templates_json(db: &Pool<Sqlite>, templates: Vec<Template>) -> JsonValue {
+    let ids: Vec<i64> = templates.iter().map(|t| t.id).collect();
+    let mut m = rbac::group_ids_map(db, "template_groups", "template_id", &ids).await;
+    json!(templates
+        .iter()
+        .map(|t| with_group_ids(t, t.id, &mut m))
+        .collect::<Vec<_>>())
+}
+
 /// Generate a channel name that does not collide with the UNIQUE `channels.name`
 /// constraint (which ignores `deleted_at`). Returns `base`, else `base (copy)`,
 /// `base (copy 2)`, ...
@@ -109,8 +144,10 @@ pub async fn list_projects(
         QueryBuilder::new("SELECT * FROM projects WHERE deleted_at IS NULL");
     rbac::push_read_predicate(&mut qb, &eff, "projects", "project_groups", "project_id");
     qb.push(" ORDER BY name");
-    let rows = qb.build_query_as::<Project>().fetch_all(&st.db).await;
-    resp(rows)
+    match qb.build_query_as::<Project>().fetch_all(&st.db).await {
+        Ok(v) => Json(projects_json(&st.db, v).await).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
 }
 
 pub async fn create_project(
@@ -172,7 +209,15 @@ pub async fn get_project(
     .await;
 
     match members {
-        Ok(templates) => Json(json!({ "project": project, "templates": templates })).into_response(),
+        Ok(templates) => {
+            let project = projects_json(&st.db, vec![project])
+                .await
+                .as_array()
+                .and_then(|a| a.first().cloned())
+                .unwrap_or_else(|| json!({}));
+            let templates = templates_json(&st.db, templates).await;
+            Json(json!({ "project": project, "templates": templates })).into_response()
+        }
         Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     }
 }
@@ -347,8 +392,10 @@ pub async fn list_templates(
     // Featured (default) templates first, then alphabetical within kind.
     qb.push(" ORDER BY is_default DESC, kind, name");
 
-    let rows = qb.build_query_as::<Template>().fetch_all(&st.db).await;
-    resp(rows)
+    match qb.build_query_as::<Template>().fetch_all(&st.db).await {
+        Ok(v) => Json(templates_json(&st.db, v).await).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
 }
 
 pub async fn get_template(
@@ -358,7 +405,14 @@ pub async fn get_template(
 ) -> impl IntoResponse {
     let eff = rbac::effective(&st.db, &claims).await;
     match load_visible_template(&st.db, &eff, id).await {
-        Ok(t) => Json(t).into_response(),
+        Ok(t) => {
+            let v = templates_json(&st.db, vec![t])
+                .await
+                .as_array()
+                .and_then(|a| a.first().cloned())
+                .unwrap_or_else(|| json!({}));
+            Json(v).into_response()
+        }
         Err(rej) => rej,
     }
 }
