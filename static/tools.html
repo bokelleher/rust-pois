@@ -1,14 +1,22 @@
 <!doctype html>
+<!--
+  tools.html - SCTE-35 Toolkit
+  Version: 3.12.7
+  Last updated: 2026-06-05
+  Changes: (3.12.7) Load header.js and app.css WITHOUT the stale `?v=4.0.0`/`?v=4.1.0`
+           cache-pin query strings (every other page uses the plain paths). Those
+           pinned an old cached header here, so the nav menu looked different/stale.
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <title>POIS Tools — SCTE-35 Toolkit</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
-  <link rel="stylesheet" href="/static/app.css?v=4.1.0">
+  <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <script src="/static/header.js?v=4.0.0"></script>
+  <script src="/static/header.js"></script>
 
   <main class="content content-max-width">
     <h1 class="grad-text">SCTE-35 Toolkit</h1>
