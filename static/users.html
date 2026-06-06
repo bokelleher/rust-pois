@@ -1,9 +1,10 @@
 <!doctype html>
 <!--
   users.html - User Management
-  Version: 3.12.8
+  Version: 3.12.9
   Last updated: 2026-06-05
-  Changes: (3.12.8) Group-admins get a per-user "Remove" action that strips the
+  Changes: (3.12.9) A user can no longer delete their own account (button hidden on
+            own row + backend guard). (3.12.8) Group-admins get a per-user "Remove" action that strips the
             user from the group(s) they administer (keeps the account; via
             /api/groups/{id}/members/{user_id}). Super-admins keep "Delete" (account).
            (3.12.6) Group-admins may now open this page (was super-admin-only) and
@@ -271,10 +272,10 @@
                   </td>
                   <td style="padding: 12px; text-align: right;">
                     <button class="btn" style="margin-right: 8px;" onclick="editUser(${user.id})">Edit</button>
-                    ${IS_SUPER
-                      ? `<button class="btn" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5;" onclick="deleteUser(${user.id}, '${escapeHtml(user.username)}')">Delete</button>`
-                      : (user.id === MY_USER_ID
-                          ? ''
+                    ${user.id === MY_USER_ID
+                      ? ''
+                      : (IS_SUPER
+                          ? `<button class="btn" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5;" onclick="deleteUser(${user.id}, '${escapeHtml(user.username)}')">Delete</button>`
                           : `<button class="btn" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5;" onclick="removeFromGroups(${user.id}, '${escapeHtml(user.username)}')" title="Remove from your group(s); their account is kept">Remove</button>`)}
                   </td>
                 </tr>
@@ -302,6 +303,7 @@
     
     // Delete user
     window.deleteUser = async function(userId, username) {
+      if (userId === MY_USER_ID) { showError("You can't delete your own account."); return; }
       if (!confirm(`Are you sure you want to delete user "${username}"?`)) {
         return;
       }

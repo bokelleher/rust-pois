@@ -492,6 +492,14 @@ pub async fn delete_user(
         return (status, Json(serde_json::json!({ "error": msg }))).into_response();
     }
 
+    // A user may never delete their own account (self-delete guard).
+    if claims.sub.parse::<i64>().ok() == Some(user_id) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Cannot delete your own account" })),
+        ).into_response();
+    }
+
     // Protect admin user (ID 1) from deletion
     if user_id == 1 {
         return (
