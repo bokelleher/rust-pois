@@ -1,7 +1,9 @@
 // header.js - Common header with JWT authentication
-// Version: 3.12.0
+// Version: 3.12.6
 // Last updated: 2026-06-05
-// Changes: (3.12.0) Forced-password-change guard: redirect provisioned accounts
+// Changes: (3.12.6) Nav reordered (Event Monitor first); the Users link is now
+//          shown to group-admins too (not super-admin-only), matching Groups.
+//          (3.12.0) Forced-password-change guard: redirect provisioned accounts
 //          (must_change_password) to change-password.html before any app page.
 //          Added Projects (template library) nav link + active-page detection.
 //          (3.1.0) Added settings gear icon, removed tokens from nav, admin.html → channels.html
@@ -111,12 +113,12 @@
           </a>
         </div>
         <nav class="nav">
+          <a href="/static/events.html" ${activePage === 'events' ? 'class="active"' : ''}>Event Monitor</a>
           <a href="/static/channels.html" ${activePage === 'channels' ? 'class="active"' : ''}>Channels &amp; Rules</a>
           <a href="/static/projects.html" ${activePage === 'projects' ? 'class="active"' : ''}>Projects</a>
           <a href="/static/tools.html" ${activePage === 'tools' ? 'class="active"' : ''}>SCTE-35 Tools</a>
-          <a href="/static/events.html" ${activePage === 'events' ? 'class="active"' : ''}>Event Monitor</a>
           ${isGroupAdmin ? `<a href="/static/groups.html" ${activePage === 'groups' ? 'class="active"' : ''}>Groups</a>` : ''}
-          ${isAdmin ? `<a href="/static/users.html" ${activePage === 'users' ? 'class="active"' : ''}>Users</a>` : ''}
+          ${isGroupAdmin ? `<a href="/static/users.html" ${activePage === 'users' ? 'class="active"' : ''}>Users</a>` : ''}
           <a href="/static/docs.html" ${activePage === 'docs' ? 'class="active"' : ''}>Docs</a>
         </nav>
         <div class="spacer"></div>

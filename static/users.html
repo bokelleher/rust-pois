@@ -1,9 +1,12 @@
 <!doctype html>
 <!--
   users.html - User Management
-  Version: 3.0.2
-  Last updated: 2024-11-14
-  Changes: Uses header.js for navigation, txcue logo, fixed script loading order
+  Version: 3.12.6
+  Last updated: 2026-06-05
+  Changes: (3.12.6) Group-admins may now open this page (was super-admin-only) and
+            manage users within their groups; the "Administrator" toggle is hidden
+            for non-super-admins; fixed a dead admin.html redirect.
+            (3.0.2) Uses header.js for navigation, txcue logo, fixed script loading order
 -->
 <html lang="en">
 <head>
@@ -60,7 +63,7 @@
           <input type="email" id="modalEmail">
         </div>
         
-        <div class="form-group">
+        <div class="form-group" id="adminGroup">
           <label>
             <input type="checkbox" id="modalIsAdmin">
             Administrator
@@ -318,14 +321,23 @@
       try {
         const response = await fetchAPI('/api/auth/me');
         const data = await response.json();
-        
-        // Check if admin - redirect non-admins
-        if (data.role !== 'admin') {
+
+        // Super-admins manage all users; group-admins manage users within the
+        // groups they administer (the backend scopes the lists + forces role=user).
+        const isSuper = data.role === 'admin';
+        const isGroupAdmin = isSuper ||
+          (Array.isArray(data.groups) && data.groups.some(g => g.role === 'admin'));
+        if (!isGroupAdmin) {
           showError('You do not have permission to access this page');
           setTimeout(() => {
-            window.location.href = '/static/admin.html';
+            window.location.href = '/static/channels.html';
           }, 1500);
           return false;
+        }
+        // Only a super-admin may create another admin; hide the toggle otherwise.
+        if (!isSuper) {
+          const ag = document.getElementById('adminGroup');
+          if (ag) ag.style.display = 'none';
         }
         return true;
       } catch (error) {

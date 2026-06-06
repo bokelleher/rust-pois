@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   docs.html - Documentation (User Guide + Admin Guide)
-  Version: 3.12.3
+  Version: 3.12.6
   Last updated: 2026-06-05
   Changes: (3.12.3) Completed the User Guide API-reference refresh for the v3.12.x model.
            Channels carry owner_user_id / is_global / timezone (managed by numeric id,
@@ -1665,9 +1665,13 @@ docker run -p 80:8080 -e SWAGGER_JSON=/openapi.yaml \
       const adminTab = document.getElementById('adminTab');
       if (isAdmin && adminTab) adminTab.style.display = '';
 
-      // Default view: remember the last choice, but never land a non-admin on admin.
+      // Default view: a #admin / #user deep-link wins, else the last choice; a
+      // non-admin is never landed on the admin guide.
       let initial = 'user';
       try { if (localStorage.getItem('pois_docs_tab') === 'admin' && isAdmin) initial = 'admin'; } catch (e) {}
+      const hash = (window.location.hash || '').toLowerCase();
+      if (hash === '#admin') initial = isAdmin ? 'admin' : 'user';
+      else if (hash === '#user') initial = 'user';
       show(initial);
     })();
   </script>

@@ -1,10 +1,13 @@
 <!doctype html>
 <!--
   settings.html - User Settings & API Tokens
-  Version: 3.1.3
-  Last updated: 2025-11-25
-  Features: Password change, API token management, account info
-  Changes: Fixed form spacing, cleaned up Resources section
+  Version: 3.12.6
+  Last updated: 2026-06-05
+  Features: Password change, API token management, account info (self-service for
+            every user via the header gear icon).
+  Changes: (3.12.6) Role-scoped Resources docs link (User Guide vs Admin Guide,
+            deep-linked to the right docs tab); role display shows "Group
+            administrator". (3.1.3) Fixed form spacing, cleaned up Resources section
 -->
 <html lang="en">
 <head>
@@ -113,12 +116,12 @@
       </div>
       
       <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-        <a href="/static/docs.html" class="btn" style="display: inline-flex; align-items: center; gap: 8px;">
+        <a id="docsLink" href="/static/docs.html" class="btn" style="display: inline-flex; align-items: center; gap: 8px;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
             <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
           </svg>
-          API Documentation
+          <span id="docsLinkLabel">Documentation</span>
         </a>
       </div>
     </div>
@@ -277,10 +280,24 @@
         const response = await fetchAPI(`${API_BASE}/auth/me`);
         const user = await response.json();
         
+        const isSuper = user.role === 'admin';
+        const isGroupAdmin = isSuper ||
+          (Array.isArray(user.groups) && user.groups.some(g => g.role === 'admin'));
+
         document.getElementById('displayUsername').textContent = user.username || '-';
         document.getElementById('displayEmail').textContent = user.email || '-';
-        document.getElementById('displayRole').textContent = user.role === 'admin' ? 'Administrator' : 'User';
-        
+        document.getElementById('displayRole').textContent =
+          isSuper ? 'Administrator' : (isGroupAdmin ? 'Group administrator' : 'User');
+
+        // Scope the Resources docs link to the user's type: admins land on the
+        // Admin Guide, everyone else on the User Guide.
+        const docsLink = document.getElementById('docsLink');
+        const docsLabel = document.getElementById('docsLinkLabel');
+        if (docsLink && docsLabel) {
+          docsLink.href = isGroupAdmin ? '/static/docs.html#admin' : '/static/docs.html#user';
+          docsLabel.textContent = isGroupAdmin ? 'Admin Guide' : 'User Guide';
+        }
+
         // Store user in localStorage for header.js
         localStorage.setItem('pois_user', JSON.stringify(user));
       } catch (error) {
