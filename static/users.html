@@ -1,9 +1,12 @@
 <!doctype html>
 <!--
   users.html - User Management
-  Version: 3.12.6
+  Version: 3.12.8
   Last updated: 2026-06-05
-  Changes: (3.12.6) Group-admins may now open this page (was super-admin-only) and
+  Changes: (3.12.8) Group-admins get a per-user "Remove" action that strips the
+            user from the group(s) they administer (keeps the account; via
+            /api/groups/{id}/members/{user_id}). Super-admins keep "Delete" (account).
+           (3.12.6) Group-admins may now open this page (was super-admin-only) and
             manage users within their groups; the "Administrator" toggle is hidden
             for non-super-admins; fixed a dead admin.html redirect.
             (3.0.2) Uses header.js for navigation, txcue logo, fixed script loading order
@@ -268,7 +271,11 @@
                   </td>
                   <td style="padding: 12px; text-align: right;">
                     <button class="btn" style="margin-right: 8px;" onclick="editUser(${user.id})">Edit</button>
-                    <button class="btn" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5;" onclick="deleteUser(${user.id}, '${escapeHtml(user.username)}')">Delete</button>
+                    ${IS_SUPER
+                      ? `<button class="btn" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5;" onclick="deleteUser(${user.id}, '${escapeHtml(user.username)}')">Delete</button>`
+                      : (user.id === MY_USER_ID
+                          ? ''
+                          : `<button class="btn" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5;" onclick="removeFromGroups(${user.id}, '${escapeHtml(user.username)}')" title="Remove from your group(s); their account is kept">Remove</button>`)}
                   </td>
                 </tr>
               `).join('')}
@@ -315,7 +322,35 @@
         showError('Failed to delete user');
       }
     };
-    
+
+    // Remove a user from the viewer's group(s). Group-admins use this instead of
+    // Delete: it strips the user's membership in every group the viewer administers
+    // (idempotent across groups) but keeps the account. Super-admins use Delete.
+    window.removeFromGroups = async function(userId, username) {
+      if (userId === MY_USER_ID) { showError("You can't remove yourself."); return; }
+      if (!MY_ADMIN_GROUPS.length) { showError('No groups to remove from.'); return; }
+      if (!confirm(`Remove "${username}" from your group(s)? Their account is kept; this only removes their membership in the group(s) you administer.`)) {
+        return;
+      }
+      try {
+        let failures = 0;
+        for (const gid of MY_ADMIN_GROUPS) {
+          const res = await fetchAPI(`${API_BASE}/groups/${gid}/members/${userId}`, { method: 'DELETE' });
+          if (!(res.ok || res.status === 204)) failures++;
+        }
+        if (failures) showError('Could not remove the user from one or more groups.');
+        loadUsers();
+      } catch (error) {
+        console.error('Error removing user from group:', error);
+        showError('Failed to remove user from group');
+      }
+    };
+
+    // Current viewer's access, set by loadCurrentUser() and read by the row actions.
+    let IS_SUPER = false;
+    let MY_ADMIN_GROUPS = [];   // group ids the viewer administers
+    let MY_USER_ID = null;
+
     // Load current user info
     async function loadCurrentUser() {
       try {
@@ -334,6 +369,10 @@
           }, 1500);
           return false;
         }
+        IS_SUPER = isSuper;
+        MY_USER_ID = data.id;
+        MY_ADMIN_GROUPS = Array.isArray(data.groups)
+          ? data.groups.filter(g => g.role === 'admin').map(g => g.id) : [];
         // Only a super-admin may create another admin; hide the toggle otherwise.
         if (!isSuper) {
           const ag = document.getElementById('adminGroup');
