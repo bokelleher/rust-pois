@@ -1,9 +1,11 @@
 <!doctype html>
 <!--
   events.html - Event Monitor
-  Version: 3.8.2
-  Last updated: 2026-06-04
-  Changes: Search box now actually filters server-side (acquisition signal ID,
+  Version: 3.12.5
+  Last updated: 2026-06-05
+  Changes: (3.12.5) Action pill abbreviates "tracking-only" -> "track" so it no
+           longer wraps in the table (full name on hover via title).
+           (3.8.2) Search box now actually filters server-side (acquisition signal ID,
            source IP, SCTE-35 command, and UPID — hex or ASCII). Updated placeholder.
            (3.2.4) Fixed LAST 24H field name (last_24h_events instead of events_last_24h)
 -->
@@ -410,7 +412,7 @@
             <td>${this.formatTimestamp(event.timestamp)}</td>
             <td>${event.channel_name}</td>
             <td>${event.acquisition_signal_id}</td>
-            <td><span class="badge badge-${this.getActionClass(event.action)}">${event.action}</span></td>
+            <td><span class="badge badge-${this.getActionClass(event.action)}" title="${event.action}">${this.getActionLabel(event.action)}</span></td>
             <td>${event.matched_rule_name || '-'}</td>
             <td><span class="badge badge-${this.getStatusClass(event.response_status)}">${event.response_status}</span></td>
             <td><span class="badge badge-${event.sesame_tier ? 'success' : 'muted'}" title="SESAME tier achieved">${event.sesame_tier ? 'T' + event.sesame_tier : '—'}</span></td>
@@ -444,6 +446,12 @@
           'filter': 'error'
         };
         return map[action] || 'muted';
+      }
+
+      // Short label for the action pill so long names don't wrap in the table.
+      getActionLabel(action) {
+        const map = { 'tracking-only': 'track' };
+        return map[action] || action;
       }
 
       getStatusClass(status) {
