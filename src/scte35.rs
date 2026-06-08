@@ -1,6 +1,10 @@
 // src/scte35.rs
-// Version: 2.0.2 - Fixed patch_u16 byte order
-// Updated: 2024-11-19
+// Version: 2.1.0 - splice_command_length now excludes the splice_command_type byte
+// Updated: 2026-06-08
+// (Previously off by one: it counted the type byte, so a time_signal immediate
+//  emitted scl=2 over a 1-byte body. Spec-strict decoders like scte35-reader use
+//  splice_command_length to delimit the command, so they dropped the section. Now
+//  scl measures the command body only, after the type byte; CRC recomputed.)
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
@@ -78,8 +82,11 @@ fn build_time_signal_section(
 
     let splice_cmd_len_pos = w.bitpos();
     w.u12(0);     // splice_command_length (patch later)
+    w.u8(0x06);   // splice_command_type = time_signal (NOT part of splice_command_length)
+    // splice_command_length measures the splice_command() body only, after the
+    // type byte (per spec; e.g. splice_null has length 0). A strict decoder uses
+    // it to delimit the command, so it must exclude the type byte.
     let splice_cmd_start = w.bitpos();
-    w.u8(0x06);   // time_signal
     w.u1(0);      // time_specified_flag = 0 (immediate)
     w.u7(0);      // reserved
 
@@ -118,8 +125,8 @@ fn build_splice_insert_out_section(
 
     let splice_cmd_len_pos = w.bitpos();
     w.u12(0);           // splice_command_length (patch later)
+    w.u8(0x05);         // splice_command_type = splice_insert (NOT part of splice_command_length)
     let splice_cmd_start = w.bitpos();
-    w.u8(0x05);         // splice_insert
     w.u32(1);           // splice_event_id
     w.u1(0);            // splice_event_cancel_indicator
     w.u7(0);            // reserved
@@ -292,8 +299,8 @@ fn build_splice_insert_in_section() -> Vec<u8> {
 
     let splice_cmd_len_pos = w.bitpos();
     w.u12(0);           // splice_command_length (patch later)
+    w.u8(0x05);         // splice_command_type = splice_insert (NOT part of splice_command_length)
     let splice_cmd_start = w.bitpos();
-    w.u8(0x05);         // splice_insert
     w.u32(2);           // splice_event_id
     w.u1(0);            // splice_event_cancel_indicator
     w.u7(0);            // reserved
@@ -337,8 +344,8 @@ fn build_splice_insert_in_with_pts_section(pts_time: u64) -> Vec<u8> {
 
     let splice_cmd_len_pos = w.bitpos();
     w.u12(0);           // splice_command_length (patch later)
+    w.u8(0x05);         // splice_command_type = splice_insert (NOT part of splice_command_length)
     let splice_cmd_start = w.bitpos();
-    w.u8(0x05);         // splice_insert
     w.u32(2);           // splice_event_id
     w.u1(0);            // splice_event_cancel_indicator
     w.u7(0);            // reserved
@@ -482,4 +489,104 @@ pub(crate) fn compute_crc32(data: &[u8]) -> u32 {
         }
     }
     crc
+}
+
+#[cfg(test)]
+mod splice_command_length_tests {
+    //! `splice_command_length` must equal the serialized length of the
+    //! splice_command() body AFTER the splice_command_type byte (per spec; a
+    //! spec-strict decoder such as `scte35-reader` uses it to delimit the command,
+    //! and our own decoder is lenient so it can't catch a wrong value). These tests
+    //! parse the field directly and confirm the descriptor loop lands exactly where
+    //! `splice_command_length` says the command ends.
+    use super::*;
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine;
+
+    fn decode(b64: &str) -> Vec<u8> {
+        B64.decode(b64).unwrap()
+    }
+
+    // Fixed header is 13 bytes; tier(12) + splice_command_length(12) sit in bytes
+    // 10..13, so scl is the low nibble of byte 11 plus all of byte 12.
+    fn scl(b: &[u8]) -> usize {
+        (((b[11] & 0x0F) as usize) << 8) | b[12] as usize
+    }
+    fn cmd_type(b: &[u8]) -> u8 {
+        b[13]
+    }
+
+    // Strict parse: the command body is exactly `scl` bytes after the type byte,
+    // immediately followed by descriptor_loop_length, the descriptors, and the
+    // 4-byte CRC-32. With the old off-by-one, scl over-counts and this fails.
+    fn descriptor_loop_well_formed(b: &[u8]) -> bool {
+        let dll_pos = 14 + scl(b); // type byte at 13, command body at 14..14+scl
+        if dll_pos + 2 > b.len() {
+            return false;
+        }
+        let dll = ((b[dll_pos] as usize) << 8) | b[dll_pos + 1] as usize;
+        dll_pos + 2 + dll + 4 == b.len()
+    }
+
+    #[test]
+    fn time_signal_immediate_scl_is_one() {
+        let b = decode(&build_time_signal_immediate_b64());
+        assert_eq!(cmd_type(&b), 0x06);
+        assert_eq!(scl(&b), 1, "time_signal (time_specified_flag=0) body is 1 byte");
+        assert!(descriptor_loop_well_formed(&b));
+    }
+
+    #[test]
+    fn time_signal_with_segmentation_strict_parse() {
+        // The ba-wafb-live / report repro: time_signal + seg 0x34 + ADI UPID 0x09.
+        let b = decode(&build_time_signal_advanced_b64(
+            Some(0x34),
+            Some(0x09),
+            Some("umc.cse.21xuvhesfjb2vw9ldryme46a5/break110"),
+        ));
+        assert_eq!(cmd_type(&b), 0x06);
+        assert_eq!(scl(&b), 1);
+        assert!(
+            descriptor_loop_well_formed(&b),
+            "descriptor loop must start right after the 1-byte time_signal"
+        );
+    }
+
+    #[test]
+    fn splice_insert_out_scl_matches_body() {
+        let b = decode(&build_splice_insert_out_b64(30));
+        assert_eq!(cmd_type(&b), 0x05);
+        // event_id(4) + cancel/res(1) + flags(1) + break_duration(5) + uniq(2) + avail(1) + avails(1)
+        assert_eq!(scl(&b), 15);
+        assert!(descriptor_loop_well_formed(&b));
+    }
+
+    #[test]
+    fn splice_insert_out_advanced_strict_parse() {
+        let b = decode(&build_splice_insert_out_advanced_b64(
+            60,
+            Some(0x34),
+            Some(0x09),
+            Some("test-upid"),
+        ));
+        assert_eq!(scl(&b), 15);
+        assert!(descriptor_loop_well_formed(&b));
+    }
+
+    #[test]
+    fn splice_insert_in_scl_matches_body() {
+        let b = decode(&build_splice_insert_in_b64());
+        assert_eq!(cmd_type(&b), 0x05);
+        // event_id(4) + cancel/res(1) + flags(1) + uniq(2) + avail(1) + avails(1)
+        assert_eq!(scl(&b), 10);
+        assert!(descriptor_loop_well_formed(&b));
+    }
+
+    #[test]
+    fn splice_insert_in_with_pts_scl_matches_body() {
+        let b = decode(&build_splice_insert_in_with_pts_b64(0x1_2345_6789));
+        // adds splice_time() PTS (5 bytes) vs the immediate IN variant
+        assert_eq!(scl(&b), 15);
+        assert!(descriptor_loop_well_formed(&b));
+    }
 }
