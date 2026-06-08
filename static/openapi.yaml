@@ -15,11 +15,23 @@ info:
     - SCTE-35 toolkit (builder, decoder, validator, tester)
     - Event logging and monitoring
     - Backup/restore functionality
-    
+    - Multi-tenant Groups + RBAC: resources are owned and shared to groups; rules and events inherit their channel's groups
+    - Projects and reusable rule/channel templates
+    - Self-service and forced first-login password change
+
     **Authentication:**
     Most endpoints require Bearer token authentication via JWT. Use `POST /api/auth/login` to obtain a token.
     The ESAM processing endpoints (`/esam`) do not require authentication.
-  version: 3.1.5
+
+    **Access model (RBAC):** a super-admin (`role: admin`) bypasses all group checks.
+    Otherwise: READ a resource if you own it, it is global, or it is shared to a group
+    you are a member of; WRITE (edit/delete/share) if you own it or are a group-admin
+    (`group_members.role: admin`) of a group it is shared to.
+
+    **Forced password change:** an account flagged `must_change_password` is blocked
+    (403) from every endpoint except `POST /api/auth/change-password` until it sets a
+    new password. API tokens are exempt.
+  version: 3.12.10
   contact:
     name: Bo Kelleher
     url: https://github.com/bokelleher/rust-pois
@@ -28,18 +40,26 @@ info:
     url: https://opensource.org/licenses/MIT
 
 servers:
-  - url: http://darwin.techexlab.com:8100
-    description: Production server
+  - url: https://txcue.techexlab.com
+    description: Production (public)
   - url: http://localhost:8080
     description: Development server
 
 tags:
   - name: Authentication
-    description: JWT authentication and user management
+    description: JWT authentication, current user, password change
+  - name: Users
+    description: User account management (super-admin, or group-admin within their groups)
+  - name: Groups
+    description: Groups and membership (RBAC multi-tenancy)
+  - name: Sharing
+    description: Share channels, projects, and templates to specific groups
   - name: Channels
     description: Channel management for multi-tenancy
   - name: Rules
     description: Signal processing rules
+  - name: Projects & Templates
+    description: Reusable rule/channel templates and project bundles
   - name: Events
     description: Signal processing event logs
   - name: ESAM
@@ -106,6 +126,14 @@ components:
           type: string
           format: date-time
           nullable: true
+        must_change_password:
+          type: boolean
+          description: True while the account must set its own password before using the app.
+        groups:
+          type: array
+          description: The user's group memberships (returned by login and /api/auth/me).
+          items:
+            $ref: '#/components/schemas/GroupBrief'
 
     CreateUserRequest:
       type: object
@@ -119,9 +147,14 @@ components:
         role:
           type: string
           enum: [admin, user]
+          description: Group-admins may only create `user`; the role is forced to `user` for them.
         email:
           type: string
           format: email
+        group_id:
+          type: integer
+          format: int64
+          description: Group to add the new user to (required for a group-admin who administers more than one group).
 
     UpdateUserRequest:
       type: object
@@ -206,10 +239,15 @@ components:
         name:
           type: string
         enabled:
-          type: boolean
-        owner_id:
+          type: integer
+          description: 0 or 1.
+        owner_user_id:
           type: integer
           format: int64
+          nullable: true
+        is_global:
+          type: integer
+          description: 0 or 1. When 1, visible to all groups (super-admin only).
         timezone:
           type: string
           default: UTC
@@ -226,21 +264,41 @@ components:
       properties:
         name:
           type: string
-          description: Unique channel name
+          description: Unique channel name (channel names are globally unique).
         enabled:
           type: boolean
           default: true
         timezone:
           type: string
           default: UTC
+        group_ids:
+          type: array
+          description: Groups to publish the channel to. For non-super users these must be groups they belong to; defaults to the caller's sole group.
+          items:
+            type: integer
+            format: int64
+        is_global:
+          type: boolean
+          description: Visible to all groups (super-admin only).
 
     UpdateChannelRequest:
       type: object
       properties:
+        name:
+          type: string
         enabled:
           type: boolean
         timezone:
           type: string
+        group_ids:
+          type: array
+          description: Re-publish to these groups (scoped merge; non-super callers only touch their own groups).
+          items:
+            type: integer
+            format: int64
+        is_global:
+          type: boolean
+          description: Super-admin only.
 
     # Rule schemas
     Rule:
@@ -404,6 +462,12 @@ components:
         segmentation_upid:
           type: string
           description: Optional UPID value
+    BuildResponse:
+      type: object
+      properties:
+        base64:
+          type: string
+          description: The built SCTE-35 message, base64-encoded.
     DecodeRequest:
       type: object
       required: [base64]
@@ -546,6 +610,293 @@ components:
       properties:
         error:
           type: string
+
+    # ===== Groups / RBAC schemas =====
+    GroupBrief:
+      type: object
+      description: A group + the user's per-group role (used in login/me responses).
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        role:
+          type: string
+          enum: [admin, member]
+
+    Group:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        deleted_at:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UpsertGroup:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    UpdateGroupMeta:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    MemberRow:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        role:
+          type: string
+          enum: [admin, member]
+
+    AddMember:
+      type: object
+      required: [user_id]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        role:
+          type: string
+          enum: [admin, member]
+          default: member
+
+    MyGroups:
+      type: object
+      properties:
+        super_admin:
+          type: boolean
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/GroupBrief'
+
+    # ===== Sharing schemas =====
+    ShareState:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [channel, project, template]
+        id:
+          type: integer
+          format: int64
+        group_ids:
+          type: array
+          description: All groups the resource is currently shared to.
+          items:
+            type: integer
+            format: int64
+        is_global:
+          type: boolean
+        can_write:
+          type: boolean
+          description: Whether the caller may change the sharing.
+
+    SetShareRequest:
+      type: object
+      properties:
+        group_ids:
+          type: array
+          description: Groups (within the caller's reach) the resource should be shared to. A scoped merge preserves shares to groups outside the caller's reach.
+          items:
+            type: integer
+            format: int64
+        is_global:
+          type: boolean
+          description: Org-wide visibility (super-admin only; ignored otherwise).
+
+    # ===== Projects / Templates schemas =====
+    Project:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        is_global:
+          type: integer
+          description: 0 or 1.
+        owner_user_id:
+          type: integer
+          format: int64
+          nullable: true
+        group_ids:
+          type: array
+          description: Groups the project is shared to (annotated on list/detail responses).
+          items:
+            type: integer
+            format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Template:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [rule, channel]
+          description: '`rule` (body_json = a RuleBackup) or `channel` (body_json = a channel + its rules).'
+        description:
+          type: string
+          nullable: true
+        project_id:
+          type: integer
+          format: int64
+          nullable: true
+        body_json:
+          type: string
+        is_default:
+          type: integer
+          description: 0 or 1. Featured/starter template.
+        is_global:
+          type: integer
+          description: 0 or 1.
+        owner_user_id:
+          type: integer
+          format: int64
+          nullable: true
+        group_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UpsertProject:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        group_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        is_global:
+          type: boolean
+          description: Super-admin only.
+
+    UpdateProjectMeta:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        group_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        is_global:
+          type: boolean
+
+    SaveTemplateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        project_id:
+          type: integer
+          format: int64
+          description: File the new template under this project (inherits its groups).
+        description:
+          type: string
+        is_default:
+          type: boolean
+          description: Feature it in the starter gallery (admin defaults are saved global).
+        group_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+
+    UpdateTemplateMeta:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        project_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Set to null to unfile (move to the library).
+        is_default:
+          type: boolean
+        group_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        is_global:
+          type: boolean
+          description: Super-admin only.
+
+    ApplyTemplateRequest:
+      type: object
+      properties:
+        target_channel_id:
+          type: integer
+          format: int64
+          description: For a rule template, the channel to add the rule to.
+        name:
+          type: string
+          description: Override name (a unique suffix is added on channel-name collision).
+
+    ApplyResult:
+      type: object
+      description: Result of applying a project or template (shape varies by kind).
+      additionalProperties: true
 
 paths:
   # ========== Authentication Endpoints ==========
@@ -1363,3 +1714,500 @@ paths:
               schema:
                 type: string
                 example: ok
+
+  # ========== Groups / RBAC ==========
+  /api/me/groups:
+    get:
+      tags: [Groups]
+      summary: The caller's effective identity
+      description: Returns whether the caller is a super-admin and the groups they belong to (with per-group role). Used by the UI to gate admin features and group pickers.
+      operationId: myGroups
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyGroups'
+
+  /api/groups:
+    get:
+      tags: [Groups]
+      summary: List groups
+      description: Super-admins see all groups; other users see only the groups they belong to.
+      operationId: listGroups
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Group'
+    post:
+      tags: [Groups]
+      summary: Create a group (super-admin only)
+      operationId: createGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertGroup'
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+        '403':
+          description: Super-admin required
+
+  /api/groups/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [Groups]
+      summary: Get a group and its members
+      description: Visible to a super-admin or a member of the group.
+      operationId: getGroup
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  group:
+                    $ref: '#/components/schemas/Group'
+                  members:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MemberRow'
+        '403':
+          description: Not a member of this group
+    put:
+      tags: [Groups]
+      summary: Rename / edit a group
+      description: Super-admin or a group-admin of this group.
+      operationId: updateGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGroupMeta'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+        '403':
+          description: Group-admin required
+    delete:
+      tags: [Groups]
+      summary: Soft-delete a group (super-admin only)
+      operationId: deleteGroup
+      responses:
+        '200':
+          description: Deleted
+        '403':
+          description: Super-admin required
+
+  /api/groups/{id}/members:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [Groups]
+      summary: List group members
+      operationId: listMembers
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MemberRow'
+        '403':
+          description: Not a member of this group
+    post:
+      tags: [Groups]
+      summary: Add a member or change their role
+      description: Super-admin or a group-admin of this group.
+      operationId: addMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddMember'
+      responses:
+        '200':
+          description: Added/updated
+        '403':
+          description: Group-admin required
+
+  /api/groups/{id}/members/{user_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    delete:
+      tags: [Groups]
+      summary: Remove a member from a group
+      description: Super-admin or a group-admin of this group. Removes membership only; the user account is kept.
+      operationId: removeMember
+      responses:
+        '200':
+          description: Removed
+        '403':
+          description: Group-admin required
+
+  # ========== Sharing ==========
+  /api/share/{kind}/{id}:
+    parameters:
+      - name: kind
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [channel, project, template]
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [Sharing]
+      summary: Get a resource's current sharing
+      description: Returns the groups the resource is shared to, its global flag, and whether the caller may change the sharing. Requires read access.
+      operationId: getShare
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareState'
+        '400':
+          description: Unknown share kind
+        '403':
+          description: Not allowed to view this resource
+    put:
+      tags: [Sharing]
+      summary: Set a resource's sharing
+      description: |
+        Re-publishes the resource to the given groups (scoped merge: a non-super caller may only
+        target groups they belong to, and shares to groups outside their reach are preserved).
+        Only super-admins may set `is_global`. Requires write access.
+      operationId: setShare
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetShareRequest'
+      responses:
+        '200':
+          description: Updated sharing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareState'
+        '403':
+          description: Not allowed to change sharing, or targeting a group you don't belong to
+
+  # ========== Projects & Templates ==========
+  /api/projects:
+    get:
+      tags: [Projects & Templates]
+      summary: List projects
+      description: Returns projects the caller may read; each row is annotated with its `group_ids`.
+      operationId: listProjects
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+    post:
+      tags: [Projects & Templates]
+      summary: Create a project
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertProject'
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+
+  /api/projects/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [Projects & Templates]
+      summary: Get a project and its templates
+      operationId: getProject
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project:
+                    $ref: '#/components/schemas/Project'
+                  templates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Template'
+        '403':
+          description: Not allowed to view this project
+    put:
+      tags: [Projects & Templates]
+      summary: Update a project
+      description: Owner, group-admin of a shared group, or super-admin.
+      operationId: updateProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectMeta'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+    delete:
+      tags: [Projects & Templates]
+      summary: Delete a project (its templates are kept, moved to the library)
+      operationId: deleteProject
+      responses:
+        '200':
+          description: Deleted
+
+  /api/projects/{id}/apply:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [Projects & Templates]
+      summary: Apply a project
+      description: Instantiates a fresh copy of every channel template in the project (with its rules), owned by the caller and landed in the caller's group(s).
+      operationId: applyProject
+      responses:
+        '200':
+          description: Applied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplyResult'
+
+  /api/templates:
+    get:
+      tags: [Projects & Templates]
+      summary: List templates
+      description: Returns templates the caller may read; each row is annotated with its `group_ids`.
+      operationId: listTemplates
+      parameters:
+        - name: project_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: kind
+          in: query
+          schema:
+            type: string
+            enum: [rule, channel]
+        - name: unfiled
+          in: query
+          description: Only templates not filed under a project.
+          schema:
+            type: boolean
+        - name: default
+          in: query
+          description: Only featured/default templates.
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Template'
+
+  /api/templates/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [Projects & Templates]
+      summary: Get a template
+      operationId: getTemplate
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '403':
+          description: Not allowed to view this template
+    put:
+      tags: [Projects & Templates]
+      summary: Update template metadata
+      operationId: updateTemplate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTemplateMeta'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+    delete:
+      tags: [Projects & Templates]
+      summary: Delete a template
+      operationId: deleteTemplate
+      responses:
+        '200':
+          description: Deleted
+
+  /api/templates/from-rule/{rule_id}:
+    parameters:
+      - name: rule_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [Projects & Templates]
+      summary: Save an existing rule as a reusable template
+      operationId: saveRuleTemplate
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveTemplateRequest'
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+
+  /api/templates/from-channel/{channel_id}:
+    parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [Projects & Templates]
+      summary: Save a channel (and its rules) as a reusable template
+      operationId: saveChannelTemplate
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveTemplateRequest'
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+
+  /api/templates/{id}/apply:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [Projects & Templates]
+      summary: Apply a template
+      description: Always creates new rows owned by the caller. A `rule` template needs `target_channel_id`; a `channel` template creates a fresh channel (name de-duplicated) in the caller's group(s).
+      operationId: applyTemplate
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplyTemplateRequest'
+      responses:
+        '200':
+          description: Applied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplyResult'
