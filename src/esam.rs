@@ -184,7 +184,7 @@ pub fn extract_facts(esam_xml: &str) -> Result<serde_json::Value, String> {
 /// Build a minimal ESAM SignalProcessingNotification response.
 /// Map a friendly rule action to the standard ESAM ResponseSignal verb that
 /// actually drives encoder behavior. Keeping the wire attribute a standard verb
-/// means a non-broadcast.ad encoder honors it correctly (e.g. a `blackout` is a
+/// means a generic ESAM encoder honors it correctly (e.g. a `blackout` is a
 /// `replace` carrying the conditioned cue, never a silent pass-through). Unknown
 /// actions fall back to a safe pass-through.
 pub fn esam_verb(action: &str) -> &'static str {
@@ -201,7 +201,7 @@ pub fn esam_verb(action: &str) -> &'static str {
 /// [`esam_verb`] and used for the `ResponseSignal action` attribute + the
 /// BinaryData/note dispatch. `decision`, when present, is emitted as an optional
 /// `<pois:Decision>` element carrying the friendly action + authored params for
-/// the broadcast.ad packager and observability — stock encoders ignore it, and it
+/// a downstream packager and observability — stock encoders ignore it, and it
 /// is covered by SESAME signing/encryption like the rest of the body.
 pub fn build_notification(
     acq_id: &str,
@@ -221,8 +221,8 @@ pub fn build_notification(
         }
     }
 
-    // Optional broadcast.ad decision metadata: friendly action + authored params
-    // as a JSON body, namespaced so stock ESAM encoders ignore it.
+    // Optional decision metadata: friendly action + authored params as a JSON
+    // body, namespaced so stock ESAM encoders ignore it.
     let decision_el = match decision {
         Some(d) => {
             let pj = serde_json::to_string(d).unwrap_or_else(|_| "{}".to_string());
