@@ -2153,8 +2153,9 @@ dependencies = [
 
 [[package]]
 name = "sesame-esam"
-version = "0.1.2"
-source = "git+https://github.com/bokelleher/sesame-sdk?tag=v0.1.2#84db950ba44e16a527a3ebff177b85551a8547f1"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb2a22c69d9b2e0f031de117000f5b796aeb17f197a644855d21b0cf1c2a0cfe"
 dependencies = [
  "aes-gcm",
  "hmac",
