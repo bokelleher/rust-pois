@@ -5,12 +5,16 @@ and Message Encryption) protocol as implemented by `rust-pois`. It mirrors
 **ANSI/SCTE 130-9 (SESAME) draft v0.4** and is the authority for what this
 codebase puts on the wire.
 
-Where the draft is silent or self-contradictory, this implementation adopts a
-working construction marked **[BO]** below; each such point is also logged in
-[`SESAME_reconciliation.md`](./SESAME_reconciliation.md) for ratification back
-into the paper. The implementation and the paper must end up identical on the
-wire — until the [BO] items are resolved in the paper text, **this file is the
-operative spec** for interop testing.
+Where draft v0.4 is silent or self-contradictory, this implementation adopts a
+working construction marked **[BO]** below. Draft v0.5 has since ratified the
+open points (scope binding, the response canonical form, the GCM AAD, IV
+uniqueness, encrypt-then-MAC ordering) in normative text, and the design is
+published as "SESAME: A Layered Security Framework for SCTE 130 ESAM with
+Sub-Millisecond Overhead," *SET International Journal of Broadcast
+Engineering*, vol. 12 (2026),
+[doi:10.18580/setijbe.2026.6](https://doi.org/10.18580/setijbe.2026.6). The
+paper defers byte-level detail to the SCTE 130-9 draft, so **this file remains
+the operative spec** for interop testing.
 
 SESAME adds nothing to the ESAM XML. Tiers 1 and 2 leave the body untouched;
 Tier 3 replaces the body with ciphertext. No SCTE 130-2/-5/-7/-8 schema changes.
@@ -96,14 +100,14 @@ tampered POIS decision (spoofed blackout/avail/redirect) fails verification.
 
 * Body ← `AES-256-GCM(key, IV, AAD, plaintext)` = `ciphertext || 128-bit tag`.
 * **IV**: fresh 96-bit value from the OS CSPRNG **per message**. Never reused
-  with a key. ([BO-4]: Appendix A.4 reuses one IV across request and response
-  under the same `EncKeyId` — a catastrophic GCM nonce reuse. **Paper fix drafted
-  in [`SESAME_paper_errata.md`](./SESAME_paper_errata.md) E1**; the code is
-  already correct.)
+  with a key. ([BO-4]: draft v0.4 Appendix A.4 reuses one IV across request and
+  response under the same `EncKeyId`, a catastrophic GCM nonce reuse. **Fixed in
+  draft v0.5 and the published paper**, which require independent IVs for a
+  request and its response; the code was already correct.)
 * **AAD**: the canonical SESAME header set, newline-joined:
   `version\nkey-id\ntimestamp\nnonce[\nscope]`. Binds the ciphertext to its
-  headers. ([BO-5]: the draft does not specify AAD — **paper fix drafted in
-  errata E2**.)
+  headers. ([BO-5]: draft v0.4 does not specify AAD. **Fixed in draft v0.5 and
+  the published paper**, which bind the SESAME header set as AAD.)
 * Encryption keys live in a **separate namespace** from signing keys
   (`X-SESAME-EncKeyId` vs `X-SESAME-KeyId`) and rotate independently (§8.4).
 

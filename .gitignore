@@ -28,7 +28,7 @@ Thumbs.db
 static.backup/
 files.zip
 
-# Paper binaries are attached to GitHub Releases, not tracked in-tree
+# Paper sources and drafts are not tracked in-tree (published paper: doi:10.18580/setijbe.2026.6)
 docs/*.docx
 docs/*.pdf
 docs/*.tex

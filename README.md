@@ -89,7 +89,7 @@ Worst-case combined p99 is **0.028 ms — ~35× inside the 1 ms budget**. Pure-R
 RustCrypto stack (`hmac`, `sha2`, `aes-gcm`), builds everywhere.
 
 - Wire-format spec: [`docs/SESAME.md`](docs/SESAME.md)
-- Reconciliation notes / paper errata: [`docs/SESAME_reconciliation.md`](docs/SESAME_reconciliation.md), [`docs/SESAME_paper_errata.md`](docs/SESAME_paper_errata.md)
+- Paper: B. Kelleher, ["SESAME: A Layered Security Framework for SCTE 130 ESAM with Sub-Millisecond Overhead"](https://revistas.set.org.br/ijbe/article/view/342), *SET International Journal of Broadcast Engineering*, vol. 12, 2026, doi:[10.18580/setijbe.2026.6](https://doi.org/10.18580/setijbe.2026.6)
 - Run the benchmarks: `cargo bench --bench sesame_overhead`
 
 ---

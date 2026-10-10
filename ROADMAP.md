@@ -48,6 +48,9 @@ trait seam already exists.
 A faster AEAD/HMAC backend behind a feature flag, for high-throughput
 deployments. The default stays pure-Rust RustCrypto (deploy-anywhere).
 
-### Paper items pending DVS ratification
-See `docs/SESAME_paper_errata.md` — notably promoting response signing to a
-normative requirement (errata E8) in the SCTE 130-9 draft.
+### SCTE 130-9 ratification by DVS
+Draft v0.5 makes response signing a normative requirement: a server SHALL sign
+every response to an authenticated request, and a client SHALL verify it. The
+design is published in SET IJBE, vol. 12 (2026),
+[doi:10.18580/setijbe.2026.6](https://doi.org/10.18580/setijbe.2026.6). What
+remains is DVS ratification of the draft.
